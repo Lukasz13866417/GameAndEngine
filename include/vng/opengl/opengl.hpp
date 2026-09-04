@@ -1,0 +1,20 @@
+#pragma once
+
+#include <vng/opengl/buffer.hpp>
+#include <vng/opengl/context.hpp>
+#include <vng/opengl/context_access.hpp>
+#include <vng/opengl/commands.hpp>
+#include <vng/opengl/default_framebuffer.hpp>
+#include <vng/opengl/device.hpp>
+#include <vng/opengl/diagnostic.hpp>
+#include <vng/opengl/framebuffer.hpp>
+#include <vng/opengl/frame.hpp>
+#include <vng/opengl/gfx_vertex_input.hpp>
+#include <vng/opengl/graphics_pipeline.hpp>
+#include <vng/opengl/gpu_mesh.hpp>
+#include <vng/opengl/image.hpp>
+#include <vng/opengl/program.hpp>
+#include <vng/opengl/renderbuffer.hpp>
+#include <vng/opengl/render_state_scope.hpp>
+#include <vng/opengl/shader.hpp>
+#include <vng/opengl/vertex_array.hpp>

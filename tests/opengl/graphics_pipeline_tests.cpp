@@ -1,0 +1,506 @@
+#include <vng/opengl/opengl.hpp>
+#include <vng/render/pipeline.hpp>
+#include <vng/shader/shader.hpp>
+#include "../support/glfw_opengl.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <array>
+#include <cstdint>
+#include <cstdlib>
+#include <expected>
+#include <iostream>
+#include <string>
+#include <type_traits>
+#include <utility>
+
+namespace {
+
+struct Position : vng::gfx::Semantic<vng::Vec2> {};
+
+using VertexInputs = vng::shader::VertexInputs<Position>;
+using VertexOutputs = vng::shader::VertexOutputs<
+    vng::shader::ClipPosition>;
+using FragmentInputs = vng::shader::FragmentInputs<>;
+using FragmentOutputs = vng::shader::FragmentOutputs<
+    vng::shader::Color<0>>;
+using SparseFragmentOutputs = vng::shader::FragmentOutputs<
+    vng::shader::Color<2>,
+    vng::shader::Color<7>>;
+
+[[noreturn]] void skip_ctest(const std::string& reason)
+{
+    std::cerr << "OpenGL test skipped: " << reason << '\n';
+    std::exit(77);
+}
+
+[[nodiscard]] std::string describe(
+    const vng::opengl::Diagnostic& diagnostic)
+{
+    std::string result = diagnostic.message;
+    if (!diagnostic.driver_log.empty()) {
+        result += "\ndriver log:\n" + diagnostic.driver_log;
+    }
+    if (!diagnostic.generated_source.empty()) {
+        result += "\ngenerated source:\n" + diagnostic.generated_source;
+    }
+    return result;
+}
+
+[[nodiscard]] std::expected<vng::opengl::Program, vng::opengl::Diagnostic>
+make_program(const vng::opengl::Device& device)
+{
+    vng::opengl::ShaderSource vertex_source;
+    vertex_source.stage = vng::opengl::ShaderStage::vertex;
+    vertex_source.text = R"glsl(#version 460 core
+void main()
+{
+    const vec2 positions[3] = vec2[3](
+        vec2(-0.5, -0.5), vec2(0.5, -0.5), vec2(0.0, 0.5));
+    gl_Position = vec4(positions[gl_VertexID], 0.0, 1.0);
+}
+)glsl";
+    auto vertex = vng::opengl::Shader::compile(
+        device, std::move(vertex_source));
+    if (!vertex) {
+        return std::unexpected(std::move(vertex.error()));
+    }
+
+    vng::opengl::ShaderSource fragment_source;
+    fragment_source.stage = vng::opengl::ShaderStage::fragment;
+    fragment_source.text = R"glsl(#version 460 core
+layout(location = 0) out vec4 color;
+void main()
+{
+    color = vec4(1.0);
+}
+)glsl";
+    auto fragment = vng::opengl::Shader::compile(
+        device, std::move(fragment_source));
+    if (!fragment) {
+        return std::unexpected(std::move(fragment.error()));
+    }
+
+    return vng::opengl::Program::link_graphics(
+        device, *vertex, *fragment);
+}
+
+[[nodiscard]] vng::shader::Result<vng::shader::GraphicsProgram>
+make_neutral_program()
+{
+    auto vertex = vng::shader::vertex<VertexInputs, VertexOutputs>(
+        "graphics_pipeline_vertex",
+        [](auto& stage) {
+            return stage.output(
+                vng::dsl::field<vng::shader::ClipPosition>(
+                    vng::dsl::vec4(
+                        stage.input(Position{}), 0.0F, 1.0F)));
+        });
+    if (!vertex) {
+        return std::unexpected(std::move(vertex.error()));
+    }
+    auto fragment = vng::shader::fragment<FragmentInputs, FragmentOutputs>(
+        "graphics_pipeline_fragment",
+        [](auto& stage) {
+            return stage.output(
+                vng::dsl::field<vng::shader::Color<0>>(
+                    stage.constant(vng::Vec4{1.0F, 1.0F, 1.0F, 1.0F})));
+        });
+    if (!fragment) {
+        return std::unexpected(std::move(fragment.error()));
+    }
+    return vng::shader::link(std::move(*vertex), std::move(*fragment));
+}
+
+[[nodiscard]] vng::shader::Result<vng::shader::GraphicsProgram>
+make_sparse_neutral_program()
+{
+    auto vertex = vng::shader::vertex<VertexInputs, VertexOutputs>(
+        "graphics_pipeline_sparse_vertex",
+        [](auto& stage) {
+            return stage.output(
+                vng::dsl::field<vng::shader::ClipPosition>(
+                    vng::dsl::vec4(
+                        stage.input(Position{}), 0.0F, 1.0F)));
+        });
+    if (!vertex) {
+        return std::unexpected(std::move(vertex.error()));
+    }
+    auto fragment = vng::shader::fragment<
+        FragmentInputs,
+        SparseFragmentOutputs>(
+        "graphics_pipeline_sparse_fragment",
+        [](auto& stage) {
+            return stage.output(
+                vng::dsl::field<vng::shader::Color<2>>(
+                    stage.constant(vng::Vec4{
+                        1.0F, 0.0F, 0.0F, 1.0F})),
+                vng::dsl::field<vng::shader::Color<7>>(
+                    stage.constant(vng::Vec4{
+                        0.0F, 1.0F, 0.0F, 1.0F})));
+        });
+    if (!fragment) {
+        return std::unexpected(std::move(fragment.error()));
+    }
+    return vng::shader::link(std::move(*vertex), std::move(*fragment));
+}
+
+} // namespace
+
+static_assert(std::is_move_constructible_v<vng::opengl::GraphicsPipeline>);
+static_assert(std::is_move_assignable_v<vng::opengl::GraphicsPipeline>);
+static_assert(!std::is_copy_constructible_v<vng::opengl::GraphicsPipeline>);
+static_assert(!std::is_copy_assignable_v<vng::opengl::GraphicsPipeline>);
+
+TEST_CASE("OpenGL graphics pipeline realizes and binds portable state",
+          "[opengl][integration][graphics-pipeline]")
+{
+    auto window = vng::test::create_hidden_opengl_window(
+        8, 8, "vng hidden graphics pipeline test");
+    if (!window) {
+        skip_ctest("OpenGL context unavailable: " + window.error().message);
+    }
+    auto access = window->make_current();
+    if (!access) {
+        skip_ctest(
+            "OpenGL context could not be made current: "
+            + access.error().message);
+    }
+    auto device = vng::opengl::Device::create(*access);
+    INFO((device ? std::string{} : describe(device.error())));
+    REQUIRE(device.has_value());
+
+    auto program = make_neutral_program();
+    REQUIRE(program.has_value());
+
+    const vng::render::GraphicsPipelineDesc description{
+        .depth = {
+            .test = true,
+            .write = false,
+            .compare = vng::render::DepthCompare::greater_equal,
+        },
+        .cull = vng::render::CullMode::front,
+        .front_face = vng::render::FrontFace::clockwise,
+        .output_encoding = vng::render::ColorEncoding::srgb,
+    };
+    auto pipeline = vng::render::compile_pipeline(
+        *device, *program, description);
+    INFO((pipeline ? std::string{} : describe(pipeline.error())));
+    REQUIRE(pipeline.has_value());
+    CHECK(pipeline->description() == description);
+    CHECK(pipeline->program().native_handle() != 0);
+    CHECK(pipeline->belongs_to(*device));
+    REQUIRE(pipeline->generated_source() != nullptr);
+    CHECK_FALSE(pipeline->generated_source()->vertex.source.empty());
+    CHECK_FALSE(pipeline->generated_source()->fragment.source.empty());
+    const auto program_handle = pipeline->program().native_handle();
+
+    // Poison every state owned by GraphicsPipeline before binding it. This
+    // verifies that bind() establishes a complete baseline rather than only
+    // changing the values that happen to differ from OpenGL defaults.
+    REQUIRE(device->set_depth_state({
+        .test_enabled = false,
+        .write_enabled = true,
+        .compare = vng::opengl::DepthCompare::less,
+    }).has_value());
+    REQUIRE(device->set_blend_enabled(0, true).has_value());
+    REQUIRE(device->set_color_write_mask(
+        0, {false, false, false, false}).has_value());
+    REQUIRE(device->set_scissor_enabled(true).has_value());
+    REQUIRE(device->set_cull_state({
+        .mode = vng::opengl::CullMode::none,
+        .front_face = vng::opengl::FrontFaceWinding::counter_clockwise,
+    }).has_value());
+    REQUIRE(device->set_rasterizer_discard_enabled(true).has_value());
+    REQUIRE(device->set_framebuffer_srgb_enabled(false).has_value());
+
+    using PolygonMode = void (*)(std::uint32_t, std::uint32_t);
+    using GetInteger = void (*)(std::uint32_t, std::int32_t*);
+    using GetBoolean = void (*)(std::uint32_t, std::uint8_t*);
+    using GetBooleanIndexed = void (*)(
+        std::uint32_t, std::uint32_t, std::uint8_t*);
+    using IsEnabled = std::uint8_t (*)(std::uint32_t);
+    using IsEnabledIndexed = std::uint8_t (*)(std::uint32_t, std::uint32_t);
+
+    const auto polygon_mode = reinterpret_cast<PolygonMode>(
+        access->resolve("glPolygonMode"));
+    const auto get_integer = reinterpret_cast<GetInteger>(
+        access->resolve("glGetIntegerv"));
+    const auto get_boolean = reinterpret_cast<GetBoolean>(
+        access->resolve("glGetBooleanv"));
+    const auto get_boolean_indexed = reinterpret_cast<GetBooleanIndexed>(
+        access->resolve("glGetBooleani_v"));
+    const auto is_enabled = reinterpret_cast<IsEnabled>(
+        access->resolve("glIsEnabled"));
+    const auto is_enabled_indexed = reinterpret_cast<IsEnabledIndexed>(
+        access->resolve("glIsEnabledi"));
+    REQUIRE(polygon_mode != nullptr);
+    REQUIRE(get_integer != nullptr);
+    REQUIRE(get_boolean != nullptr);
+    REQUIRE(get_boolean_indexed != nullptr);
+    REQUIRE(is_enabled != nullptr);
+    REQUIRE(is_enabled_indexed != nullptr);
+
+    constexpr std::uint32_t gl_front_and_back = 0x0408;
+    constexpr std::uint32_t gl_line = 0x1B01;
+    polygon_mode(gl_front_and_back, gl_line);
+
+    auto bound = pipeline->bind(*device);
+    INFO((bound ? std::string{} : describe(bound.error())));
+    REQUIRE(bound.has_value());
+
+    constexpr std::uint32_t gl_current_program = 0x8B8D;
+    constexpr std::uint32_t gl_depth_test = 0x0B71;
+    constexpr std::uint32_t gl_depth_writemask = 0x0B72;
+    constexpr std::uint32_t gl_depth_func = 0x0B74;
+    constexpr std::uint32_t gl_gequal = 0x0206;
+    constexpr std::uint32_t gl_blend = 0x0BE2;
+    constexpr std::uint32_t gl_color_writemask = 0x0C23;
+    constexpr std::uint32_t gl_scissor_test = 0x0C11;
+    constexpr std::uint32_t gl_cull_face = 0x0B44;
+    constexpr std::uint32_t gl_cull_face_mode = 0x0B45;
+    constexpr std::uint32_t gl_front = 0x0404;
+    constexpr std::uint32_t gl_front_face = 0x0B46;
+    constexpr std::uint32_t gl_cw = 0x0900;
+    constexpr std::uint32_t gl_rasterizer_discard = 0x8C89;
+    constexpr std::uint32_t gl_framebuffer_srgb = 0x8DB9;
+    constexpr std::uint32_t gl_polygon_mode = 0x0B40;
+    constexpr std::uint32_t gl_fill = 0x1B02;
+
+    std::int32_t scalar = 0;
+    get_integer(gl_current_program, &scalar);
+    CHECK(static_cast<std::uint32_t>(scalar) == program_handle);
+    CHECK(is_enabled(gl_depth_test) != 0);
+    std::uint8_t boolean = 1;
+    get_boolean(gl_depth_writemask, &boolean);
+    CHECK(boolean == 0);
+    get_integer(gl_depth_func, &scalar);
+    CHECK(static_cast<std::uint32_t>(scalar) == gl_gequal);
+    CHECK(is_enabled_indexed(gl_blend, 0) == 0);
+    std::array<std::uint8_t, 4> color_mask{};
+    get_boolean_indexed(gl_color_writemask, 0, color_mask.data());
+    CHECK(color_mask == std::array<std::uint8_t, 4>{1, 1, 1, 1});
+    CHECK(is_enabled(gl_scissor_test) == 0);
+    CHECK(is_enabled(gl_cull_face) != 0);
+    get_integer(gl_cull_face_mode, &scalar);
+    CHECK(static_cast<std::uint32_t>(scalar) == gl_front);
+    get_integer(gl_front_face, &scalar);
+    CHECK(static_cast<std::uint32_t>(scalar) == gl_cw);
+    CHECK(is_enabled(gl_rasterizer_discard) == 0);
+    CHECK(is_enabled(gl_framebuffer_srgb) != 0);
+    get_integer(gl_polygon_mode, &scalar);
+    CHECK(static_cast<std::uint32_t>(scalar) == gl_fill);
+
+    // Device identity is part of the realization. Even with another valid,
+    // current OpenGL context, binding must fail before touching its state.
+    {
+        auto other_window = vng::test::create_hidden_opengl_window(
+            4, 4, "vng second graphics pipeline context");
+        REQUIRE(other_window.has_value());
+        auto other_access = other_window->make_current();
+        REQUIRE(other_access.has_value());
+        auto other_device = vng::opengl::Device::create(*other_access);
+        INFO((other_device
+            ? std::string{}
+            : describe(other_device.error())));
+        REQUIRE(other_device.has_value());
+        CHECK_FALSE(pipeline->belongs_to(*other_device));
+        auto wrong_device = pipeline->bind(*other_device);
+        REQUIRE_FALSE(wrong_device.has_value());
+        CHECK(wrong_device.error().code
+              == vng::opengl::ErrorCode::incompatible_device);
+    }
+
+    auto restored_after_other = window->make_current();
+    REQUIRE(restored_after_other.has_value());
+
+    window->release_current();
+    auto without_context = pipeline->bind(*device);
+    REQUIRE_FALSE(without_context.has_value());
+    CHECK(without_context.error().code
+          == vng::opengl::ErrorCode::context_not_current);
+    auto restored = window->make_current();
+    REQUIRE(restored.has_value());
+
+    // Realization translates and stores state but performs no OpenGL calls,
+    // so it remains valid while the owning context is temporarily detached.
+    auto detached_program = make_program(*device);
+    REQUIRE(detached_program.has_value());
+    window->release_current();
+    auto detached_pipeline = vng::render::expert::realize_pipeline(
+        *device, std::move(*detached_program));
+    INFO((detached_pipeline
+        ? std::string{}
+        : describe(detached_pipeline.error())));
+    REQUIRE(detached_pipeline.has_value());
+    CHECK(detached_pipeline->generated_source() == nullptr);
+
+    // Full compilation does need a current context. Even failures before the
+    // driver sees the shader retain the generated source and IR-node map.
+    auto detached_compilation = vng::render::compile_pipeline(
+        *device, *program);
+    REQUIRE_FALSE(detached_compilation.has_value());
+    CHECK(detached_compilation.error().code
+          == vng::opengl::ErrorCode::context_not_current);
+    CHECK_FALSE(detached_compilation.error().generated_source.empty());
+    CHECK_FALSE(detached_compilation.error().source_map.empty());
+
+    auto restored_again = window->make_current();
+    REQUIRE(restored_again.has_value());
+}
+
+TEST_CASE("OpenGL graphics pipeline rejects malformed portable enums",
+          "[opengl][integration][graphics-pipeline]")
+{
+    auto window = vng::test::create_hidden_opengl_window(
+        8, 8, "vng hidden graphics pipeline validation test");
+    if (!window) {
+        skip_ctest("OpenGL context unavailable: " + window.error().message);
+    }
+    auto access = window->make_current();
+    if (!access) {
+        skip_ctest(
+            "OpenGL context could not be made current: "
+            + access.error().message);
+    }
+    auto device = vng::opengl::Device::create(*access);
+    INFO((device ? std::string{} : describe(device.error())));
+    REQUIRE(device.has_value());
+
+    auto check_invalid = [&](vng::render::GraphicsPipelineDesc description) {
+        auto program = make_program(*device);
+        INFO((program ? std::string{} : describe(program.error())));
+        REQUIRE(program.has_value());
+        const auto handle = program->native_handle();
+        auto result = vng::opengl::GraphicsPipeline::realize(
+            *device, std::move(*program), description);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error().code == vng::opengl::ErrorCode::invalid_argument);
+        // Validation happens before ownership transfer, despite the explicit
+        // rvalue at the call site.
+        CHECK(program->native_handle() == handle);
+    };
+
+    auto bad_compare = vng::render::GraphicsPipelineDesc{};
+    bad_compare.depth.compare =
+        static_cast<vng::render::DepthCompare>(255);
+    check_invalid(bad_compare);
+
+    auto bad_cull = vng::render::GraphicsPipelineDesc{};
+    bad_cull.cull = static_cast<vng::render::CullMode>(255);
+    check_invalid(bad_cull);
+
+    auto bad_front_face = vng::render::GraphicsPipelineDesc{};
+    bad_front_face.front_face = static_cast<vng::render::FrontFace>(255);
+    check_invalid(bad_front_face);
+
+    auto bad_encoding = vng::render::GraphicsPipelineDesc{};
+    bad_encoding.output_encoding =
+        static_cast<vng::render::ColorEncoding>(255);
+    check_invalid(bad_encoding);
+}
+
+TEST_CASE("OpenGL graphics pipeline owns every sparse fragment output state",
+          "[opengl][integration][graphics-pipeline][mrt]")
+{
+    auto window = vng::test::create_hidden_opengl_window(
+        8, 8, "vng sparse MRT graphics pipeline test");
+    if (!window) {
+        skip_ctest("OpenGL context unavailable: " + window.error().message);
+    }
+    auto access = window->make_current();
+    if (!access) {
+        skip_ctest(
+            "OpenGL context could not be made current: "
+            + access.error().message);
+    }
+    auto device = vng::opengl::Device::create(*access);
+    INFO((device ? std::string{} : describe(device.error())));
+    REQUIRE(device);
+
+    using GetInteger = void (*)(std::uint32_t, std::int32_t*);
+    using GetBooleanIndexed = void (*)(
+        std::uint32_t, std::uint32_t, std::uint8_t*);
+    using IsEnabledIndexed = std::uint8_t (*)(
+        std::uint32_t, std::uint32_t);
+    const auto get_integer = reinterpret_cast<GetInteger>(
+        access->resolve("glGetIntegerv"));
+    const auto get_boolean_indexed = reinterpret_cast<GetBooleanIndexed>(
+        access->resolve("glGetBooleani_v"));
+    const auto is_enabled_indexed = reinterpret_cast<IsEnabledIndexed>(
+        access->resolve("glIsEnabledi"));
+    REQUIRE(get_integer != nullptr);
+    REQUIRE(get_boolean_indexed != nullptr);
+    REQUIRE(is_enabled_indexed != nullptr);
+
+    constexpr std::uint32_t gl_max_draw_buffers = 0x8824;
+    constexpr std::uint32_t gl_blend = 0x0BE2;
+    constexpr std::uint32_t gl_color_writemask = 0x0C23;
+    std::int32_t maximum_draw_buffers = 0;
+    get_integer(gl_max_draw_buffers, &maximum_draw_buffers);
+    REQUIRE(maximum_draw_buffers >= 8);
+
+    auto neutral = make_sparse_neutral_program();
+    REQUIRE(neutral);
+    auto pipeline = vng::render::compile_pipeline(*device, *neutral);
+    INFO((pipeline ? std::string{} : describe(pipeline.error())));
+    REQUIRE(pipeline);
+    REQUIRE(pipeline->generated_source() != nullptr);
+    REQUIRE(pipeline->generated_source()->fragment.interface.outputs.size()
+            == 2);
+    CHECK(pipeline->generated_source()->fragment.interface.outputs[0].location
+          == 2);
+    CHECK(pipeline->generated_source()->fragment.interface.outputs[1].location
+          == 7);
+    const auto emitted_locations =
+        pipeline->fragment_color_output_locations();
+    REQUIRE(emitted_locations.has_value());
+    REQUIRE(emitted_locations->size() == 2);
+    CHECK((*emitted_locations)[0] == 2);
+    CHECK((*emitted_locations)[1] == 7);
+
+    for (const std::uint32_t location : {2U, 7U}) {
+        REQUIRE(device->set_blend_enabled(location, true));
+        REQUIRE(device->set_color_write_mask(
+            location, {false, false, false, false}));
+    }
+    constexpr std::uint32_t unrelated_location = 1;
+    REQUIRE(device->set_blend_enabled(unrelated_location, true));
+    REQUIRE(device->set_color_write_mask(
+        unrelated_location, {false, false, false, false}));
+    REQUIRE(pipeline->bind(*device));
+
+    for (const std::uint32_t location : {2U, 7U}) {
+        CHECK(is_enabled_indexed(gl_blend, location) == 0);
+        std::array<std::uint8_t, 4> mask{};
+        get_boolean_indexed(
+            gl_color_writemask, location, mask.data());
+        CHECK(mask == std::array<std::uint8_t, 4>{1, 1, 1, 1});
+    }
+    CHECK(is_enabled_indexed(gl_blend, unrelated_location) != 0);
+    std::array<std::uint8_t, 4> unrelated_mask{};
+    get_boolean_indexed(
+        gl_color_writemask,
+        unrelated_location,
+        unrelated_mask.data());
+    CHECK(unrelated_mask == std::array<std::uint8_t, 4>{0, 0, 0, 0});
+
+    // A raw backend Program carries no neutral output metadata. Its expert
+    // pipeline therefore takes the conservative fallback and normalizes all
+    // supported draw-buffer slots, including a slot the raw shader does not
+    // happen to use.
+    auto raw = make_program(*device);
+    REQUIRE(raw);
+    auto expert = vng::render::expert::realize_pipeline(
+        *device, std::move(*raw));
+    REQUIRE(expert);
+    CHECK_FALSE(expert->fragment_color_output_locations().has_value());
+    REQUIRE(expert->bind(*device));
+    CHECK(is_enabled_indexed(gl_blend, unrelated_location) == 0);
+    std::array<std::uint8_t, 4> fallback_mask{};
+    get_boolean_indexed(
+        gl_color_writemask,
+        unrelated_location,
+        fallback_mask.data());
+    CHECK(fallback_mask == std::array<std::uint8_t, 4>{1, 1, 1, 1});
+}
