@@ -84,6 +84,38 @@ private:
     return "vng_out_" + std::to_string(index);
 }
 
+[[nodiscard]] std::string texture_name(u32 binding)
+{
+    return "vng_texture_" + std::to_string(binding);
+}
+
+[[nodiscard]] std::string matrix_buffer_name(u32 binding)
+{
+    return "vng_matrix_" + std::to_string(binding);
+}
+
+[[nodiscard]] std::vector<u32> collect_matrix_buffer_bindings(
+    const StageSource& vertex, const StageSource& fragment)
+{
+    auto result = vertex.matrix_buffer_bindings;
+    result.insert(result.end(), fragment.matrix_buffer_bindings.begin(),
+                  fragment.matrix_buffer_bindings.end());
+    std::ranges::sort(result);
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
+[[nodiscard]] std::vector<u32> collect_texture_bindings(
+    const StageSource& vertex, const StageSource& fragment)
+{
+    auto result = vertex.texture_bindings;
+    result.insert(result.end(), fragment.texture_bindings.begin(),
+                  fragment.texture_bindings.end());
+    std::ranges::sort(result);
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
 [[nodiscard]] std::string record_name(TypeId id)
 {
     return "vng_record_" + std::to_string(id.value);
@@ -100,14 +132,49 @@ constexpr std::string_view analysis_first_item_uniform_name =
     "vng_analysis_first_item_id";
 constexpr std::string_view observation_output_name = "vng_observation_value";
 
-[[nodiscard]] constexpr std::string_view parameter_uniform_name(
-    ParameterKind kind) noexcept
+[[nodiscard]] std::string parameter_uniform_name(
+    const ParameterField& parameter)
 {
-    switch (kind) {
+    switch (parameter.kind) {
     case ParameterKind::camera_view_projection:
         return "vng_camera_view_projection";
+    case ParameterKind::argument:
+        return "vng_argument_" + std::to_string(parameter.argument_index);
     }
     return "vng_unknown_parameter";
+}
+
+[[nodiscard]] u32 parameter_location_count(const ModuleIR& module, TypeId id)
+{
+    const auto& type = module.types[id];
+    if (type.kind != TypeKind::record) return 1;
+    u32 result{};
+    for (const auto& member : type.members) {
+        result += parameter_location_count(module, member.type);
+    }
+    return result;
+}
+
+void collect_parameter_leaves(
+    const ModuleIR& module, TypeId id, u32& word, u32& location,
+    std::vector<ParameterLeaf>& leaves, const std::string& name)
+{
+    const auto& type = module.types[id];
+    if (type.kind == TypeKind::record) {
+        for (std::size_t index = 0; index < type.members.size(); ++index) {
+            collect_parameter_leaves(module, type.members[index].type, word, location,
+                leaves, name + "_" + member_name(index));
+        }
+        return;
+    }
+    leaves.push_back(ParameterLeaf{
+        .name = name,
+        .scalar = type.scalar,
+        .columns = type.kind == TypeKind::vector ? 1U : type.columns,
+        .rows = type.kind == TypeKind::vector ? type.columns : type.rows,
+        .word_offset = word, .location = location++,
+    });
+    word += type.columns * type.rows;
 }
 
 struct StageEmissionPlan {
@@ -183,7 +250,8 @@ template<class Predicate>
         }
         occupied.push_back(LocationRange{
             .begin = *parameter.location,
-            .end = static_cast<std::uint64_t>(*parameter.location) + 1,
+            .end = static_cast<std::uint64_t>(*parameter.location)
+                + parameter_location_count(module, parameter.type),
         });
     }
     return {};
@@ -515,11 +583,20 @@ collect_parameter_metadata(const shader::GraphicsProgram& program)
                 return std::unexpected(std::move(type.error()));
             }
 
-            const auto existing = std::ranges::find(
-                result, parameter.kind, &ParameterMetadata::kind);
+            const auto existing = std::ranges::find_if(result, [&](const auto& item) {
+                return item.kind == parameter.kind
+                    && (parameter.kind != ParameterKind::argument
+                        || item.argument_index == parameter.argument_index);
+            });
+            u32 word{};
+            auto location = *parameter.location;
+            std::vector<ParameterLeaf> leaves;
+            collect_parameter_leaves(module, parameter.type, word, location, leaves,
+                parameter_uniform_name(parameter));
             if (existing != result.end()) {
                 if (existing->location != *parameter.location ||
-                    existing->glsl_type != *type) {
+                    existing->argument_type != parameter.argument_type ||
+                    existing->leaves != leaves) {
                     return std::unexpected(diagnostic(
                         DiagnosticCode::interface_mismatch,
                         "matching shader parameters disagree across linked stages",
@@ -530,9 +607,13 @@ collect_parameter_metadata(const shader::GraphicsProgram& program)
 
             result.push_back(ParameterMetadata{
                 .kind = parameter.kind,
-                .name = std::string(parameter_uniform_name(parameter.kind)),
+                .name = parameter_uniform_name(parameter),
                 .glsl_type = std::move(*type),
                 .location = *parameter.location,
+                .argument_index = parameter.argument_index,
+                .argument_type = parameter.argument_type,
+                .word_count = word,
+                .leaves = std::move(leaves),
             });
         }
         return {};
@@ -714,7 +795,12 @@ private:
         return !operation.result.valid()
             || (operation.effect != Effect::pure
                 && operation.effect != Effect::input_read
-                && operation.effect != Effect::parameter_read);
+                && operation.effect != Effect::parameter_read
+                && operation.effect != Effect::texture_read
+                // This opcode is explicitly read-only. Future mutable storage
+                // operations must not inherit its dead-read treatment.
+                && !(operation.opcode == OpCode::matrix_buffer_read
+                     && operation.effect == Effect::storage_read));
     }
 
     void mark_operation_live(OperationId id)
@@ -996,6 +1082,43 @@ private:
         return {};
     }
 
+    [[nodiscard]] shader::Result<void> emit_parameter_declaration(
+        TypeId id, const std::string& name, u32& location)
+    {
+        const auto& description = module_.types[id];
+        if (description.kind == TypeKind::record) {
+            for (std::size_t index = 0; index < description.members.size(); ++index) {
+                if (auto result = emit_parameter_declaration(
+                        description.members[index].type,
+                        name + "_" + member_name(index), location); !result) return result;
+            }
+            return {};
+        }
+        auto type = emitted_glsl_type(id);
+        if (!type) return std::unexpected(std::move(type.error()));
+        writer_.line("layout(location = " + std::to_string(location++)
+            + ") uniform " + *type + ' ' + name + ";");
+        return {};
+    }
+
+    [[nodiscard]] shader::Result<std::string> parameter_expression(
+        TypeId id, const std::string& name)
+    {
+        const auto& description = module_.types[id];
+        if (description.kind != TypeKind::record) return name;
+        auto type = emitted_glsl_type(id);
+        if (!type) return std::unexpected(std::move(type.error()));
+        auto expression = *type + "(";
+        for (std::size_t index = 0; index < description.members.size(); ++index) {
+            auto member = parameter_expression(description.members[index].type,
+                name + "_" + member_name(index));
+            if (!member) return std::unexpected(std::move(member.error()));
+            if (index != 0) expression += ", ";
+            expression += *member;
+        }
+        return expression + ")";
+    }
+
     [[nodiscard]] shader::Result<void> emit_interface_declarations()
     {
         bool emitted = false;
@@ -1038,14 +1161,44 @@ private:
         }
 
         for (const auto& parameter : module_.parameters) {
-            auto type = emitted_glsl_type(parameter.type);
-            if (!type) {
-                return std::unexpected(std::move(type.error()));
+            auto location = *parameter.location;
+            if (auto declared = emit_parameter_declaration(
+                    parameter.type, parameter_uniform_name(parameter), location);
+                !declared) return declared;
+            emitted = true;
+        }
+
+        for (u32 index = 0; index < module_.operations.size(); ++index) {
+            const auto& operation = module_.operations[index];
+            if (execution_live_[index] && (operation.opcode == OpCode::texture_sample ||
+                                           operation.opcode == OpCode::texture_sample_lod)) {
+                artifact_.texture_bindings.push_back(
+                    std::get<shader::TextureSamplePayload>(operation.payload).binding);
             }
-            writer_.line(
-                "layout(location = " + std::to_string(*parameter.location)
-                + ") uniform " + *type + ' '
-                + std::string(parameter_uniform_name(parameter.kind)) + ";");
+            if (execution_live_[index] && operation.opcode == OpCode::matrix_buffer_read) {
+                artifact_.matrix_buffer_bindings.push_back(
+                    std::get<shader::MatrixBufferPayload>(operation.payload).binding);
+            }
+        }
+        std::ranges::sort(artifact_.texture_bindings);
+        auto& bindings = artifact_.texture_bindings;
+        bindings.erase(std::unique(bindings.begin(), bindings.end()), bindings.end());
+        for (const auto binding : bindings) {
+            writer_.line("layout(binding = " + std::to_string(binding)
+                         + ") uniform sampler2D " + texture_name(binding) + ";");
+            emitted = true;
+        }
+
+        auto& matrix_bindings = artifact_.matrix_buffer_bindings;
+        std::ranges::sort(matrix_bindings);
+        matrix_bindings.erase(std::unique(matrix_bindings.begin(), matrix_bindings.end()),
+                              matrix_bindings.end());
+        for (const auto binding : matrix_bindings) {
+            writer_.line("layout(std430, binding = " + std::to_string(binding)
+                         + ") readonly buffer vng_matrices_" + std::to_string(binding));
+            writer_.line("{");
+            writer_.line("    mat4 " + matrix_buffer_name(binding) + "[];");
+            writer_.line("};");
             emitted = true;
         }
 
@@ -1294,8 +1447,31 @@ private:
                     writer_.source(),
                     &operation));
             }
-            return std::string(parameter_uniform_name(
-                module_.parameters[payload->parameter].kind));
+            const auto& parameter = module_.parameters[payload->parameter];
+            return parameter_expression(parameter.type, parameter_uniform_name(parameter));
+        }
+        case OpCode::texture_sample: {
+            if (operation.operands.size() != 1) return bad_arity(operation, 1);
+            const auto& sample = std::get<shader::TextureSamplePayload>(operation.payload);
+            auto coordinates = operand(operation.operands[0], operation);
+            if (!coordinates) return coordinates;
+            return "texture(" + texture_name(sample.binding) + ", " + *coordinates + ")";
+        }
+        case OpCode::texture_sample_lod: {
+            if (operation.operands.size() != 2) return bad_arity(operation, 2);
+            const auto& sample = std::get<shader::TextureSamplePayload>(operation.payload);
+            auto coordinates = operand(operation.operands[0], operation);
+            if (!coordinates) return coordinates;
+            auto level = operand(operation.operands[1], operation);
+            if (!level) return level;
+            return "textureLod(" + texture_name(sample.binding) + ", " + *coordinates + ", " + *level + ")";
+        }
+        case OpCode::matrix_buffer_read: {
+            if (operation.operands.size() != 1) return bad_arity(operation, 1);
+            const auto& buffer = std::get<shader::MatrixBufferPayload>(operation.payload);
+            auto index = operand(operation.operands[0], operation);
+            if (!index) return index;
+            return matrix_buffer_name(buffer.binding) + "[" + *index + "]";
         }
         case OpCode::construct:
         case OpCode::cast: {
@@ -1380,6 +1556,13 @@ private:
         case OpCode::clamp: return call_expression(operation, "clamp");
         case OpCode::mix: return call_expression(operation, "mix");
         case OpCode::square_root: return call_expression(operation, "sqrt");
+        case OpCode::sine: return call_expression(operation, "sin");
+        case OpCode::cosine: return call_expression(operation, "cos");
+        case OpCode::absolute: return call_expression(operation, "abs");
+        case OpCode::floor: return call_expression(operation, "floor");
+        case OpCode::fract: return call_expression(operation, "fract");
+        case OpCode::exponential: return call_expression(operation, "exp");
+        case OpCode::power: return call_expression(operation, "pow");
         case OpCode::all: return call_expression(operation, "all");
         case OpCode::any: return call_expression(operation, "any");
         case OpCode::select: {
@@ -1551,12 +1734,16 @@ shader::Result<ProgramSource> emit(const shader::GraphicsProgram& program)
     if (!parameters) {
         return std::unexpected(std::move(parameters.error()));
     }
+    auto texture_bindings = collect_texture_bindings(*vertex, *fragment);
+    auto matrix_buffer_bindings = collect_matrix_buffer_bindings(*vertex, *fragment);
     return ProgramSource{
         .vertex = std::move(*vertex),
         .fragment = std::move(*fragment),
         .parameters = std::move(*parameters),
         .analysis = std::nullopt,
         .observation = std::nullopt,
+        .texture_bindings = std::move(texture_bindings),
+        .matrix_buffer_bindings = std::move(matrix_buffer_bindings),
     };
 }
 
@@ -1586,12 +1773,16 @@ shader::Result<ProgramSource> emit(
     if (!parameters) {
         return std::unexpected(std::move(parameters.error()));
     }
+    auto texture_bindings = collect_texture_bindings(*vertex, *fragment);
+    auto matrix_buffer_bindings = collect_matrix_buffer_bindings(*vertex, *fragment);
     return ProgramSource{
         .vertex = std::move(*vertex),
         .fragment = std::move(*fragment),
         .parameters = std::move(*parameters),
         .analysis = std::move(*metadata),
         .observation = std::nullopt,
+        .texture_bindings = std::move(texture_bindings),
+        .matrix_buffer_bindings = std::move(matrix_buffer_bindings),
     };
 }
 
@@ -1622,12 +1813,16 @@ shader::Result<ProgramSource> emit(
         return std::unexpected(std::move(parameters.error()));
     }
 
+    auto texture_bindings = collect_texture_bindings(*vertex, *fragment);
+    auto matrix_buffer_bindings = collect_matrix_buffer_bindings(*vertex, *fragment);
     return ProgramSource{
         .vertex = std::move(*vertex),
         .fragment = std::move(*fragment),
         .parameters = std::move(*parameters),
         .analysis = std::nullopt,
         .observation = std::move(selected->metadata),
+        .texture_bindings = std::move(texture_bindings),
+        .matrix_buffer_bindings = std::move(matrix_buffer_bindings),
     };
 }
 

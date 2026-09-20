@@ -18,7 +18,8 @@ public:
         StartupDiagnostic>
     create(
         const vng::window::WindowDesc& window_description,
-        const vng::opengl::ContextDesc& context_description);
+        const vng::opengl::ContextDesc& context_description,
+        const vng::window::PresentationDesc& presentation = {});
 
     GlfwOpenGLSession(GlfwOpenGLSession&&) noexcept = default;
     GlfwOpenGLSession& operator=(GlfwOpenGLSession&&) = delete;

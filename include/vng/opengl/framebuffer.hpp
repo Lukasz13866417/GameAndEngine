@@ -10,6 +10,8 @@
 #include <vector>
 
 #include <vng/opengl/diagnostic.hpp>
+#include <vng/gfx/image.hpp>
+#include <vng/render/color.hpp>
 
 namespace vng::opengl {
 
@@ -17,7 +19,7 @@ namespace detail { struct ContextState; }
 class Device;
 class Renderbuffer;
 class Image2D;
-enum class ImageFormat;
+using gfx::ImageFormat;
 
 struct Rgba8Pixel final {
     std::uint8_t r{};
@@ -67,6 +69,16 @@ public:
     ~Framebuffer();
 
     [[nodiscard]] std::uint32_t native_handle() const noexcept { return handle_; }
+    [[nodiscard]] bool belongs_to(const Device& device) const noexcept;
+    // The renderable area is the intersection of all attachment extents.
+    [[nodiscard]] Extent2D extent() const noexcept;
+    // No common encoding exists for a mixed linear/sRGB color target.
+    [[nodiscard]] std::optional<render::ColorEncoding> color_encoding() const noexcept;
+    [[nodiscard]] bool has_color_image(u32 handle) const noexcept;
+    [[nodiscard]] std::vector<u32> attachment_image_handles() const;
+    [[nodiscard]] const std::vector<u32>& color_attachments() const noexcept { return color_attachments_; }
+    [[nodiscard]] bool has_depth() const noexcept { return depth_attachment_format_.has_value(); }
+    [[nodiscard]] bool has_integer_color() const noexcept;
 
     [[nodiscard]] std::expected<void, Diagnostic> attach_color(
         std::uint32_t attachment,
@@ -147,6 +159,7 @@ public:
     [[nodiscard]] std::expected<void, Diagnostic> destroy();
 
 private:
+    friend class Rgba8ReadbackQueue;
     enum class AttachmentObject : std::uint8_t { renderbuffer, image };
     enum class DepthAttachmentFormat : std::uint8_t {
         depth24_stencil8,
@@ -162,7 +175,8 @@ private:
         std::uint32_t storage_handle,
         std::uint32_t samples,
         ImageFormat format,
-        AttachmentObject object);
+        AttachmentObject object,
+        Extent2D extent);
 
     void release_noexcept() noexcept;
 
@@ -173,7 +187,10 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> color_attachment_handles_;
     std::unordered_map<std::uint32_t, ImageFormat> color_attachment_formats_;
     std::unordered_map<std::uint32_t, AttachmentObject> color_attachment_objects_;
+    std::unordered_map<std::uint32_t, Extent2D> color_attachment_extents_;
     std::optional<DepthAttachmentFormat> depth_attachment_format_;
+    Extent2D depth_extent_{};
+    u32 depth_image_handle_{};
 };
 
 } // namespace vng::opengl

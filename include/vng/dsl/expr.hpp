@@ -17,11 +17,36 @@ class Expr;
 
 namespace detail {
 
+// Host values cross the implicit DSL boundary only during constant evaluation.
+// A forwarding constructor deliberately requires the exact logical type: e.g.
+// an Int operand must not silently accept an unsigned integer or a double.
+template<shader::Value T>
+class Constant {
+public:
+    template<class U> requires std::same_as<std::remove_cvref_t<U>, T>
+    consteval Constant(U&& value) : value_(std::forward<U>(value)) {}
+
+    [[nodiscard]] constexpr const T& value() const noexcept { return value_; }
+
+private:
+    T value_;
+};
+
+// For arguments whose logical type is already known, accept either an Expr or
+// a compile-time host value without requiring user-visible wrapper syntax.
+template<shader::Value T>
+class Operand;
+
 template<class T>
 struct expression_traits;
 
 template<shader::Value T>
 struct expression_traits<Expr<T>> {
+    using value_type = T;
+};
+
+template<shader::Value T>
+struct expression_traits<Operand<T>> {
     using value_type = T;
 };
 
@@ -97,6 +122,11 @@ struct host_or_expression_value {
 template<Expression T>
 struct host_or_expression_value<T> {
     using type = expression_value_t<T>;
+};
+
+template<shader::Value T>
+struct host_or_expression_value<Constant<T>> {
+    using type = T;
 };
 
 template<class T>
@@ -220,6 +250,15 @@ template<shader::Value T>
 [[nodiscard]] Expr<T> as_expression(shader::FunctionBuilder& builder, const Expr<T>& expression);
 
 template<shader::Value T>
+[[nodiscard]] Expr<T> as_expression(shader::FunctionBuilder& builder, const Operand<T>& value);
+
+template<shader::Value T>
+[[nodiscard]] Expr<T> as_expression(shader::FunctionBuilder& builder, const Constant<T>& value)
+{
+    return literal(builder, value.value());
+}
+
+template<shader::Value T>
 [[nodiscard]] Expr<T> as_expression(shader::FunctionBuilder& builder, const T& value)
 {
     return literal(builder, value);
@@ -255,7 +294,8 @@ template<class... Arguments>
 {
     const bool foreign = ([&] {
         if constexpr (Expression<Arguments>) {
-            return arguments.builder() != builder || !builder->owns(arguments.id());
+            return arguments.builder() &&
+                (arguments.builder() != builder || !builder->owns(arguments.id()));
         }
         return false;
     }() || ...);
@@ -415,6 +455,36 @@ using Float4x4 = Expr<Mat4>;
 namespace detail {
 
 template<shader::Value T>
+class Operand {
+public:
+    constexpr Operand(Expr<T> value) noexcept
+        : builder_(value.builder()), id_(value.id()) {}
+
+    template<class U> requires std::same_as<std::remove_cvref_t<U>, T>
+    consteval Operand(U&& value) : value_(std::forward<U>(value)) {}
+
+    constexpr Operand(Constant<T> value) : value_(value.value()) {}
+
+    [[nodiscard]] constexpr shader::FunctionBuilder* builder() const noexcept { return builder_; }
+    [[nodiscard]] constexpr shader::ValueId id() const noexcept { return id_; }
+    [[nodiscard]] constexpr const T& value() const noexcept { return value_; }
+
+private:
+    shader::FunctionBuilder* builder_{};
+    shader::ValueId id_{};
+    T value_{};
+};
+
+template<shader::Value T>
+Expr<T> as_expression(shader::FunctionBuilder& builder, const Operand<T>& value)
+{
+    if (value.builder()) {
+        return as_expression(builder, Expr<T>{*value.builder(), value.id()});
+    }
+    return literal(builder, value.value());
+}
+
+template<shader::Value T>
 Expr<T> as_expression(shader::FunctionBuilder& builder, const Expr<T>& expression)
 {
     if (expression.builder() != &builder || !builder.owns(expression.id())) {
@@ -471,7 +541,7 @@ template<class T>
 using expression_value_t = detail::expression_value_t<T>;
 
 template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+    requires detail::Expression<Left> && detail::Expression<Right> &&
              detail::HasExpressionOperand<Left, Right> &&
              detail::ArithmeticPair<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>>
 [[nodiscard]] auto operator+(const Left& left, const Right& right)
@@ -481,7 +551,7 @@ template<class Left, class Right>
 }
 
 template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+    requires detail::Expression<Left> && detail::Expression<Right> &&
              detail::HasExpressionOperand<Left, Right> &&
              detail::ArithmeticPair<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>>
 [[nodiscard]] auto operator-(const Left& left, const Right& right)
@@ -491,7 +561,7 @@ template<class Left, class Right>
 }
 
 template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+    requires detail::Expression<Left> && detail::Expression<Right> &&
              detail::HasExpressionOperand<Left, Right> &&
              (!std::is_void_v<detail::multiply_result_t<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>>>)
 [[nodiscard]] auto operator*(const Left& left, const Right& right)
@@ -501,7 +571,7 @@ template<class Left, class Right>
 }
 
 template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+    requires detail::Expression<Left> && detail::Expression<Right> &&
              detail::HasExpressionOperand<Left, Right> &&
              detail::ArithmeticPair<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>>
 [[nodiscard]] auto operator/(const Left& left, const Right& right)
@@ -511,7 +581,7 @@ template<class Left, class Right>
 }
 
 template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+    requires detail::Expression<Left> && detail::Expression<Right> &&
              detail::HasExpressionOperand<Left, Right> &&
              std::is_same_v<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>> &&
              detail::integral_value_v<detail::host_or_expression_value_t<Left>>
@@ -522,7 +592,7 @@ template<class Left, class Right>
 }
 
 template<class Left, class Right>
-concept IntegralPair = detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+concept IntegralPair = detail::Expression<Left> && detail::Expression<Right> &&
     detail::HasExpressionOperand<Left, Right> &&
     std::is_same_v<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>> &&
     detail::integral_value_v<detail::host_or_expression_value_t<Left>>;
@@ -562,6 +632,115 @@ template<class Left, class Right> requires IntegralPair<Left, Right>
     return detail::binary<Result>(shader::OpCode::shift_right, left, right);
 }
 
+// Non-deduced constant operands force their consteval conversion at the call
+// site, before entering an ordinary shader-building operator.
+#define VNG_DSL_CONSTANT_BINARY(OP, OPCODE, REQUIREMENT, RESULT)                     \
+    template<shader::Value T> requires (REQUIREMENT)                                \
+    [[nodiscard]] auto operator OP(Expr<T> left,                                    \
+        detail::Constant<std::type_identity_t<T>> right)                            \
+    { return detail::binary<RESULT>(shader::OpCode::OPCODE, left, right); }          \
+    template<shader::Value T> requires (REQUIREMENT)                                \
+    [[nodiscard]] auto operator OP(detail::Constant<std::type_identity_t<T>> left,  \
+        Expr<T> right)                                                             \
+    { return detail::binary<RESULT>(shader::OpCode::OPCODE, left, right); }
+
+VNG_DSL_CONSTANT_BINARY(+, add, detail::arithmetic_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(-, subtract, detail::arithmetic_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(*, multiply, detail::arithmetic_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(/, divide, detail::arithmetic_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(%, remainder, detail::integral_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(&, bit_and, detail::integral_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(|, bit_or, detail::integral_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(^, bit_xor, detail::integral_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(<<, shift_left, detail::integral_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(>>, shift_right, detail::integral_value_v<T>, T)
+VNG_DSL_CONSTANT_BINARY(==, equal, !shader::detail::RecordValue<T>, detail::comparison_result_t<T>)
+VNG_DSL_CONSTANT_BINARY(!=, not_equal, !shader::detail::RecordValue<T>, detail::comparison_result_t<T>)
+VNG_DSL_CONSTANT_BINARY(<, less, (detail::numeric_scalar_v<T> || detail::numeric_vector_v<T>), detail::comparison_result_t<T>)
+VNG_DSL_CONSTANT_BINARY(<=, less_equal, (detail::numeric_scalar_v<T> || detail::numeric_vector_v<T>), detail::comparison_result_t<T>)
+VNG_DSL_CONSTANT_BINARY(>, greater, (detail::numeric_scalar_v<T> || detail::numeric_vector_v<T>), detail::comparison_result_t<T>)
+VNG_DSL_CONSTANT_BINARY(>=, greater_equal, (detail::numeric_scalar_v<T> || detail::numeric_vector_v<T>), detail::comparison_result_t<T>)
+#undef VNG_DSL_CONSTANT_BINARY
+
+#define VNG_DSL_BROADCAST_BINARY(OP, OPCODE)                                         \
+    template<class E, std::size_t N> requires detail::numeric_scalar_v<E>             \
+    [[nodiscard]] Expr<Vector<E, N>> operator OP(Expr<Vector<E, N>> left,             \
+        detail::Constant<std::type_identity_t<E>> right)                             \
+    { return detail::binary<Vector<E, N>>(shader::OpCode::OPCODE, left, right); }     \
+    template<class E, std::size_t N> requires detail::numeric_scalar_v<E>             \
+    [[nodiscard]] Expr<Vector<E, N>> operator OP(                                    \
+        detail::Constant<std::type_identity_t<E>> left, Expr<Vector<E, N>> right)    \
+    { return detail::binary<Vector<E, N>>(shader::OpCode::OPCODE, left, right); }     \
+    template<std::size_t N>                                                         \
+    [[nodiscard]] Expr<Matrix<N>> operator OP(Expr<Matrix<N>> left,                   \
+        detail::Constant<f32> right)                                               \
+    { return detail::binary<Matrix<N>>(shader::OpCode::OPCODE, left, right); }        \
+    template<std::size_t N>                                                         \
+    [[nodiscard]] Expr<Matrix<N>> operator OP(detail::Constant<f32> left,             \
+        Expr<Matrix<N>> right)                                                     \
+    { return detail::binary<Matrix<N>>(shader::OpCode::OPCODE, left, right); }
+
+VNG_DSL_BROADCAST_BINARY(+, add)
+VNG_DSL_BROADCAST_BINARY(-, subtract)
+VNG_DSL_BROADCAST_BINARY(*, multiply)
+VNG_DSL_BROADCAST_BINARY(/, divide)
+#undef VNG_DSL_BROADCAST_BINARY
+
+// The scalar can also be the expression while the whole composite is a
+// constant. Its width must be explicit in the overload set because implicit
+// conversions do not participate in template argument deduction.
+#define VNG_DSL_SCALAR_VECTOR_CONSTANT(OP, OPCODE, N)                              \
+    template<class E> requires detail::numeric_scalar_v<E>                        \
+    [[nodiscard]] Expr<Vector<E, N>> operator OP(Expr<E> left,                     \
+        detail::Constant<std::type_identity_t<Vector<E, N>>> right)               \
+    { return detail::binary<Vector<E, N>>(shader::OpCode::OPCODE, left, right); }   \
+    template<class E> requires detail::numeric_scalar_v<E>                        \
+    [[nodiscard]] Expr<Vector<E, N>> operator OP(                                 \
+        detail::Constant<std::type_identity_t<Vector<E, N>>> left, Expr<E> right) \
+    { return detail::binary<Vector<E, N>>(shader::OpCode::OPCODE, left, right); }
+
+#define VNG_DSL_SCALAR_COMPOSITE_CONSTANT(OP, OPCODE)                              \
+    VNG_DSL_SCALAR_VECTOR_CONSTANT(OP, OPCODE, 2)                                  \
+    VNG_DSL_SCALAR_VECTOR_CONSTANT(OP, OPCODE, 3)                                  \
+    VNG_DSL_SCALAR_VECTOR_CONSTANT(OP, OPCODE, 4)                                  \
+    [[nodiscard]] inline Float3x3 operator OP(Float left, detail::Constant<Mat3> right) \
+    { return detail::binary<Mat3>(shader::OpCode::OPCODE, left, right); }           \
+    [[nodiscard]] inline Float3x3 operator OP(detail::Constant<Mat3> left, Float right) \
+    { return detail::binary<Mat3>(shader::OpCode::OPCODE, left, right); }           \
+    [[nodiscard]] inline Float4x4 operator OP(Float left, detail::Constant<Mat4> right) \
+    { return detail::binary<Mat4>(shader::OpCode::OPCODE, left, right); }           \
+    [[nodiscard]] inline Float4x4 operator OP(detail::Constant<Mat4> left, Float right) \
+    { return detail::binary<Mat4>(shader::OpCode::OPCODE, left, right); }
+
+VNG_DSL_SCALAR_COMPOSITE_CONSTANT(+, add)
+VNG_DSL_SCALAR_COMPOSITE_CONSTANT(-, subtract)
+VNG_DSL_SCALAR_COMPOSITE_CONSTANT(*, multiply)
+VNG_DSL_SCALAR_COMPOSITE_CONSTANT(/, divide)
+#undef VNG_DSL_SCALAR_COMPOSITE_CONSTANT
+#undef VNG_DSL_SCALAR_VECTOR_CONSTANT
+
+// Matrix/vector multiplication retains both operand orders and both choices
+// of which value is a compile-time constant.
+template<std::size_t N> requires (N == 3 || N == 4)
+[[nodiscard]] Expr<Vector<f32, N>> operator*(Expr<Matrix<N>> left,
+    detail::Constant<std::type_identity_t<Vector<f32, N>>> right)
+{ return detail::binary<Vector<f32, N>>(shader::OpCode::multiply, left, right); }
+
+template<std::size_t N> requires (N == 3 || N == 4)
+[[nodiscard]] Expr<Vector<f32, N>> operator*(detail::Constant<std::type_identity_t<Vector<f32, N>>> left,
+    Expr<Matrix<N>> right)
+{ return detail::binary<Vector<f32, N>>(shader::OpCode::multiply, left, right); }
+
+template<std::size_t N> requires (N == 3 || N == 4)
+[[nodiscard]] Expr<Vector<f32, N>> operator*(Expr<Vector<f32, N>> left,
+    detail::Constant<std::type_identity_t<Matrix<N>>> right)
+{ return detail::binary<Vector<f32, N>>(shader::OpCode::multiply, left, right); }
+
+template<std::size_t N> requires (N == 3 || N == 4)
+[[nodiscard]] Expr<Vector<f32, N>> operator*(detail::Constant<std::type_identity_t<Matrix<N>>> left,
+    Expr<Vector<f32, N>> right)
+{ return detail::binary<Vector<f32, N>>(shader::OpCode::multiply, left, right); }
+
 template<shader::Value T>
     requires detail::arithmetic_value_v<T> && (!detail::unsigned_value_v<T>)
 [[nodiscard]] Expr<T> operator-(Expr<T> value)
@@ -585,7 +764,7 @@ template<shader::Value T>
 }
 
 template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+    requires detail::Expression<Left> && detail::Expression<Right> &&
              detail::HasExpressionOperand<Left, Right> &&
              std::is_same_v<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>> &&
              (!shader::detail::RecordValue<detail::host_or_expression_value_t<Left>>)
@@ -596,7 +775,7 @@ template<class Left, class Right>
 }
 
 template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+    requires detail::Expression<Left> && detail::Expression<Right> &&
              detail::HasExpressionOperand<Left, Right> &&
              std::is_same_v<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>> &&
              (!shader::detail::RecordValue<detail::host_or_expression_value_t<Left>>)
@@ -607,7 +786,7 @@ template<class Left, class Right>
 }
 
 template<class Left, class Right>
-concept OrderedPair = detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
+concept OrderedPair = detail::Expression<Left> && detail::Expression<Right> &&
     detail::HasExpressionOperand<Left, Right> &&
     std::is_same_v<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>> &&
     (detail::numeric_scalar_v<detail::host_or_expression_value_t<Left>> ||

@@ -56,28 +56,16 @@ int main(int argc, char** argv)
             .samples = 0,
             .default_framebuffer_encoding =
                 vng::render::ColorEncoding::linear,
-            .swap_interval = 1,
         });
     if (!app) {
         return example::fail(app.error());
     }
 
-    const vng::render::GraphicsPipelineDesc baseline{
-        .depth = {
-            .test = true,
-            .write = true,
-            .compare = vng::render::DepthCompare::less,
-        },
-        .cull = vng::render::CullMode::back,
-        .front_face = vng::render::FrontFace::counter_clockwise,
-        .output_encoding = vng::render::ColorEncoding::linear,
-    };
     // Shader definitions, compilation, mesh upload, and VAO prewarming are
-    // renderer-owned setup. The application supplies only its mesh and policy.
+    // renderer-owned setup. Draw tickets choose depth/culling per submission.
     auto renderer = FileMeshRenderer::create(
         app->device(),
-        std::move(*cpu_mesh),
-        baseline);
+        std::move(*cpu_mesh));
     if (!renderer) {
         return example::fail(renderer.error());
     }

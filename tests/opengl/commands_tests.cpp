@@ -32,9 +32,9 @@ using FragmentIn = vng::shader::FragmentInputs<
 using FragmentOut = vng::shader::FragmentOutputs<
     vng::shader::Color<0>>;
 
-template<class Commands, class Pipeline>
-concept BindsPipelineRvalue = requires(Commands& commands, Pipeline&& pipeline) {
-    commands.bind(static_cast<Pipeline&&>(pipeline));
+template<class Commands, class Program>
+concept BindsProgramRvalue = requires(Commands& commands, Program&& program) {
+    commands.bind(static_cast<Program&&>(program));
 };
 
 [[noreturn]] void skip_commands_test(const std::string& reason)
@@ -74,7 +74,7 @@ concept BindsPipelineRvalue = requires(Commands& commands, Pipeline&& pipeline) 
         std::move(*vertex), std::move(*fragment));
 }
 
-[[nodiscard]] vng::render::GraphicsPipelineDesc linear_state()
+[[nodiscard]] vng::opengl::GraphicsStateSnapshot draw_settings()
 {
     return {
         .depth = {
@@ -84,7 +84,6 @@ concept BindsPipelineRvalue = requires(Commands& commands, Pipeline&& pipeline) 
         },
         .cull = vng::render::CullMode::back,
         .front_face = vng::render::FrontFace::counter_clockwise,
-        .output_encoding = vng::render::ColorEncoding::linear,
     };
 }
 
@@ -95,9 +94,9 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
 {
     STATIC_CHECK_FALSE(std::is_copy_constructible_v<vng::opengl::Commands>);
     STATIC_CHECK(std::is_move_constructible_v<vng::opengl::Commands>);
-    STATIC_CHECK_FALSE(BindsPipelineRvalue<
+    STATIC_CHECK_FALSE(BindsProgramRvalue<
         vng::opengl::Commands,
-        vng::opengl::GraphicsPipeline>);
+        vng::opengl::Program>);
 
     auto window = vng::test::create_hidden_opengl_window(
         32, 32, "vng frame commands test");
@@ -111,18 +110,10 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
     auto device = vng::opengl::Device::create(*access);
     REQUIRE(device);
 
-    auto program = camera_program();
+    auto ir = camera_program();
+    REQUIRE(ir);
+    auto program = vng::render::compile_program(*device, *ir);
     REQUIRE(program);
-    auto pipeline = vng::render::compile_pipeline(
-        *device, *program, linear_state());
-    REQUIRE(pipeline);
-
-    auto mismatched_description = linear_state();
-    mismatched_description.output_encoding =
-        vng::render::ColorEncoding::srgb;
-    auto mismatched_pipeline = vng::render::compile_pipeline(
-        *device, *program, mismatched_description);
-    REQUIRE(mismatched_pipeline);
 
     vng::gfx::Mesh<CommandVertex> source(3);
     source.vertices()[0].set(
@@ -150,12 +141,12 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
     auto commands = frame->commands();
     CHECK(commands.active());
 
-    auto missing_pipeline = commands.draw(*mesh);
-    REQUIRE_FALSE(missing_pipeline);
-    CHECK(missing_pipeline.error().message.find("bind(pipeline) first")
+    auto missing_program = commands.draw(*mesh);
+    REQUIRE_FALSE(missing_program);
+    CHECK(missing_program.error().message.find("program")
           != std::string::npos);
 
-    // A valid pipeline from another current context is rejected before any
+    // A valid program from another current context is rejected before any
     // state from it can be installed in this frame's context.
     {
         auto other_window = vng::test::create_hidden_opengl_window(
@@ -165,12 +156,12 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
         REQUIRE(other_access);
         auto other_device = vng::opengl::Device::create(*other_access);
         REQUIRE(other_device);
-        auto foreign_pipeline = vng::render::compile_pipeline(
-            *other_device, *program, linear_state());
-        REQUIRE(foreign_pipeline);
+        auto foreign_program = vng::render::compile_program(
+            *other_device, *ir);
+        REQUIRE(foreign_program);
 
         REQUIRE(window->make_current());
-        auto foreign = commands.bind(*foreign_pipeline);
+        auto foreign = commands.bind(*foreign_program);
         REQUIRE_FALSE(foreign);
         CHECK(foreign.error().code
               == vng::opengl::ErrorCode::incompatible_device);
@@ -180,12 +171,9 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
     }
     REQUIRE(window->make_current());
 
-    auto mismatched = commands.bind(*mismatched_pipeline);
-    REQUIRE_FALSE(mismatched);
-    CHECK(mismatched.error().message.find("target encoding")
-          != std::string::npos);
-
-    REQUIRE(commands.bind(*pipeline));
+    auto graphics = commands.graphics_state();
+    REQUIRE(graphics.set(draw_settings()));
+    REQUIRE(commands.bind(*program));
 
     // The command stream uses generated parameter metadata to prevent a
     // camera-reading shader from accidentally drawing its default matrix.
@@ -249,14 +237,13 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
     constexpr std::int32_t gl_front = 0x0404;
     constexpr std::int32_t gl_cw = 0x0900;
 
-    REQUIRE(commands.depth({
+    REQUIRE(graphics.set(vng::render::DepthState{
         .test = true,
         .write = false,
         .compare = vng::render::DepthCompare::greater_equal,
     }));
-    REQUIRE(commands.cull(
-        vng::render::CullMode::front,
-        vng::render::FrontFace::clockwise));
+    REQUIRE(graphics.set(vng::render::CullMode::front));
+    REQUIRE(graphics.set(vng::render::FrontFace::clockwise));
     CHECK(is_enabled(gl_depth_test) != 0);
     CHECK(is_enabled(gl_cull_face) != 0);
     std::int32_t integer_state{};
@@ -267,11 +254,11 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
     get_integer(gl_front_face, &integer_state);
     CHECK(integer_state == gl_cw);
 
-    // A complete state switch restores the program baseline and applies the
-    // user's new decision. It does not invalidate the already uploaded view.
-    auto draw_state = linear_state();
+    // Applying a snapshot updates draw state independently of the selected
+    // program and does not invalidate its already uploaded view.
+    auto draw_state = draw_settings();
     draw_state.cull = vng::render::CullMode::none;
-    REQUIRE(commands.state(draw_state));
+    REQUIRE(graphics.set(draw_state));
     CHECK(is_enabled(gl_depth_test) != 0);
     CHECK(is_enabled(gl_cull_face) == 0);
     REQUIRE(commands.draw(*mesh));
@@ -290,13 +277,13 @@ TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
 
     REQUIRE(frame->end());
     CHECK_FALSE(commands.active());
-    auto after_end = commands.depth({});
+    auto after_end = graphics.set(vng::render::DepthState{});
     REQUIRE_FALSE(after_end);
     CHECK(after_end.error().message.find("stale or ended")
           != std::string::npos);
 }
 
-TEST_CASE("OpenGL frame command authority is unique and move-safe",
+TEST_CASE("OpenGL frame owns shared command authority across nested borrows and moves",
           "[opengl][commands][lifetime]")
 {
     auto window = vng::test::create_hidden_opengl_window(
@@ -323,23 +310,34 @@ TEST_CASE("OpenGL frame command authority is unique and move-safe",
     auto first = frame->commands();
     CHECK(first.active());
     auto replacement = frame->commands();
-    CHECK_FALSE(first.active());
+    CHECK(first.active());
     CHECK(replacement.active());
 
     auto moved_frame = std::move(*frame);
-    CHECK_FALSE(replacement.active());
+    CHECK(first.active());
+    CHECK(replacement.active());
     auto after_move = moved_frame.commands();
     CHECK(after_move.active());
 
     auto moved_commands = std::move(after_move);
     CHECK_FALSE(after_move.active());
     CHECK(moved_commands.active());
+    CHECK(first.active());
+    CHECK(replacement.active());
+    {
+        auto nested = moved_frame.commands();
+        CHECK(nested.active());
+    }
+    CHECK(first.active());
+    CHECK(replacement.active());
+    CHECK(moved_commands.active());
 
     REQUIRE(moved_frame.end());
+    CHECK_FALSE(first.active());
+    CHECK_FALSE(replacement.active());
     CHECK_FALSE(moved_commands.active());
 
-    // Move assignment is another change of the owning C++ Frame value and
-    // therefore revokes streams obtained from the source value.
+    // Move assignment transfers ownership without changing the frame identity.
     auto successor = vng::render::begin_frame(
         *device,
         vng::render::FrameDesc{
@@ -351,13 +349,15 @@ TEST_CASE("OpenGL frame command authority is unique and move-safe",
     REQUIRE(successor);
     auto before_assignment = successor->commands();
     moved_frame = std::move(*successor);
-    CHECK_FALSE(before_assignment.active());
+    CHECK(before_assignment.active());
     CHECK(moved_frame.active());
+    CHECK_FALSE(first.active()); // a new frame never resurrects old borrows
+    CHECK_FALSE(replacement.active());
+    CHECK_FALSE(moved_commands.active());
     REQUIRE(moved_frame.end());
+    CHECK_FALSE(before_assignment.active());
 
-    // Commands keeps the context state alive, not its Frame. The epoch and
-    // frame generation still make it stale when Frame destruction closes the
-    // scope, without any pointer back to the destroyed object.
+    // Borrowed handles cannot keep the native frame open after its owner dies.
     std::optional<vng::opengl::Commands> after_destruction;
     {
         auto scoped = vng::render::begin_frame(

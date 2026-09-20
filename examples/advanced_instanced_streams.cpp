@@ -111,7 +111,6 @@ int main(int argc, char** argv)
             .samples = 0,
             .default_framebuffer_encoding =
                 vng::render::ColorEncoding::linear,
-            .swap_interval = 1,
         });
     if (!app) {
         return example::fail(app.error());

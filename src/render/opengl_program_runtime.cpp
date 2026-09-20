@@ -108,23 +108,6 @@ void append(StableFingerprint& fingerprint, const Mat4& value) noexcept
     };
 }
 
-[[nodiscard]] std::expected<opengl::Program, opengl::Diagnostic> compile_program(
-    const opengl::Device& device,
-    const glsl::ProgramSource& source)
-{
-    auto vertex = opengl::Shader::compile(
-        device, opengl::from_glsl(source.vertex));
-    if (!vertex) {
-        return std::unexpected(std::move(vertex.error()));
-    }
-    auto fragment = opengl::Shader::compile(
-        device, opengl::from_glsl(source.fragment));
-    if (!fragment) {
-        return std::unexpected(std::move(fragment.error()));
-    }
-    return opengl::Program::link_graphics(device, *vertex, *fragment);
-}
-
 template<class Pixel>
 void flip_rows(std::vector<Pixel>& pixels, analysis::Extent2D extent)
 {
@@ -264,25 +247,108 @@ template<class Raw, class Result, class Convert>
 
 std::expected<OpenGLProgramRuntime, opengl::Diagnostic> OpenGLProgramRuntime::create(
     const opengl::Device& device,
-    shader::GraphicsProgram program,
-    GraphicsPipelineDesc pipeline)
+    shader::GraphicsProgram program)
 {
-    auto normal_pipeline = compile_pipeline(
-        device, program, pipeline);
-    if (!normal_pipeline) {
-        return std::unexpected(std::move(normal_pipeline.error()));
+    auto normal_program = render::compile_program(device, program);
+    if (!normal_program) {
+        return std::unexpected(std::move(normal_program.error()));
     }
-    const auto* normal_source = normal_pipeline->generated_source();
+    const auto* normal_source = normal_program->generated_source();
     if (normal_source == nullptr) {
         return std::unexpected(opengl::Diagnostic{
             .code = opengl::ErrorCode::operation_failed,
-            .message = "the OpenGL pipeline compiler returned no generated source",
+            .message = "the OpenGL program compiler returned no generated source",
         });
     }
     return OpenGLProgramRuntime{
         std::move(program),
-        std::move(*normal_pipeline),
+        std::move(*normal_program),
     };
+}
+
+std::expected<opengl::CaptureState, opengl::Diagnostic>
+OpenGLProgramRuntime::snapshot_state(opengl::Frame& frame)
+{
+    auto commands = frame.commands();
+    auto state = commands.graphics_state().snapshot();
+    if (!state) return std::unexpected(state.error());
+    return opengl::CaptureState{*state, frame.color_encoding()};
+}
+
+std::expected<void, opengl::Diagnostic>
+OpenGLProgramRuntime::validate_state(const opengl::CaptureState& state)
+{
+    const auto& r = state.raster;
+    if (r.blend != BlendMode::disabled || r.polygon != opengl::PolygonMode::fill ||
+        (r.depth.test && !r.depth.write)) {
+        return std::unexpected(opengl::Diagnostic{
+            .code = opengl::ErrorCode::invalid_argument,
+            .message = "Analysis requires opaque filled geometry and depth-writing state when depth testing is enabled",
+        });
+    }
+    if (static_cast<unsigned>(r.depth.compare) > static_cast<unsigned>(DepthCompare::always) ||
+        static_cast<unsigned>(r.cull) > static_cast<unsigned>(CullMode::back) ||
+        static_cast<unsigned>(r.front_face) > static_cast<unsigned>(FrontFace::counter_clockwise) ||
+        (state.target_encoding != ColorEncoding::linear && state.target_encoding != ColorEncoding::srgb)) {
+        return std::unexpected(opengl::Diagnostic{
+            .code = opengl::ErrorCode::invalid_argument, .message = "Invalid capture raster state or target encoding"});
+    }
+    return {};
+}
+
+std::optional<std::vector<u32>>
+OpenGLProgramRuntime::fragment_outputs(const opengl::Program& program)
+{
+    const auto* source = program.generated_source();
+    if (!source) return {};
+    std::vector<u32> outputs;
+    for (const auto& output : source->fragment.interface.outputs) {
+        if (output.builtin == shader::Builtin::fragment_depth) continue;
+        if (!output.location) return {};
+        outputs.push_back(*output.location);
+    }
+    std::ranges::sort(outputs);
+    outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
+    return outputs;
+}
+
+opengl::GraphicsStateSnapshot OpenGLProgramRuntime::effective_raster(
+    const opengl::CaptureState& state, RasterOverride variant)
+{
+    auto result = state.raster;
+    // Depth capture must record the winning fragment even for ordinary opaque
+    // draw-order rendering, where production depth testing is disabled.
+    if (!result.depth.test) result.depth = {true, true, DepthCompare::always};
+    if (variant == RasterOverride::cull_disabled) result.cull = CullMode::none;
+    if (variant == RasterOverride::depth_always) result.depth.compare = DepthCompare::always;
+    return result;
+}
+
+std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::apply_raster(
+    const opengl::Device& device, const opengl::Program& program,
+    const opengl::CaptureState& state, RasterOverride variant)
+{
+    if (auto valid = validate_state(state); !valid) return valid;
+    const auto r = effective_raster(state, variant);
+    constexpr std::array comparisons{opengl::DepthCompare::never, opengl::DepthCompare::less,
+        opengl::DepthCompare::less_equal, opengl::DepthCompare::equal, opengl::DepthCompare::greater_equal,
+        opengl::DepthCompare::greater, opengl::DepthCompare::not_equal, opengl::DepthCompare::always};
+    constexpr std::array culling{opengl::CullMode::none, opengl::CullMode::front, opengl::CullMode::back};
+    constexpr std::array winding{opengl::FrontFaceWinding::clockwise, opengl::FrontFaceWinding::counter_clockwise};
+    if (auto v = device.set_standard_raster_state(); !v) return v;
+    if (auto v = device.set_scissor_enabled(false); !v) return v;
+    if (auto v = device.set_rasterizer_discard_enabled(false); !v) return v;
+    if (auto v = device.set_depth_state({r.depth.test, r.depth.write, comparisons[static_cast<unsigned>(r.depth.compare)]}); !v) return v;
+    if (auto v = device.set_cull_state({culling[static_cast<unsigned>(r.cull)], winding[static_cast<unsigned>(r.front_face)]}); !v) return v;
+    if (auto v = device.set_framebuffer_srgb_enabled(false); !v) return v;
+    const auto outputs = fragment_outputs(program);
+    if (!outputs) return std::unexpected(opengl::Diagnostic{.code = opengl::ErrorCode::operation_failed,
+        .message = "Capture program has no emitted interface"});
+    for (auto output : *outputs) {
+        if (auto v = device.set_blend_enabled(output, false); !v) return v;
+        if (auto v = device.set_color_write_mask(output, {true, true, true, true}); !v) return v;
+    }
+    return program.bind();
 }
 
 std::expected<gfx::CameraSnapshot, opengl::Diagnostic>
@@ -301,11 +367,11 @@ OpenGLProgramRuntime::snapshot_camera(
 }
 
 float OpenGLProgramRuntime::default_analysis_clear_depth(
-    const GraphicsPipelineDesc& pipeline) noexcept
+    const opengl::GraphicsStateSnapshot& raster) noexcept
 {
-    if (pipeline.depth.test
-        && (pipeline.depth.compare == DepthCompare::greater
-            || pipeline.depth.compare == DepthCompare::greater_equal)) {
+    if (raster.depth.test
+        && (raster.depth.compare == DepthCompare::greater
+            || raster.depth.compare == DepthCompare::greater_equal)) {
         return 0.0F;
     }
     return 1.0F;
@@ -343,6 +409,8 @@ OpenGLProgramRuntime::bind_camera_parameters(
                 return uploaded;
             }
             break;
+        case shader::ParameterKind::argument:
+            break;
         }
     }
     return {};
@@ -351,28 +419,20 @@ OpenGLProgramRuntime::bind_camera_parameters(
 std::expected<void, opengl::Diagnostic>
 OpenGLProgramRuntime::ensure_analysis_program(const opengl::Device& device)
 {
-    if (!normal_pipeline_.belongs_to(device)) {
+    if (!normal_program_.belongs_to(device)) {
         return std::unexpected(opengl::Diagnostic{
             .code = opengl::ErrorCode::incompatible_device,
             .message = "OpenGLProgramRuntime belongs to a different device/context",
         });
     }
-    if (analysis_pipeline_) {
-        if (!analysis_pipeline_->belongs_to(device)) {
+    if (analysis_program_) {
+        if (!analysis_program_->belongs_to(device)) {
             return std::unexpected(opengl::Diagnostic{
                 .code = opengl::ErrorCode::incompatible_device,
-                .message = "OpenGLProgramRuntime analysis pipeline belongs to a different device/context",
+                .message = "OpenGLProgramRuntime analysis program belongs to a different device/context",
             });
         }
         return {};
-    }
-
-    const auto& normal_description = normal_pipeline_.description();
-    if (normal_description.depth.test && !normal_description.depth.write) {
-        return std::unexpected(opengl::Diagnostic{
-            .code = opengl::ErrorCode::invalid_argument,
-            .message = "OpenGLProgramRuntime analysis currently requires depth-writing opaque pipeline state",
-        });
     }
 
     auto source = glsl::emit(program_, glsl::AnalysisEmission{});
@@ -401,31 +461,11 @@ OpenGLProgramRuntime::ensure_analysis_program(const opengl::Device& device)
         });
     }
 
-    auto program = compile_program(device, *source);
+    auto program = opengl::compile_graphics_program(device, *source);
     if (!program) {
         return std::unexpected(std::move(program.error()));
     }
-    auto analysis_description = normal_description;
-    // OpenGL only updates a depth attachment while depth testing is enabled.
-    // ALWAYS reproduces opaque draw-order visibility for a technique whose
-    // production state disables depth testing while still capturing the
-    // winning fragment's depth.
-    if (!analysis_description.depth.test) {
-        analysis_description.depth.test = true;
-        analysis_description.depth.write = true;
-        analysis_description.depth.compare = DepthCompare::always;
-    }
-    // Analysis color has a backend-neutral linear RGBA8 contract.
-    analysis_description.output_encoding = ColorEncoding::linear;
-    auto analysis_pipeline = opengl::GraphicsPipeline::realize_emitted(
-        device,
-        std::move(*program),
-        *source,
-        analysis_description);
-    if (!analysis_pipeline) {
-        return std::unexpected(std::move(analysis_pipeline.error()));
-    }
-    analysis_pipeline_.emplace(std::move(*analysis_pipeline));
+    analysis_program_.emplace(std::move(*program));
     return {};
 }
 
@@ -439,7 +479,7 @@ OpenGLProgramRuntime::ensure_observation_product(
         requested.semantic_type,
         &ObservationProduct::semantic_type);
     if (existing != observation_products_.end()) {
-        if (!existing->pipeline.belongs_to(device)) {
+        if (!existing->program.belongs_to(device)) {
             return std::unexpected(opengl::Diagnostic{
                 .code = opengl::ErrorCode::incompatible_device,
                 .message = "cached shader observation belongs to a different device/context",
@@ -466,29 +506,13 @@ OpenGLProgramRuntime::ensure_observation_product(
         });
     }
 
-    auto program = compile_program(device, *source);
+    auto program = opengl::compile_graphics_program(device, *source);
     if (!program) {
         return std::unexpected(std::move(program.error()));
     }
-    auto description = normal_pipeline_.description();
-    if (!description.depth.test) {
-        description.depth.test = true;
-        description.depth.write = true;
-        description.depth.compare = DepthCompare::always;
-    }
-    description.output_encoding = ColorEncoding::linear;
-    auto pipeline = opengl::GraphicsPipeline::realize_emitted(
-        device,
-        std::move(*program),
-        *source,
-        description);
-    if (!pipeline) {
-        return std::unexpected(std::move(pipeline.error()));
-    }
-
     observation_products_.push_back(ObservationProduct{
         .semantic_type = requested.semantic_type,
-        .pipeline = std::move(*pipeline),
+        .program = std::move(*program),
         .target = std::nullopt,
     });
     return &observation_products_.back();
@@ -585,7 +609,8 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_observation(
     const opengl::Device& device,
     ObservationProduct& product,
     analysis::Extent2D extent,
-    float clear_depth)
+    float clear_depth,
+    const opengl::CaptureState& state)
 {
     if (!product.target || product.target->extent != extent) {
         return std::unexpected(opengl::Diagnostic{
@@ -605,9 +630,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_observation(
         !viewport) {
         return viewport;
     }
-    if (auto pipeline = product.pipeline.bind(device); !pipeline) {
-        return pipeline;
-    }
+    if (auto configured = apply_raster(device, product.program, state, RasterOverride::production); !configured) return configured;
     if (auto blend = device.set_blend_enabled(target.attachment, false);
         !blend) {
         return blend;
@@ -777,10 +800,11 @@ OpenGLProgramRuntime::make_frame_evidence(
     analysis::RenderInvocationIdentity invocation,
     std::vector<analysis::EvidenceChannel> observations,
     const opengl::DiagnosticCursor& diagnostic_cursor,
-    RasterOverride raster_override) const
+    RasterOverride raster_override,
+    const opengl::CaptureState& state) const
 {
-    const auto& production_pipeline = normal_pipeline_.description();
-    auto effective_raster = analysis_pipeline_->description();
+    const auto& production_raster = state.raster;
+    auto effective_raster = OpenGLProgramRuntime::effective_raster(state, raster_override);
     std::string raster_name;
     switch (raster_override) {
     case RasterOverride::production:
@@ -828,20 +852,20 @@ OpenGLProgramRuntime::make_frame_evidence(
             {"backend.opengl.version",
              std::to_string(device.major_version()) + "."
                  + std::to_string(device.minor_version())},
-            {"pipeline.production.color_encoding", std::string{encoding_name(
-                 production_pipeline.output_encoding)}},
-            {"pipeline.production.cull", std::string{cull_name(
-                 production_pipeline.cull)}},
-            {"pipeline.production.depth.compare", std::string{compare_name(
-                 production_pipeline.depth.compare)}},
-            {"pipeline.production.depth.test",
-             production_pipeline.depth.test ? "true" : "false"},
-            {"pipeline.production.depth.write",
-             production_pipeline.depth.write ? "true" : "false"},
-            {"pipeline.production.front_face", std::string{front_face_name(
-                 production_pipeline.front_face)}},
+            {"raster.production.color_encoding", std::string{encoding_name(
+                 state.target_encoding)}},
+            {"raster.production.cull", std::string{cull_name(
+                 production_raster.cull)}},
+            {"raster.production.depth.compare", std::string{compare_name(
+                 production_raster.depth.compare)}},
+            {"raster.production.depth.test",
+             production_raster.depth.test ? "true" : "false"},
+            {"raster.production.depth.write",
+             production_raster.depth.write ? "true" : "false"},
+            {"raster.production.front_face", std::string{front_face_name(
+                 production_raster.front_face)}},
             {"raster.effective.color_encoding", std::string{encoding_name(
-                 effective_raster.output_encoding)}},
+                 ColorEncoding::linear)}},
             {"raster.effective.cull", std::string{cull_name(
                  effective_raster.cull)}},
             {"raster.effective.depth.compare", std::string{compare_name(
@@ -852,6 +876,8 @@ OpenGLProgramRuntime::make_frame_evidence(
              effective_raster.depth.write ? "true" : "false"},
             {"raster.effective.front_face", std::string{front_face_name(
                  effective_raster.front_face)}},
+            {"raster.production.blend", "disabled"},
+            {"raster.production.polygon", "fill"},
             {"raster.variant", raster_name},
         },
     };
@@ -909,21 +935,21 @@ OpenGLProgramRuntime::make_frame_evidence(
         });
     }
 
-    std::ostringstream pipeline_text;
-    pipeline_text
+    std::ostringstream raster_text;
+    raster_text
         << "raster.variant=" << raster_name << '\n'
-        << "pipeline.production.depth.test="
-        << (production_pipeline.depth.test ? "true" : "false") << '\n'
-        << "pipeline.production.depth.write="
-        << (production_pipeline.depth.write ? "true" : "false") << '\n'
-        << "pipeline.production.depth.compare="
-        << compare_name(production_pipeline.depth.compare) << '\n'
-        << "pipeline.production.cull="
-        << cull_name(production_pipeline.cull) << '\n'
-        << "pipeline.production.front_face="
-        << front_face_name(production_pipeline.front_face) << '\n'
-        << "pipeline.production.color_encoding="
-        << encoding_name(production_pipeline.output_encoding) << '\n'
+        << "raster.production.depth.test="
+        << (production_raster.depth.test ? "true" : "false") << '\n'
+        << "raster.production.depth.write="
+        << (production_raster.depth.write ? "true" : "false") << '\n'
+        << "raster.production.depth.compare="
+        << compare_name(production_raster.depth.compare) << '\n'
+        << "raster.production.cull="
+        << cull_name(production_raster.cull) << '\n'
+        << "raster.production.front_face="
+        << front_face_name(production_raster.front_face) << '\n'
+        << "raster.production.color_encoding="
+        << encoding_name(state.target_encoding) << '\n'
         << "raster.effective.depth.test="
         << (effective_raster.depth.test ? "true" : "false") << '\n'
         << "raster.effective.depth.write="
@@ -934,11 +960,11 @@ OpenGLProgramRuntime::make_frame_evidence(
         << "raster.effective.front_face="
         << front_face_name(effective_raster.front_face) << '\n'
         << "raster.effective.color_encoding="
-        << encoding_name(effective_raster.output_encoding) << '\n';
+        << encoding_name(ColorEncoding::linear) << '\n';
     artifacts.push_back({
-        .name = "pipeline/state.txt",
+        .name = "raster/state.txt",
         .media_type = "text/plain",
-        .text = std::move(pipeline_text).str(),
+        .text = std::move(raster_text).str(),
     });
 
     auto diagnostic_snapshot = device.diagnostics_since(diagnostic_cursor);
@@ -976,7 +1002,8 @@ OpenGLProgramRuntime::make_frame_evidence(
 analysis::RenderInvocationIdentity OpenGLProgramRuntime::make_invocation_identity(
     gfx::MeshTopologyFingerprint topology,
     const RenderView& view,
-    const AnalysisOptions& options) const
+    const AnalysisOptions& options,
+    const opengl::CaptureState& state) const
 {
     StableFingerprint workload{"vng.render.workload.v1"};
     workload.append(topology.low);
@@ -991,6 +1018,15 @@ analysis::RenderInvocationIdentity OpenGLProgramRuntime::make_invocation_identit
     workload.append(options.provenance.material
         ? options.provenance.material->value : u64{});
     append(workload, options.provenance.object_to_world);
+    if (!options.resource_fingerprint.empty()) {
+        workload.append(std::string_view{"renderer-resources-v1"});
+        workload.append(options.resource_fingerprint);
+    }
+    workload.append(std::string_view{"shader-argument-snapshots-v1"});
+    for (const auto& argument : production().argument_snapshots()) {
+        workload.append(static_cast<u64>(argument.words.size()));
+        for (const auto word : argument.words) workload.append(static_cast<u64>(word));
+    }
 
     StableFingerprint view_fingerprint{"vng.render.view.v1"};
     view_fingerprint.append(static_cast<u64>(view.extent().width));
@@ -1008,19 +1044,21 @@ analysis::RenderInvocationIdentity OpenGLProgramRuntime::make_invocation_identit
         append(view_fingerprint, camera.view_projection);
     }
 
-    const auto& pipeline = normal_pipeline_.description();
+    const auto& raster = state.raster;
     StableFingerprint renderer{"vng.render.renderer.v1"};
     renderer.append(program_.vertex().dump_ir());
     renderer.append(program_.fragment().dump_ir());
     renderer.append(program_.dump_interface());
-    renderer.append(static_cast<u64>(pipeline.depth.test));
-    renderer.append(static_cast<u64>(pipeline.depth.write));
-    renderer.append(static_cast<u64>(pipeline.depth.compare));
-    renderer.append(static_cast<u64>(pipeline.cull));
-    renderer.append(static_cast<u64>(pipeline.front_face));
-    renderer.append(static_cast<u64>(pipeline.output_encoding));
+    renderer.append(static_cast<u64>(raster.depth.test));
+    renderer.append(static_cast<u64>(raster.depth.write));
+    renderer.append(static_cast<u64>(raster.depth.compare));
+    renderer.append(static_cast<u64>(raster.cull));
+    renderer.append(static_cast<u64>(raster.front_face));
+    renderer.append(static_cast<u64>(raster.blend));
+    renderer.append(static_cast<u64>(raster.polygon));
 
-    StableFingerprint target{"vng.render.analysis-target.v1"};
+    StableFingerprint target{"vng.render.analysis-target.v2"};
+    target.append(static_cast<u64>(state.target_encoding));
     target.append(static_cast<u64>(view.extent().width));
     target.append(static_cast<u64>(view.extent().height));
     target.append(std::string_view{
@@ -1030,7 +1068,7 @@ analysis::RenderInvocationIdentity OpenGLProgramRuntime::make_invocation_identit
     }
     target.append(options.clear_depth.has_value());
     target.append(options.clear_depth.value_or(
-        default_analysis_clear_depth(pipeline)));
+        default_analysis_clear_depth(raster)));
 
     return {
         .workload_fingerprint = workload.finish(),
@@ -1141,6 +1179,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_analysis(
     analysis::FrameItemId first_item,
     const std::array<float, 4>& clear_color,
     float clear_depth,
+    const opengl::CaptureState& state,
     RasterOverride raster_override)
 {
     if (auto target = ensure_analysis_target(device, extent); !target) {
@@ -1158,41 +1197,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_analysis(
         !viewport) {
         return viewport;
     }
-    if (auto pipeline = analysis_pipeline_->bind(device); !pipeline) {
-        return pipeline;
-    }
-    if (raster_override == RasterOverride::cull_disabled) {
-        opengl::FrontFaceWinding front_face{};
-        switch (analysis_pipeline_->description().front_face) {
-        case FrontFace::clockwise:
-            front_face = opengl::FrontFaceWinding::clockwise;
-            break;
-        case FrontFace::counter_clockwise:
-            front_face = opengl::FrontFaceWinding::counter_clockwise;
-            break;
-        default:
-            return std::unexpected(opengl::Diagnostic{
-                .code = opengl::ErrorCode::operation_failed,
-                .message = "analysis pipeline retained an invalid front-face winding",
-            });
-        }
-        if (auto cull = device.set_cull_state({
-                .mode = opengl::CullMode::none,
-                .front_face = front_face,
-            });
-            !cull) {
-            return cull;
-        }
-    } else if (raster_override == RasterOverride::depth_always) {
-        if (auto depth = device.set_depth_state({
-                .test_enabled = true,
-                .write_enabled = true,
-                .compare = opengl::DepthCompare::always,
-            });
-            !depth) {
-            return depth;
-        }
-    }
+    if (auto configured = apply_raster(device, *analysis_program_, state, raster_override); !configured) return configured;
     if (auto blend = device.set_blend_enabled(
             target.surface_key_attachment, false);
         !blend) {
@@ -1222,7 +1227,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_analysis(
         return cleared;
     }
 
-    auto uniform = analysis_pipeline_->program().set_uniform_u32(
+    auto uniform = analysis_program_->set_uniform_u32(
         analysis_source()->analysis->first_item_uniform_location,
         first_item.value);
     if (!uniform) {

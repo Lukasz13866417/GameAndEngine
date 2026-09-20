@@ -7,7 +7,7 @@ namespace vng::opengl {
 
 // Conversion boundary between a context-free GLSL artifact and the OpenGL
 // compiler. Low-level ShaderSource remains usable without this header; the
-// high-level graphics-pipeline compiler uses it internally.
+// high-level program compiler uses it internally.
 [[nodiscard]] inline ShaderSource from_glsl(const glsl::StageSource& source)
 {
     ShaderSource result;

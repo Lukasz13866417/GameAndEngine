@@ -115,22 +115,18 @@ int main(int argc, char** argv)
             .samples = 0,
             .default_framebuffer_encoding =
                 vng::render::ColorEncoding::linear,
-            .swap_interval = 1,
         });
     if (!app) {
         return example::fail(app.error());
     }
 
-    // This convenience owns one mesh and one pipeline. See
-    // file_mesh_renderer.cpp for a Renderer<Ticket> with its own shaders and
+    // This convenience owns one mesh and one program. See
+    // file_mesh_renderer.cpp for an opengl::Renderer<Ticket> with its own shaders and
     // command policy, or file_mesh_direct.cpp for the renderer-free path.
     auto renderer = vng::render::make_simple_mesh_renderer(
         app->device(),
         std::move(*shader_program),
-        std::move(*cpu_mesh),
-        vng::render::GraphicsPipelineDesc{
-            .output_encoding = vng::render::ColorEncoding::linear,
-        });
+        std::move(*cpu_mesh));
     if (!renderer) {
         return example::fail(renderer.error());
     }

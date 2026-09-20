@@ -8,6 +8,8 @@
 
 #include <vng/render/renderer.hpp>
 #include <vng/render/frame.hpp>
+// These identity-only headers must work even in an OpenGL-disabled build.
+#include <vng/opengl/renderer.hpp>
 
 namespace fake_render_backend {
 
@@ -15,15 +17,26 @@ struct Ticket final {
     int value{};
 };
 
-struct Device final {};
-
-struct OtherFrame final {};
+struct Device;
+struct OtherDevice;
+struct Frame;
+struct OtherFrame;
+struct Backend final {
+    using device_type = Device;
+    using frame_type = Frame;
+};
+struct OtherBackend final {
+    using device_type = OtherDevice;
+    using frame_type = OtherFrame;
+};
+struct Device final { using backend_type = Backend; };
+struct OtherDevice final { using backend_type = OtherBackend; };
 
 struct Diagnostic final {
     std::string message;
 };
 
-struct Frame final {
+struct FrameStorage {
     std::size_t draws{};
     int total{};
     vng::Extent2D target_extent{};
@@ -33,6 +46,8 @@ struct Frame final {
     [[nodiscard]] vng::Extent2D extent() const noexcept { return target_extent; }
     void end() noexcept { open = false; }
 };
+struct Frame final : FrameStorage { using backend_type = Backend; };
+struct OtherFrame final : FrameStorage { using backend_type = OtherBackend; };
 
 struct CaptureRequest final {
     int scale{1};
@@ -51,7 +66,7 @@ struct CaptureRequest final {
     return result;
 }
 
-class TestRenderer final : public vng::render::Renderer<Ticket> {
+class TestRenderer final : public vng::render::Renderer<Ticket, Backend> {
 public:
     [[nodiscard]] std::expected<void, Diagnostic> render(
         Frame& frame,
@@ -88,9 +103,9 @@ public:
     }
 };
 
-class MissingRender final : public vng::render::Renderer<Ticket> {};
+class MissingRender final : public vng::render::Renderer<Ticket, Backend> {};
 
-class StatefulRenderer final : public vng::render::Renderer<Ticket> {
+class StatefulRenderer final : public vng::render::Renderer<Ticket, Backend> {
 public:
     int state{};
 
@@ -107,12 +122,52 @@ public:
 class RendererLookalike final {
 public:
     using ticket_type = Ticket;
+    using backend_type = Backend;
 
     void render(
         Frame&,
         const vng::render::RenderView&,
         std::span<const Ticket>)
     {}
+};
+
+class BroadRenderer final : public vng::render::Renderer<Ticket, Backend> {
+public:
+    template<class AnyFrame>
+    void render(AnyFrame&, const vng::render::RenderView&, std::span<const Ticket>) {}
+};
+class WrongFrameRenderer final : public vng::render::Renderer<Ticket, Backend> {
+public:
+    void render(OtherFrame&, const vng::render::RenderView&, std::span<const Ticket>) {}
+};
+class WrongBackendAlias final : public vng::render::Renderer<Ticket, Backend> {
+public:
+    using backend_type = OtherBackend;
+};
+class PrivateRenderer final : private vng::render::Renderer<Ticket, Backend> {
+public:
+    using ticket_type = Ticket;
+    using backend_type = Backend;
+};
+
+template<vng::render::Backend B>
+class PortableRenderer final : public vng::render::Renderer<Ticket, B> {
+public:
+    PortableRenderer() = default;
+    void render(typename B::frame_type& frame, const vng::render::RenderView&,
+                std::span<const Ticket> tickets) noexcept {
+        frame.draws += tickets.size();
+        for(auto ticket : tickets) frame.total += ticket.value;
+    }
+};
+template<vng::render::BackendBound DeviceType>
+auto make_renderer(DeviceType&) { return PortableRenderer<vng::render::backend_t<DeviceType>>{}; }
+
+template<class B>
+concept RendererBackend = requires { typename vng::render::Renderer<Ticket, B>; };
+template<class R, class F>
+concept CanRenderOne = requires(R& renderer, F& frame, const vng::render::RenderView& view, const Ticket& ticket) {
+    vng::render::render_one(renderer, frame, view, ticket);
 };
 
 } // namespace fake_render_backend
@@ -127,6 +182,9 @@ TEST_CASE("a concrete renderer owns its policy and accepts ticket batches")
     STATIC_CHECK(vng::render::RendererFor<TestRenderer, Frame>);
     STATIC_CHECK(std::is_same_v<
         vng::render::renderer_ticket_t<TestRenderer>, Ticket>);
+    STATIC_CHECK(std::same_as<vng::render::backend_t<TestRenderer>, Backend>);
+    STATIC_CHECK(std::same_as<vng::render::backend_t<const TestRenderer&>, Backend>);
+    STATIC_CHECK(vng::render::SameBackend<TestRenderer, Device>);
 
     Frame frame;
     const auto view = vng::render::RenderView::without_camera({320, 200});
@@ -166,21 +224,36 @@ TEST_CASE("renderer concepts reject missing policy and mismatched backends")
 
     STATIC_CHECK_FALSE(vng::render::RendererType<int>);
     STATIC_CHECK_FALSE(
-        vng::render::RendererType<vng::render::Renderer<Ticket>>);
+        vng::render::RendererType<vng::render::Renderer<Ticket, Backend>>);
     STATIC_CHECK_FALSE(vng::render::RendererType<RendererLookalike>);
     STATIC_CHECK(vng::render::RendererType<MissingRender>);
     STATIC_CHECK_FALSE(vng::render::RendererFor<MissingRender, Frame>);
     STATIC_CHECK_FALSE(vng::render::RendererFor<TestRenderer, OtherFrame>);
+    STATIC_CHECK(vng::render::RendererFor<BroadRenderer, Frame>);
+    STATIC_CHECK_FALSE(vng::render::RendererFor<BroadRenderer, OtherFrame>);
+    STATIC_CHECK_FALSE(CanRenderOne<BroadRenderer, OtherFrame>);
+    STATIC_CHECK_FALSE(vng::render::RendererFor<BroadRenderer, FrameStorage>); // missing backend identity
+    STATIC_CHECK_FALSE(vng::render::RendererFor<BroadRenderer, Device>); // not a frame
+    STATIC_CHECK(vng::render::RendererType<WrongFrameRenderer>);
+    STATIC_CHECK_FALSE(vng::render::RendererFor<WrongFrameRenderer, Frame>);
+    STATIC_CHECK_FALSE(vng::render::RendererFor<WrongFrameRenderer, OtherFrame>);
+    STATIC_CHECK_FALSE(vng::render::RendererType<WrongBackendAlias>);
+    STATIC_CHECK_FALSE(vng::render::RendererType<PrivateRenderer>);
+    STATIC_CHECK_FALSE(vng::render::SameBackend<Frame, int>);
+    STATIC_CHECK_FALSE(RendererBackend<int>);
+    STATIC_CHECK_FALSE(RendererBackend<void>);
+    STATIC_CHECK_FALSE(RendererBackend<const Backend>);
 }
 
 TEST_CASE("renderer identity has no runtime dispatch or storage overhead")
 {
     using namespace fake_render_backend;
 
-    STATIC_CHECK(std::is_empty_v<vng::render::Renderer<Ticket>>);
-    STATIC_CHECK_FALSE(std::is_polymorphic_v<vng::render::Renderer<Ticket>>);
+    STATIC_CHECK(std::is_empty_v<vng::render::Renderer<Ticket, Backend>>);
+    STATIC_CHECK_FALSE(std::is_polymorphic_v<vng::render::Renderer<Ticket, Backend>>);
     STATIC_CHECK_FALSE(
-        std::has_virtual_destructor_v<vng::render::Renderer<Ticket>>);
+        std::has_virtual_destructor_v<vng::render::Renderer<Ticket, Backend>>);
+    STATIC_CHECK_FALSE(std::is_default_constructible_v<vng::render::Renderer<Ticket, Backend>>);
     STATIC_CHECK(std::is_empty_v<TestRenderer>);
     STATIC_CHECK_FALSE(std::is_polymorphic_v<StatefulRenderer>);
     STATIC_CHECK(vng::render::RendererFor<StatefulRenderer, Frame>);
@@ -212,4 +285,42 @@ TEST_CASE("frame creation dispatches to a backend without entering render core")
         device, vng::render::FrameDesc{});
     REQUIRE_FALSE(invalid);
     CHECK(invalid.error().message == "empty fake frame");
+}
+
+TEST_CASE("one portable renderer policy realizes distinct backend types from devices") {
+    using namespace fake_render_backend;
+    Device device;
+    OtherDevice other_device;
+    auto first = make_renderer(device);
+    auto second = make_renderer(other_device);
+    STATIC_CHECK(!std::same_as<decltype(first), decltype(second)>);
+    STATIC_CHECK(vng::render::RendererFor<decltype(first), Frame>);
+    STATIC_CHECK(vng::render::RendererFor<decltype(second), OtherFrame>);
+    STATIC_CHECK_FALSE(vng::render::RendererFor<decltype(first), OtherFrame>);
+    STATIC_CHECK_FALSE(vng::render::RendererFor<decltype(second), Frame>);
+    STATIC_CHECK(CanRenderOne<decltype(first), Frame>);
+    Frame frame;
+    OtherFrame other_frame;
+    const auto view = vng::render::RenderView::without_camera({320,200});
+    const Ticket ticket{5};
+    STATIC_CHECK(noexcept(vng::render::render_one(first, frame, view, ticket)));
+    vng::render::render_one(first, frame, view, ticket);
+    vng::render::render_one(second, other_frame, view, ticket);
+    CHECK(frame.total == 5);
+    CHECK(other_frame.total == 5);
+    CHECK(frame.draws == 1);
+    CHECK(other_frame.draws == 1);
+}
+
+TEST_CASE("OpenGL renderer shorthand is a lightweight explicit backend contract") {
+    using Ticket = fake_render_backend::Ticket;
+    using Base = vng::opengl::Renderer<Ticket>;
+    STATIC_CHECK(vng::render::Backend<vng::opengl::Backend>);
+    STATIC_CHECK(std::same_as<Base,vng::render::Renderer<Ticket,vng::opengl::Backend>>);
+    STATIC_CHECK(std::same_as<vng::render::backend_t<Base>,vng::opengl::Backend>);
+    STATIC_CHECK(std::same_as<vng::opengl::Backend::device_type,vng::opengl::Device>);
+    STATIC_CHECK(std::same_as<vng::opengl::Backend::frame_type,vng::opengl::Frame>);
+    STATIC_CHECK_FALSE(vng::render::RendererType<Base>);
+    STATIC_CHECK(std::is_empty_v<Base>);
+    STATIC_CHECK_FALSE(std::is_polymorphic_v<Base>);
 }

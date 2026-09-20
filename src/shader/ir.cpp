@@ -59,10 +59,16 @@ namespace {
     return false;
 }
 
-[[nodiscard]] bool is_removable(Effect effect)
+[[nodiscard]] bool is_removable(const Operation& operation)
 {
+    const auto effect = operation.effect;
+    // Only this explicitly read-only resource operation is removable. Do not
+    // treat arbitrary storage_read effects as pure across future writes.
+    if (operation.opcode == OpCode::matrix_buffer_read && effect == Effect::storage_read) {
+        return true;
+    }
     return effect == Effect::pure || effect == Effect::input_read ||
-           effect == Effect::parameter_read;
+           effect == Effect::parameter_read || effect == Effect::texture_read;
 }
 
 [[nodiscard]] const ConstantPayload* constant_for(const ModuleIR& module, ValueId value)
@@ -486,7 +492,9 @@ Result<void> validate(const ModuleIR& module)
                 module.parameters.begin(),
                 module.parameters.begin() + static_cast<std::ptrdiff_t>(index),
                 [&](const ParameterField& previous) {
-                    return previous.kind == parameter.kind;
+                    return previous.kind == parameter.kind
+                        && (parameter.kind != ParameterKind::argument
+                            || previous.argument_index == parameter.argument_index);
                 })) {
             return std::unexpected(invalid_ir(
                 "parameter " + std::to_string(index) + " duplicates parameter kind "
@@ -500,6 +508,12 @@ Result<void> validate(const ModuleIR& module)
                 type.columns != 4 || type.rows != 4) {
                 return std::unexpected(invalid_ir(
                     "camera_view_projection parameter must have type Mat4"));
+            }
+            break;
+        case ParameterKind::argument:
+            if (parameter.argument_type == typeid(void) || type.kind == TypeKind::poison
+                || (type.kind == TypeKind::record && type.members.empty())) {
+                return std::unexpected(invalid_ir("argument requires a nonempty logical value type"));
             }
             break;
         default:
@@ -588,6 +602,9 @@ Result<void> validate(const ModuleIR& module)
             case OpCode::input:
             case OpCode::stage_output: return std::holds_alternative<InterfacePayload>(operation.payload);
             case OpCode::parameter: return std::holds_alternative<ParameterPayload>(operation.payload);
+            case OpCode::texture_sample:
+            case OpCode::texture_sample_lod: return std::holds_alternative<TextureSamplePayload>(operation.payload);
+            case OpCode::matrix_buffer_read: return std::holds_alternative<MatrixBufferPayload>(operation.payload);
             case OpCode::extract_field: return std::holds_alternative<FieldPayload>(operation.payload);
             case OpCode::swizzle: return std::holds_alternative<SwizzlePayload>(operation.payload);
             default: return std::holds_alternative<std::monostate>(operation.payload);
@@ -678,6 +695,9 @@ Result<void> validate(const ModuleIR& module)
             switch (operation.opcode) {
             case OpCode::input: return Effect::input_read;
             case OpCode::parameter: return Effect::parameter_read;
+            case OpCode::texture_sample:
+            case OpCode::texture_sample_lod: return Effect::texture_read;
+            case OpCode::matrix_buffer_read: return Effect::storage_read;
             case OpCode::stage_output: return Effect::storage_write;
             case OpCode::return_: return Effect::termination;
             case OpCode::if_region:
@@ -732,6 +752,54 @@ Result<void> validate(const ModuleIR& module)
                     module,
                     operation_index,
                     "malformed or incorrectly typed parameter read"));
+            }
+        } else if (operation.opcode == OpCode::texture_sample ||
+                   operation.opcode == OpCode::texture_sample_lod) {
+            const bool explicit_lod = operation.opcode == OpCode::texture_sample_lod;
+            if (auto count = require_operands(explicit_lod ? 2U : 1U); !count) return count;
+            if (auto result = require_result(); !result) return result;
+            if (!explicit_lod && module.stage != StageKind::fragment) {
+                return std::unexpected(invalid_operation(
+                    module, operation_index,
+                    "implicit-derivative texture sampling requires a fragment stage"));
+            }
+            if (explicit_lod && module.stage != StageKind::vertex &&
+                module.stage != StageKind::fragment) {
+                return std::unexpected(invalid_operation(
+                    module, operation_index, "explicit-LOD texture sampling requires a graphics stage"));
+            }
+            if (explicit_lod) {
+                const auto& level = description(operation.operands[1]);
+                if (level.kind != TypeKind::scalar || level.scalar != ScalarKind::f32) {
+                    return std::unexpected(invalid_operation(
+                        module, operation_index, "texture LOD must be an f32 scalar"));
+                }
+            }
+            const auto& coordinates = description(operation.operands[0]);
+            const auto& sampled = result_description();
+            if (coordinates.kind != TypeKind::vector ||
+                coordinates.scalar != ScalarKind::f32 || coordinates.columns != 2 ||
+                sampled.kind != TypeKind::vector ||
+                sampled.scalar != ScalarKind::f32 || sampled.columns != 4) {
+                return std::unexpected(invalid_operation(
+                    module, operation_index,
+                    "2D texture sampling requires Vec2 coordinates and a Vec4 result"));
+            }
+        } else if (operation.opcode == OpCode::matrix_buffer_read) {
+            if (auto count = require_operands(1); !count) return count;
+            if (auto result = require_result(); !result) return result;
+            if (module.stage != StageKind::vertex && module.stage != StageKind::fragment) {
+                return std::unexpected(invalid_operation(
+                    module, operation_index, "matrix buffer reads require a graphics stage"));
+            }
+            const auto& index = description(operation.operands[0]);
+            const auto& matrix = result_description();
+            if (index.kind != TypeKind::scalar || index.scalar != ScalarKind::u32 ||
+                matrix.kind != TypeKind::matrix || matrix.scalar != ScalarKind::f32 ||
+                matrix.columns != 4 || matrix.rows != 4) {
+                return std::unexpected(invalid_operation(
+                    module, operation_index,
+                    "matrix buffer reads require a UInt index and a Mat4 result"));
             }
         } else if (operation.opcode == OpCode::extract_field) {
             if (auto count = require_operands(1); !count) return count;
@@ -808,7 +876,13 @@ Result<void> validate(const ModuleIR& module)
                    operation.opcode == OpCode::logical_not ||
                    operation.opcode == OpCode::bit_not ||
                    operation.opcode == OpCode::normalize ||
-                   operation.opcode == OpCode::square_root) {
+                   operation.opcode == OpCode::square_root ||
+                   operation.opcode == OpCode::sine ||
+                   operation.opcode == OpCode::cosine ||
+                   operation.opcode == OpCode::absolute ||
+                   operation.opcode == OpCode::floor ||
+                   operation.opcode == OpCode::fract ||
+                   operation.opcode == OpCode::exponential) {
             if (auto count = require_operands(1); !count) return count;
             if (auto result = require_result(); !result) return result;
             const auto& operand = description(operation.operands[0]);
@@ -825,6 +899,9 @@ Result<void> validate(const ModuleIR& module)
                 valid = integral(operand);
             } else if (operation.opcode == OpCode::normalize) {
                 valid = operand.kind == TypeKind::vector && operand.scalar == ScalarKind::f32;
+            } else if (operation.opcode == OpCode::absolute) {
+                valid = (operand.kind == TypeKind::scalar || operand.kind == TypeKind::vector) &&
+                        (operand.scalar == ScalarKind::f32 || operand.scalar == ScalarKind::i32);
             } else {
                 valid = (operand.kind == TypeKind::scalar || operand.kind == TypeKind::vector) &&
                         operand.scalar == ScalarKind::f32;
@@ -917,7 +994,8 @@ Result<void> validate(const ModuleIR& module)
                 return std::unexpected(invalid_operation(module, operation_index, "cast changes value shape"));
             }
         } else if (operation.opcode == OpCode::dot || operation.opcode == OpCode::cross ||
-                   operation.opcode == OpCode::minimum || operation.opcode == OpCode::maximum) {
+                   operation.opcode == OpCode::minimum || operation.opcode == OpCode::maximum ||
+                   operation.opcode == OpCode::power) {
             if (auto count = require_operands(2); !count) return count;
             if (auto result = require_result(); !result) return result;
             const auto left_id = value_type(operation.operands[0]);
@@ -930,6 +1008,10 @@ Result<void> validate(const ModuleIR& module)
             } else if (operation.opcode == OpCode::cross) {
                 valid = valid && left.kind == TypeKind::vector && left.scalar == ScalarKind::f32 &&
                         left.columns == 3 && module.values[operation.result.value].type == left_id;
+            } else if (operation.opcode == OpCode::power) {
+                valid = valid &&
+                        (left.kind == TypeKind::scalar || left.kind == TypeKind::vector) &&
+                        left.scalar == ScalarKind::f32 && module.values[operation.result.value].type == left_id;
             } else {
                 valid = valid &&
                         (left.kind == TypeKind::scalar || left.kind == TypeKind::vector) &&
@@ -1094,7 +1176,7 @@ void optimize(ModuleIR& module)
 
     std::vector<bool> live(module.operations.size());
     for (u32 index = 0; index < module.operations.size(); ++index) {
-        if (!is_removable(module.operations[index].effect)) {
+        if (!is_removable(module.operations[index])) {
             mark_live(module, OperationId{index}, live);
         }
     }
@@ -1212,6 +1294,9 @@ std::string_view opcode_name(OpCode opcode) noexcept
     case OpCode::constant: return "constant";
     case OpCode::input: return "input";
     case OpCode::parameter: return "parameter";
+    case OpCode::texture_sample: return "texture_sample";
+    case OpCode::texture_sample_lod: return "texture_sample_lod";
+    case OpCode::matrix_buffer_read: return "matrix_buffer_read";
     case OpCode::construct: return "construct";
     case OpCode::extract_field: return "extract_field";
     case OpCode::swizzle: return "swizzle";
@@ -1243,6 +1328,13 @@ std::string_view opcode_name(OpCode opcode) noexcept
     case OpCode::clamp: return "clamp";
     case OpCode::mix: return "mix";
     case OpCode::square_root: return "sqrt";
+    case OpCode::sine: return "sin";
+    case OpCode::cosine: return "cos";
+    case OpCode::absolute: return "abs";
+    case OpCode::floor: return "floor";
+    case OpCode::fract: return "fract";
+    case OpCode::exponential: return "exp";
+    case OpCode::power: return "pow";
     case OpCode::all: return "all";
     case OpCode::any: return "any";
     case OpCode::select: return "select";
@@ -1260,6 +1352,8 @@ std::string_view parameter_kind_name(ParameterKind kind) noexcept
     switch (kind) {
     case ParameterKind::camera_view_projection:
         return "camera_view_projection";
+    case ParameterKind::argument:
+        return "argument";
     }
     return "unknown";
 }
@@ -1316,6 +1410,10 @@ std::string dump_ir(const ModuleIR& module)
                     module.parameters[parameter->parameter].kind);
             }
             stream << ']';
+        } else if (const auto* texture = std::get_if<TextureSamplePayload>(&operation.payload)) {
+            stream << " [binding=" << texture->binding << ']';
+        } else if (const auto* buffer = std::get_if<MatrixBufferPayload>(&operation.payload)) {
+            stream << " [binding=" << buffer->binding << ']';
         } else if (const auto* field = std::get_if<FieldPayload>(&operation.payload)) {
             stream << " [" << field->field << ']';
         } else if (const auto* swizzle = std::get_if<SwizzlePayload>(&operation.payload)) {
@@ -1367,8 +1465,9 @@ std::string dump_interface(const ModuleIR& module)
         stream << "parameters:\n";
         for (u32 index = 0; index < module.parameters.size(); ++index) {
             const auto& parameter = module.parameters[index];
-            stream << "  [" << index << "] " << parameter_kind_name(parameter.kind)
-                   << " : ";
+            stream << "  [" << index << "] " << parameter_kind_name(parameter.kind);
+            if (parameter.kind == ParameterKind::argument) stream << '[' << parameter.argument_index << ']';
+            stream << " : ";
             if (parameter.type.valid() && parameter.type.value < module.types.size()) {
                 stream << type_name(module.types[parameter.type]);
             } else {

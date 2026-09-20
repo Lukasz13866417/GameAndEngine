@@ -2,6 +2,7 @@
 #include <vng/glsl/glsl.hpp>
 #include <vng/opengl/glsl_source.hpp>
 #include <vng/opengl/opengl.hpp>
+#include <vng/render/program.hpp>
 #include <vng/shader/shader.hpp>
 #include "../support/glfw_opengl.hpp"
 
@@ -124,11 +125,11 @@ TEST_CASE("GpuMesh uploads split semantic streams and draws indexed triangles",
         *device, *vertex_shader, *fragment_shader);
     INFO((program ? std::string{} : describe_gpu_mesh_error(program.error())));
     REQUIRE(program.has_value());
-    auto pipeline = vng::render::compile_pipeline(*device, *shader_program);
-    INFO((pipeline
+    auto compiled_program = vng::render::compile_program(*device, *shader_program);
+    INFO((compiled_program
         ? std::string{}
-        : describe_gpu_mesh_error(pipeline.error())));
-    REQUIRE(pipeline.has_value());
+        : describe_gpu_mesh_error(compiled_program.error())));
+    REQUIRE(compiled_program.has_value());
 
     // The CPU mesh deliberately stores color before position. Shader input
     // order, stream order, and physical color encoding are independent.
@@ -160,7 +161,18 @@ TEST_CASE("GpuMesh uploads split semantic streams and draws indexed triangles",
     REQUIRE(framebuffer->bind().has_value());
     REQUIRE(framebuffer->clear_color(0, {0.0F, 0.0F, 0.0F, 1.0F}).has_value());
     REQUIRE(device->viewport(0, 0, 32, 32).has_value());
-    auto drawn = gpu_mesh->draw(*device, *pipeline);
+    auto frame = vng::render::begin_frame(
+        *device, *framebuffer, vng::render::FrameDesc{
+            .extent = {32, 32},
+            .color_encoding = vng::render::ColorEncoding::linear,
+            .clear_color = std::nullopt, .clear_depth = std::nullopt,
+        });
+    REQUIRE(frame);
+    auto commands = frame->commands();
+    auto graphics = commands.graphics_state();
+    REQUIRE(graphics.set(vng::render::DepthTest{false}));
+    REQUIRE(commands.run(*compiled_program));
+    auto drawn = commands.draw(*gpu_mesh);
     INFO((drawn ? std::string{} : describe_gpu_mesh_error(drawn.error())));
     REQUIRE(drawn.has_value());
     CHECK(gpu_mesh->cached_vertex_input_count() == 1);
@@ -169,6 +181,7 @@ TEST_CASE("GpuMesh uploads split semantic streams and draws indexed triangles",
     auto pixels = framebuffer->read_rgba8(0, 0, 0, 32, 32);
     REQUIRE(pixels.has_value());
     CHECK(red_pixel(*pixels, 32, 16, 16));
+    REQUIRE(frame->end());
 
     // A second valid location order gets its own VAO; returning to the first
     // contract reuses the existing entry.

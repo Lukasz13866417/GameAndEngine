@@ -3,10 +3,20 @@
 #include <vng/shader/shader.hpp>
 
 #include <utility>
+#include <cmath>
 
 namespace file_mesh_example {
+namespace {
+constexpr vng::opengl::GraphicsStateSnapshot raster(const FileMeshDraw& draw)
+{
+    return vng::opengl::GraphicsStateSnapshot{
+        .depth = {draw.depth_test, draw.depth_write, vng::render::DepthCompare::less},
+        .cull = draw.cull, .front_face = vng::render::FrontFace::counter_clockwise,
+        .blend = vng::render::BlendMode::disabled, .polygon = vng::opengl::PolygonMode::fill};
+}
+}
 
-vng::shader::Result<vng::shader::GraphicsProgram>
+vng::shader::Result<vng::shader::TypedGraphicsProgram<vng::f32>>
 FileMeshRenderer::create_shader_program()
 {
     using VertexIn = vng::shader::VertexInputs<Position, Color>;
@@ -33,8 +43,9 @@ FileMeshRenderer::create_shader_program()
 
     auto fragment = vng::shader::fragment<FragmentIn, FragmentOut>(
         "file_mesh_fragment",
-        [](auto& stage) {
-            const auto color = stage.input(Color{});
+        [](auto& stage, vng::dsl::Float brightness) {
+            const auto source = stage.input(Color{});
+            const auto color = vng::dsl::vec4(source.xyz() * brightness, source.w());
             stage.observe(SurfaceColor{}, color);
             return stage.output(
                 field<vng::shader::Color<0>>(color));
@@ -50,16 +61,15 @@ FileMeshRenderer::create_shader_program()
 std::expected<FileMeshRenderer, FileMeshRendererDiagnostic>
 FileMeshRenderer::create(
     vng::opengl::Device& device,
-    Mesh mesh,
-    vng::render::GraphicsPipelineDesc baseline)
+    Mesh mesh)
 {
     auto program = create_shader_program();
     if (!program) {
         return std::unexpected(FileMeshRendererDiagnostic{
             std::move(program.error())});
     }
-    auto shader_runtime = vng::render::OpenGLProgramRuntime::create(
-        device, std::move(*program), baseline);
+    auto shader_runtime = ShaderRuntime::create(
+        device, std::move(*program));
     if (!shader_runtime) {
         return std::unexpected(FileMeshRendererDiagnostic{
             std::move(shader_runtime.error())});
@@ -70,7 +80,7 @@ FileMeshRenderer::create(
             std::move(gpu_mesh.error())});
     }
     if (auto prepared = gpu_mesh->prepare_vertex_input(
-            device, shader_runtime->normal_pipeline());
+            device, shader_runtime->production());
         !prepared) {
         return std::unexpected(FileMeshRendererDiagnostic{
             std::move(prepared.error())});
@@ -79,7 +89,6 @@ FileMeshRenderer::create(
         std::move(*shader_runtime),
         std::move(mesh),
         std::move(*gpu_mesh),
-        baseline,
     };
 }
 
@@ -95,37 +104,20 @@ std::expected<void, vng::opengl::Diagnostic> FileMeshRenderer::render(
         return {};
     }
 
-    auto commands = frame.commands();
-    if (auto bound = commands.bind(shader_runtime_.normal_pipeline());
-        !bound) {
-        return bound;
-    }
-    if (auto bound_view = commands.view(view); !bound_view) {
-        return bound_view;
+    auto commands = frame.render_context();
+    for (const auto& draw : draws) {
+        if (!std::isfinite(draw.brightness) || draw.brightness < 0.0F)
+            return std::unexpected(vng::opengl::Diagnostic{
+                .code = vng::opengl::ErrorCode::invalid_argument,
+                .message = "Brightness must be finite and nonnegative"});
     }
 
     // These decisions belong to this renderer. A different ticket can
     // change them between draws without constructing another renderer.
-    auto active_state = baseline_;
     for (const auto& draw : draws) {
-        auto requested = baseline_;
-        requested.depth.test = draw.depth_test;
-        requested.depth.write = draw.depth_write;
-        requested.cull = draw.cull;
-        if (requested.depth != active_state.depth) {
-            if (auto changed = commands.depth(requested.depth); !changed) {
-                return changed;
-            }
-        }
-        if (requested.cull != active_state.cull
-            || requested.front_face != active_state.front_face) {
-            if (auto changed = commands.cull(
-                    requested.cull, requested.front_face);
-                !changed) {
-                return changed;
-            }
-        }
-        active_state = requested;
+        if (auto configured = commands.graphics_state().set(raster(draw)); !configured) return configured;
+        if (auto bound = commands.run(shader_runtime_.production(), draw.brightness); !bound) return bound;
+        if (auto bound_view = commands.view(view); !bound_view) return bound_view;
         if (auto drawn = commands.draw(gpu_mesh_, draw.instance_count);
             !drawn) {
             return drawn;
@@ -144,8 +136,11 @@ FileMeshRenderer::capture(
     if (auto valid = validate_diagnostic(frame, view, draws); !valid) {
         return std::unexpected(std::move(valid.error()));
     }
+    if (auto supplied = shader_runtime_.set_arguments(draws.front().brightness); !supplied)
+        return std::unexpected(std::move(supplied.error()));
     return shader_runtime_.capture(
-        frame.device(), source_, gpu_mesh_, view, request);
+        frame.device(), source_, gpu_mesh_, view,
+        vng::opengl::CaptureState{raster(draws.front()), frame.color_encoding()}, request);
 }
 
 std::expected<vng::analysis::DiagnosticSweep, vng::opengl::Diagnostic>
@@ -158,19 +153,20 @@ FileMeshRenderer::diagnose(
     if (auto valid = validate_diagnostic(frame, view, draws); !valid) {
         return std::unexpected(std::move(valid.error()));
     }
+    if (auto supplied = shader_runtime_.set_arguments(draws.front().brightness); !supplied)
+        return std::unexpected(std::move(supplied.error()));
     return shader_runtime_.diagnose(
-        frame.device(), source_, gpu_mesh_, view, request);
+        frame.device(), source_, gpu_mesh_, view,
+        vng::opengl::CaptureState{raster(draws.front()), frame.color_encoding()}, request);
 }
 
 FileMeshRenderer::FileMeshRenderer(
-    vng::render::OpenGLProgramRuntime shader_runtime,
+    ShaderRuntime shader_runtime,
     Mesh source,
-    vng::opengl::GpuMesh<Vertex> gpu_mesh,
-    vng::render::GraphicsPipelineDesc baseline) noexcept
+    vng::opengl::GpuMesh<Vertex> gpu_mesh) noexcept
     : shader_runtime_(std::move(shader_runtime)),
       source_(std::move(source)),
-      gpu_mesh_(std::move(gpu_mesh)),
-      baseline_(baseline)
+      gpu_mesh_(std::move(gpu_mesh))
 {}
 
 std::expected<void, vng::opengl::Diagnostic>
@@ -208,16 +204,10 @@ FileMeshRenderer::validate_diagnostic(
             .message = "FileMeshRenderer diagnostics currently require one non-instanced ticket",
         });
     }
-    auto requested = baseline_;
-    requested.depth.test = draws.front().depth_test;
-    requested.depth.write = draws.front().depth_write;
-    requested.cull = draws.front().cull;
-    if (requested != baseline_) {
+    if (!std::isfinite(draws.front().brightness) || draws.front().brightness < 0.0F)
         return std::unexpected(vng::opengl::Diagnostic{
             .code = vng::opengl::ErrorCode::invalid_argument,
-            .message = "FileMeshRenderer diagnostics currently require its production baseline state",
-        });
-    }
+            .message = "Brightness must be finite and nonnegative"});
     return {};
 }
 

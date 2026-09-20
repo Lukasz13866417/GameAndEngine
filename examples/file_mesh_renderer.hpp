@@ -7,6 +7,7 @@
 #include <variant>
 
 #include <vng/opengl/opengl.hpp>
+#include <vng/opengl/renderer.hpp>
 #include <vng/render/opengl.hpp>
 #include <vng/render/render.hpp>
 #include <vng/shader/diagnostic.hpp>
@@ -25,14 +26,15 @@ struct FileMeshDraw final {
     bool depth_test{true};
     bool depth_write{true};
     vng::render::CullMode cull{vng::render::CullMode::back};
+    vng::f32 brightness{1.0F};
 };
 
 // A real application renderer: it owns its policy and resources, and directly
-// decides which state to establish for every ticket. Renderer<Ticket> is only
+// decides which state to establish for every ticket. opengl::Renderer<Ticket> is only
 // a zero-cost compile-time identity; there is no virtual dispatch or hidden
 // one-technique implementation inside the base.
 class FileMeshRenderer final
-    : public vng::render::Renderer<FileMeshDraw> {
+    : public vng::opengl::Renderer<FileMeshDraw> {
 public:
     using Mesh = vng::gfx::Mesh<Vertex>;
 
@@ -41,8 +43,7 @@ public:
         FileMeshRendererDiagnostic>
     create(
         vng::opengl::Device& device,
-        Mesh mesh,
-        vng::render::GraphicsPipelineDesc baseline);
+        Mesh mesh);
 
     [[nodiscard]] std::expected<void, vng::opengl::Diagnostic> render(
         vng::opengl::Frame& frame,
@@ -68,14 +69,14 @@ public:
         const vng::analysis::CaptureRequest& request);
 
 private:
-    [[nodiscard]] static vng::shader::Result<vng::shader::GraphicsProgram>
+    using ShaderRuntime = vng::render::TypedOpenGLProgramRuntime<vng::f32>;
+    [[nodiscard]] static vng::shader::Result<vng::shader::TypedGraphicsProgram<vng::f32>>
     create_shader_program();
 
     FileMeshRenderer(
-        vng::render::OpenGLProgramRuntime shader_runtime,
+        ShaderRuntime shader_runtime,
         Mesh source,
-        vng::opengl::GpuMesh<Vertex> gpu_mesh,
-        vng::render::GraphicsPipelineDesc baseline) noexcept;
+        vng::opengl::GpuMesh<Vertex> gpu_mesh) noexcept;
 
     [[nodiscard]] static std::expected<void, vng::opengl::Diagnostic>
     validate_frame(
@@ -90,10 +91,9 @@ private:
 
     // Destruction is reverse declaration order: GPU resources are released
     // before the CPU provenance and shader/diagnostic runtime they reference.
-    vng::render::OpenGLProgramRuntime shader_runtime_;
+    ShaderRuntime shader_runtime_;
     Mesh source_;
     vng::opengl::GpuMesh<Vertex> gpu_mesh_;
-    vng::render::GraphicsPipelineDesc baseline_;
 };
 
 static_assert(vng::render::RendererFor<

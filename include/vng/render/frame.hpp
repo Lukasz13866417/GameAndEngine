@@ -7,6 +7,7 @@
 
 #include <vng/core/types.hpp>
 #include <vng/render/color.hpp>
+#include <vng/render/backend.hpp>
 
 namespace vng::render {
 
@@ -51,7 +52,7 @@ template<class Device, class Target>
         description))
 {
     // Deliberately unqualified: Device or Target selects the backend through
-    // ADL, just like render::compile_pipeline.
+    // ADL, just like render::compile_program.
     return begin_backend_frame(
         device,
         std::forward<Target>(target),
@@ -95,7 +96,7 @@ struct BeginFrame final {
 inline constexpr BeginFrame begin_frame{};
 
 template<class T>
-concept Frame = requires(T& value, const T& constant) {
+concept Frame = BackendBound<T> && requires(T& value, const T& constant) {
     { constant.active() } noexcept -> std::same_as<bool>;
     { constant.extent() } noexcept -> std::same_as<Extent2D>;
     value.end();

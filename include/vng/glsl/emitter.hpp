@@ -37,11 +37,27 @@ struct InterfaceMetadata {
     friend bool operator==(const InterfaceMetadata&, const InterfaceMetadata&) = default;
 };
 
+// Uniform storage is a backend lowering choice, never a CPU record ABI.
+// Records are flattened into logical leaves and rebuilt in the shader.
+struct ParameterLeaf final {
+    std::string name;
+    shader::ScalarKind scalar{shader::ScalarKind::f32};
+    std::uint32_t columns{1};
+    std::uint32_t rows{1};
+    std::uint32_t word_offset{};
+    std::uint32_t location{};
+    friend bool operator==(const ParameterLeaf&, const ParameterLeaf&) = default;
+};
+
 struct ParameterMetadata final {
     shader::ParameterKind kind{shader::ParameterKind::camera_view_projection};
     std::string name;
     std::string glsl_type;
     std::uint32_t location{};
+    std::uint32_t argument_index{};
+    std::type_index argument_type{typeid(void)};
+    std::uint32_t word_count{};
+    std::vector<ParameterLeaf> leaves;
 
     friend bool operator==(const ParameterMetadata&, const ParameterMetadata&) = default;
 };
@@ -52,6 +68,10 @@ struct StageSource {
     std::string source;
     std::vector<SourceMapEntry> source_map;
     InterfaceMetadata interface;
+    // Sorted, unique slots of the sampler2D resources used by this emission.
+    std::vector<std::uint32_t> texture_bindings{};
+    // Sorted, unique read-only Mat4 buffer slots used by this emission.
+    std::vector<std::uint32_t> matrix_buffer_bindings{};
 
     [[nodiscard]] const SourceMapEntry* mapping_for_line(
         std::uint32_t generated_line) const noexcept;
@@ -155,6 +175,8 @@ struct ProgramSource {
     std::vector<ParameterMetadata> parameters;
     std::optional<AnalysisEmissionMetadata> analysis;
     std::optional<ObservationEmissionMetadata> observation;
+    std::vector<std::uint32_t> texture_bindings{};
+    std::vector<std::uint32_t> matrix_buffer_bindings{};
 
     [[nodiscard]] std::string dump() const;
 };
@@ -183,5 +205,13 @@ struct ProgramSource {
     const ObservationEmission& request);
 
 [[nodiscard]] std::string dump_source(const ProgramSource& program);
+
+template<shader::Argument... Args, class... Options>
+[[nodiscard]] auto emit(const shader::TypedGraphicsProgram<Args...>& program,
+                        const Options&... options)
+    -> decltype(emit(program.untyped(), options...))
+{
+    return emit(program.untyped(), options...);
+}
 
 } // namespace vng::glsl

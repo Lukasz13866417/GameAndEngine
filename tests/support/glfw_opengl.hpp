@@ -28,8 +28,7 @@ create_hidden_opengl_window(
             .samples = 0,
             .default_framebuffer_encoding =
                 render::ColorEncoding::linear,
-            .swap_interval = 0,
-        });
+        }, {.vsync = window::VSync::off});
 }
 
 } // namespace vng::test

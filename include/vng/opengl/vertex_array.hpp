@@ -71,6 +71,11 @@ public:
     [[nodiscard]] std::expected<void, Diagnostic> set_element_buffer(
         const Buffer& buffer);
 
+    // Rebind storage without changing attribute formats or the binding divisor.
+    [[nodiscard]] std::expected<void, Diagnostic> set_vertex_buffer(
+        std::uint32_t binding, const Buffer& buffer, std::size_t offset,
+        std::uint32_t stride);
+
     [[nodiscard]] std::expected<void, Diagnostic> bind() const;
     [[nodiscard]] std::expected<void, Diagnostic> destroy();
 

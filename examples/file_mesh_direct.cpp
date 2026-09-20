@@ -7,7 +7,7 @@
 #include <vng/content/content.hpp>
 #include <vng/gfx/gfx.hpp>
 #include <vng/opengl/opengl.hpp>
-#include <vng/render/opengl.hpp>
+#include <vng/render/render.hpp>
 #include <vng/shader/shader.hpp>
 
 #include <array>
@@ -57,10 +57,11 @@ int main(int argc, char** argv)
     // example deliberately keeps this same work inside FileMeshRenderer.
     auto vertex = vng::shader::vertex<VertexIn, VertexOut>(
         "direct_file_mesh_vertex",
-        [](auto& stage) {
+        [](auto& stage, vng::dsl::Float4x4 model) {
+            const auto world = model * vng::dsl::vec4(stage.input(Position{}), 1.0F);
             return stage.output(
                 field<vng::shader::ClipPosition>(
-                    stage.camera().project(stage.input(Position{}))),
+                    stage.camera().project(world.xyz())),
                 field<Color>(stage.input(Color{})));
         });
     if (!vertex) {
@@ -69,8 +70,9 @@ int main(int argc, char** argv)
 
     auto fragment = vng::shader::fragment<FragmentIn, FragmentOut>(
         "direct_file_mesh_fragment",
-        [](auto& stage) {
-            const auto color = stage.input(Color{});
+        [](auto& stage, vng::dsl::Float brightness) {
+            const auto source = stage.input(Color{});
+            const auto color = vng::dsl::vec4(source.xyz() * brightness, source.w());
             stage.observe(SurfaceColor{}, color);
             return stage.output(
                 field<vng::shader::Color<0>>(color));
@@ -96,33 +98,21 @@ int main(int argc, char** argv)
             .samples = 0,
             .default_framebuffer_encoding =
                 vng::render::ColorEncoding::linear,
-            .swap_interval = 1,
         });
     if (!app) {
         return example::fail(app.error());
     }
 
-    const vng::render::GraphicsPipelineDesc pipeline_description{
-        .depth = {
-            .test = true,
-            .write = true,
-            .compare = vng::render::DepthCompare::less,
-        },
-        .cull = vng::render::CullMode::back,
-        .front_face = vng::render::FrontFace::counter_clockwise,
-        .output_encoding = vng::render::ColorEncoding::linear,
-    };
-    auto pipeline = vng::render::compile_pipeline(
-        app->device(), *shader_program, pipeline_description);
-    if (!pipeline) {
-        return example::fail(pipeline.error());
+    auto program = vng::render::compile_program(app->device(), *shader_program);
+    if (!program) {
+        return example::fail(program.error());
     }
     auto gpu_mesh = vng::opengl::upload_mesh(app->device(), *cpu_mesh);
     if (!gpu_mesh) {
         return example::fail(gpu_mesh.error());
     }
     if (auto prepared = gpu_mesh->prepare_vertex_input(
-            app->device(), *pipeline);
+            app->device(), *program);
         !prepared) {
         return example::fail(prepared.error());
     }
@@ -136,6 +126,10 @@ int main(int argc, char** argv)
             .far_plane = 100.0F,
         });
 
+    // The shader lambdas run once above. These ordinary CPU values are read
+    // again at each run() call, so changing either affects the next draw.
+    auto model = vng::Mat4::identity();
+    float brightness = 1.0F;
     example::WindowLoop loop{app->window(), options->frame_limit};
     while (const auto extent = loop.next_extent()) {
         auto frame = vng::render::begin_frame(
@@ -155,8 +149,18 @@ int main(int argc, char** argv)
             return example::fail(view.error());
         }
 
-        auto commands = frame->commands();
-        if (auto bound = commands.bind(*pipeline); !bound) {
+        auto commands = frame->render_context();
+        auto graphics = commands.graphics_state();
+        if (auto changed = graphics.set(vng::render::DepthTest{true}); !changed) {
+            return example::fail(changed.error());
+        }
+        if (auto changed = graphics.set(vng::render::DepthWrite{true}); !changed) {
+            return example::fail(changed.error());
+        }
+        if (auto changed = graphics.set(vng::render::CullMode::back); !changed) {
+            return example::fail(changed.error());
+        }
+        if (auto bound = commands.run(*program, model, brightness); !bound) {
             return example::fail(bound.error());
         }
         if (auto viewed = commands.view(*view); !viewed) {

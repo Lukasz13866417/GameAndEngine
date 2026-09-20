@@ -11,8 +11,7 @@
 #include <vng/opengl/frame.hpp>
 #include <vng/opengl/gpu_mesh.hpp>
 #include <vng/render/opengl_program_runtime.hpp>
-#include <vng/render/pipeline.hpp>
-#include <vng/render/renderer.hpp>
+#include <vng/opengl/renderer.hpp>
 #include <vng/render/simple_mesh_renderer.hpp>
 #include <vng/render/view.hpp>
 #include <vng/shader/program.hpp>
@@ -20,20 +19,20 @@
 namespace vng::opengl {
 
 // Optional convenience renderer for applications that only need to draw one
-// owned mesh with one ordinary pipeline. It is a concrete renderer policy, not
-// the renderer abstraction: custom renderers can own any number of pipelines,
+// owned mesh with one program. It is a concrete renderer policy, not
+// the renderer abstraction: custom renderers can own any number of programs,
 // meshes, and other resources and issue their own Frame commands directly.
+// This convenience uses the current frame graphics state for draw and capture.
 template<gfx::RecordType... Records>
-class SimpleMeshRenderer final : public render::Renderer<render::MeshDraw> {
+class SimpleMeshRenderer final : public Renderer<render::MeshDraw> {
 public:
     [[nodiscard]] static std::expected<SimpleMeshRenderer, Diagnostic> create(
         Device& device,
         shader::GraphicsProgram program,
-        gfx::Mesh<Records...> mesh,
-        render::GraphicsPipelineDesc pipeline = {})
+        gfx::Mesh<Records...> mesh)
     {
         auto runtime = render::OpenGLProgramRuntime::create(
-            device, std::move(program), pipeline);
+            device, std::move(program));
         if (!runtime) {
             return std::unexpected(std::move(runtime.error()));
         }
@@ -42,7 +41,7 @@ public:
             return std::unexpected(std::move(gpu_mesh.error()));
         }
         if (auto prepared = gpu_mesh->prepare_vertex_input(
-                device, runtime->normal_pipeline());
+                device, runtime->production());
             !prepared) {
             return std::unexpected(std::move(prepared.error()));
         }
@@ -71,7 +70,7 @@ public:
             return {};
         }
         auto commands = frame.commands();
-        if (auto bound = commands.bind(runtime_.normal_pipeline()); !bound) {
+        if (auto bound = commands.run(runtime_.production()); !bound) {
             return bound;
         }
         if (auto uploaded = commands.view(view); !uploaded) {
@@ -96,7 +95,7 @@ public:
             return std::unexpected(std::move(valid.error()));
         }
         return runtime_.capture(
-            frame.device(), source_, gpu_mesh_, view, request);
+            frame, source_, gpu_mesh_, view, request);
     }
 
     [[nodiscard]] std::expected<analysis::DiagnosticSweep, Diagnostic> diagnose(
@@ -109,7 +108,7 @@ public:
             return std::unexpected(std::move(valid.error()));
         }
         return runtime_.diagnose(
-            frame.device(), source_, gpu_mesh_, view, request);
+            frame, source_, gpu_mesh_, view, request);
     }
 
 private:
@@ -166,7 +165,7 @@ private:
     }
 
     // Destruction is reverse declaration order: the backend mesh goes first,
-    // then CPU provenance, then the shader/pipeline and diagnostic caches.
+    // then CPU provenance, then the program and diagnostic caches.
     render::OpenGLProgramRuntime runtime_;
     gfx::Mesh<Records...> source_;
     GpuMesh<Records...> gpu_mesh_;
@@ -177,7 +176,7 @@ private:
 namespace vng::render {
 
 // Explicit opt-in convenience for the deliberately narrow one-mesh/one-
-// pipeline case. Including only the backend-neutral render headers does not
+// program case. Including only the backend-neutral render headers does not
 // make this factory available.
 template<gfx::RecordType... Records>
 [[nodiscard]] std::expected<opengl::SimpleMeshRenderer<Records...>,
@@ -185,11 +184,10 @@ template<gfx::RecordType... Records>
 make_simple_mesh_renderer(
     opengl::Device& device,
     shader::GraphicsProgram program,
-    gfx::Mesh<Records...> mesh,
-    GraphicsPipelineDesc pipeline = {})
+    gfx::Mesh<Records...> mesh)
 {
     return opengl::SimpleMeshRenderer<Records...>::create(
-        device, std::move(program), std::move(mesh), pipeline);
+        device, std::move(program), std::move(mesh));
 }
 
 } // namespace vng::render

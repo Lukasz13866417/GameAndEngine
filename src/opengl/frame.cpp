@@ -1,6 +1,9 @@
 #include <vng/opengl/frame.hpp>
+#include <vng/opengl/framebuffer.hpp>
+#include <vng/opengl/image.hpp>
 
 #include "context_state.hpp"
+#include "gl_error.hpp"
 
 #include <cmath>
 #include <limits>
@@ -15,10 +18,9 @@ Frame::Frame(Frame&& other) noexcept
       color_encoding_(std::exchange(
           other.color_encoding_,
           render::ColorEncoding::srgb)),
-      generation_(std::exchange(other.generation_, 0))
-{
-    (void)renew_command_stream();
-}
+      generation_(std::exchange(other.generation_, 0)),
+      attachment_image_handles_(std::move(other.attachment_image_handles_))
+{}
 
 Frame& Frame::operator=(Frame&& other) noexcept
 {
@@ -30,7 +32,7 @@ Frame& Frame::operator=(Frame&& other) noexcept
             other.color_encoding_,
             render::ColorEncoding::srgb);
         generation_ = std::exchange(other.generation_, 0);
-        (void)renew_command_stream();
+        attachment_image_handles_ = std::move(other.attachment_image_handles_);
     }
     return *this;
 }
@@ -102,21 +104,11 @@ void Frame::release_noexcept() noexcept
     generation_ = 0;
 }
 
-u64 Frame::renew_command_stream() noexcept
-{
-    if (!device_.state_) {
-        return 0;
-    }
-    return device_.state_->renew_command_stream(generation_);
-}
-
 Commands Frame::commands() noexcept
 {
-    const auto epoch = renew_command_stream();
     return Commands{
         device_,
         generation_,
-        epoch,
         extent_,
         color_encoding_,
     };
@@ -126,6 +118,13 @@ bool Frame::belongs_to(const Device& device) const noexcept
 {
     return device_.state_ && device.state_
         && device_.state_.get() == device.state_.get();
+}
+
+bool Frame::uses_image(const Image2D& image) const noexcept
+{
+    return active() && image.belongs_to(device_)
+        && std::ranges::find(attachment_image_handles_, image.native_handle())
+            != attachment_image_handles_.end();
 }
 
 std::expected<Frame, Diagnostic> begin_backend_frame(
@@ -250,6 +249,76 @@ std::expected<Frame, Diagnostic> begin_backend_frame(
     }
 
     return std::move(*frame);
+}
+
+std::expected<Frame, Diagnostic> begin_backend_frame(
+    Device& device, Framebuffer& target, const render::FrameDesc& description)
+{
+    return begin_backend_frame(device, std::as_const(target), description);
+}
+
+std::expected<Frame, Diagnostic> begin_backend_frame(
+    Device& device, const Framebuffer& target, const render::FrameDesc& description)
+{
+    if (!target.belongs_to(device))
+        return std::unexpected(Diagnostic{.code = ErrorCode::invalid_argument,
+            .message = "begin_frame requires an offscreen target owned by this device"});
+    if (description.extent.empty() || description.extent != target.extent()
+        || description.extent.width > static_cast<u32>(std::numeric_limits<GLsizei>::max())
+        || description.extent.height > static_cast<u32>(std::numeric_limits<GLsizei>::max()))
+        return std::unexpected(Diagnostic{.code = ErrorCode::invalid_argument,
+            .message = "begin_frame extent must match the offscreen attachment area"});
+    const auto encoding = target.color_attachments().empty()
+        ? std::optional{render::ColorEncoding::linear} : target.color_encoding();
+    if (!encoding || *encoding != description.color_encoding)
+        return std::unexpected(Diagnostic{.code = ErrorCode::unsupported_feature,
+            .message = "begin_frame color encoding must match every physical offscreen color attachment"});
+    if (description.clear_color) {
+        if (target.color_attachments().empty() || target.has_integer_color())
+            return std::unexpected(Diagnostic{.code = ErrorCode::invalid_argument,
+                .message = "begin_frame floating color clear requires normalized or floating color attachments"});
+        for (float value : *description.clear_color)
+            if (!std::isfinite(value))
+                return std::unexpected(Diagnostic{.code = ErrorCode::invalid_argument,
+                    .message = "begin_frame requires finite clear-color components"});
+    }
+    if (description.clear_depth && (!target.has_depth()
+            || !std::isfinite(*description.clear_depth)
+            || *description.clear_depth < 0 || *description.clear_depth > 1))
+        return std::unexpected(Diagnostic{.code = ErrorCode::invalid_argument,
+            .message = "begin_frame depth clear requires a depth attachment and finite depth in [0, 1]"});
+    if (auto current = device.require_current("begin_frame(offscreen)"); !current)
+        return std::unexpected(std::move(current.error()));
+    if (auto complete = target.check_complete(); !complete)
+        return std::unexpected(std::move(complete.error()));
+    auto frame = Frame::acquire(device, description.extent, description.color_encoding);
+    if (!frame) return frame;
+    frame->attachment_image_handles_ = target.attachment_image_handles();
+    if (auto bound = target.bind(); !bound)
+        return std::unexpected(std::move(bound.error()));
+    if (auto encoded = device.set_framebuffer_srgb_enabled(
+            description.color_encoding == render::ColorEncoding::srgb); !encoded)
+        return std::unexpected(std::move(encoded.error()));
+    if (auto scissor = device.set_scissor_enabled(false); !scissor)
+        return std::unexpected(std::move(scissor.error()));
+    if (auto viewport = device.viewport(0, 0,
+            static_cast<i32>(description.extent.width), static_cast<i32>(description.extent.height)); !viewport)
+        return std::unexpected(std::move(viewport.error()));
+    if (description.clear_color) {
+        for (auto attachment : target.color_attachments()) {
+            if (auto mask = device.set_color_write_mask(attachment, {true, true, true, true}); !mask)
+                return std::unexpected(std::move(mask.error()));
+            if (auto cleared = target.clear_color(attachment, *description.clear_color); !cleared)
+                return std::unexpected(std::move(cleared.error()));
+        }
+    }
+    if (description.clear_depth) {
+        if (auto mask = detail::checked_gl_call("offscreen depth-clear mask", [] { glDepthMask(GL_TRUE); }); !mask)
+            return std::unexpected(std::move(mask.error()));
+        if (auto cleared = target.clear_depth(*description.clear_depth); !cleared)
+            return std::unexpected(std::move(cleared.error()));
+    }
+    return frame;
 }
 
 } // namespace vng::opengl

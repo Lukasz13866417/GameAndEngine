@@ -20,6 +20,9 @@ enum class OpCode : std::uint8_t {
     constant,
     input,
     parameter,
+    texture_sample,
+    texture_sample_lod,
+    matrix_buffer_read,
     construct,
     extract_field,
     swizzle,
@@ -51,6 +54,13 @@ enum class OpCode : std::uint8_t {
     clamp,
     mix,
     square_root,
+    sine,
+    cosine,
+    absolute,
+    floor,
+    fract,
+    exponential,
+    power,
     all,
     any,
     select,
@@ -89,10 +99,24 @@ struct InterfacePayload {
 
 enum class ParameterKind : std::uint8_t {
     camera_view_projection,
+    argument,
 };
 
 struct ParameterPayload {
     u32 parameter{};
+};
+
+// Samples a floating-point/normalized 2D texture. The opcode determines
+// whether the LOD is implicit (fragment only) or an explicit second operand.
+// The binding identifies a portable texture resource slot, not a native handle.
+struct TextureSamplePayload {
+    u32 binding{};
+};
+
+// A read-only, runtime-sized array of column-major Mat4 values. The portable
+// resource slot is independent of texture bindings and native buffer handles.
+struct MatrixBufferPayload {
+    u32 binding{};
 };
 
 struct FieldPayload {
@@ -108,6 +132,8 @@ using OperationPayload = std::variant<
     ConstantPayload,
     InterfacePayload,
     ParameterPayload,
+    TextureSamplePayload,
+    MatrixBufferPayload,
     FieldPayload,
     SwizzlePayload>;
 
@@ -146,6 +172,8 @@ struct ParameterField {
     ParameterKind kind{ParameterKind::camera_view_projection};
     TypeId type;
     std::optional<u32> location;
+    u32 argument_index{};
+    std::type_index argument_type{typeid(void)};
 
     friend bool operator==(const ParameterField&, const ParameterField&) = default;
 };

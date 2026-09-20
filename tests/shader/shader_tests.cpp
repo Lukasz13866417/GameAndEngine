@@ -41,6 +41,32 @@ using VertexStageContext = vng::shader::StageContext<
     VertexIn,
     VertexOut>;
 
+using FragmentStageContext = vng::shader::StageContext<
+    vng::shader::StageKind::fragment, FragmentIn, FragmentOut>;
+
+template<class Stage, class Coordinates>
+concept Samples2D = requires(Stage& stage, Coordinates coordinates) {
+    { stage.template sample_2d<0>(coordinates) } -> std::same_as<vng::dsl::Float4>;
+};
+
+static_assert(Samples2D<FragmentStageContext, vng::dsl::Float2>);
+static_assert(!Samples2D<VertexStageContext, vng::dsl::Float2>);
+static_assert(!Samples2D<FragmentStageContext, vng::dsl::Float3>);
+static_assert(!Samples2D<FragmentStageContext, vng::Vec2>);
+
+template<class Stage, class Index>
+concept ReadsMatrixBuffer = requires(Stage& stage, Index index) {
+    { stage.template matrix_buffer<0>(index) } -> std::same_as<vng::dsl::Float4x4>;
+};
+
+static_assert(ReadsMatrixBuffer<VertexStageContext, vng::dsl::UInt>);
+static_assert(ReadsMatrixBuffer<FragmentStageContext, vng::dsl::UInt>);
+static_assert(!ReadsMatrixBuffer<VertexStageContext, vng::dsl::Int>);
+static_assert(!ReadsMatrixBuffer<VertexStageContext, vng::dsl::Float>);
+static_assert(!ReadsMatrixBuffer<VertexStageContext, vng::dsl::UInt2>);
+static_assert(!ReadsMatrixBuffer<VertexStageContext, vng::u32>);
+static_assert(!ReadsMatrixBuffer<VertexStageContext, std::size_t>);
+
 template<class Left, class Right>
 concept Addable = requires(Left left, Right right) { left + right; };
 
@@ -1005,6 +1031,158 @@ TEST_CASE("linking diagnoses missing and interpolation-mismatched varyings", "[s
     auto interpolation = vng::shader::link(std::move(*flat_vertex), std::move(*smooth_fragment));
     REQUIRE(!interpolation);
     REQUIRE(interpolation.error().message.find("interpolation") != std::string::npos);
+}
+
+TEST_CASE("texture samples preserve sharing and prune unused resource reads", "[shader][texture]")
+{
+    auto build = [] {
+        return vng::shader::fragment<FragmentIn, FragmentOut>([](auto& stage) {
+            const auto uv = stage.input(Tint{}).xy();
+            const auto sampled = stage.template sample_2d<3>(uv);
+            const auto copy = sampled;
+            const auto unused = stage.template sample_2d<9>(uv);
+            (void)unused;
+            return stage.output(vng::dsl::field<vng::shader::Color<0>>(sampled + copy));
+        });
+    };
+    auto first = build();
+    auto second = build();
+    REQUIRE(first);
+    REQUIRE(second);
+    CHECK(first->dump_ir() == second->dump_ir());
+    CHECK(first->dump_ir().find("[binding=3]") != std::string::npos);
+    CHECK(first->dump_ir().find("[binding=9]") == std::string::npos);
+    CHECK(std::ranges::count(first->ir().operations,
+                            vng::shader::OpCode::texture_sample,
+                            &vng::shader::Operation::opcode) == 1);
+}
+
+TEST_CASE("texture sampling rejects foreign-builder coordinates", "[shader][texture][diagnostic]")
+{
+    vng::shader::ModuleIR foreign_module;
+    vng::shader::FunctionBuilder foreign_builder{foreign_module};
+    const auto foreign_uv = vng::dsl::detail::literal(foreign_builder, vng::Vec2{});
+    auto result = vng::shader::fragment<FragmentIn, FragmentOut>([&](auto& stage) {
+        return stage.output(vng::dsl::field<vng::shader::Color<0>>(
+            stage.template sample_2d<0>(foreign_uv)));
+    });
+    REQUIRE_FALSE(result);
+    CHECK(result.error().code == vng::shader::DiagnosticCode::mixed_builders);
+}
+
+TEST_CASE("IR validation rejects malformed texture samples", "[shader][texture][validator]")
+{
+    auto stage = vng::shader::fragment<FragmentIn, FragmentOut>([](auto& s) {
+        return s.output(vng::dsl::field<vng::shader::Color<0>>(
+            s.template sample_2d<0>(s.input(Tint{}).xy())));
+    });
+    REQUIRE(stage);
+    auto module = stage->ir();
+    auto sample = std::ranges::find(module.operations,
+                                   vng::shader::OpCode::texture_sample,
+                                   &vng::shader::Operation::opcode);
+    REQUIRE(sample != module.operations.end());
+
+    SECTION("stage") { module.stage = vng::shader::StageKind::vertex; }
+    SECTION("payload") { sample->payload = std::monostate{}; }
+    SECTION("effect") { sample->effect = vng::shader::Effect::pure; }
+    SECTION("arity") { sample->operands.clear(); }
+    SECTION("result") { sample->result = {}; }
+    SECTION("coordinate type") {
+        const auto input = std::ranges::find(module.operations,
+                                            vng::shader::OpCode::input,
+                                            &vng::shader::Operation::opcode);
+        REQUIRE(input != module.operations.end());
+        sample->operands[0] = input->result;
+    }
+    SECTION("sampled type") {
+        module.values[sample->result.value].type =
+            module.values[sample->operands[0].value].type;
+    }
+    const auto validity = vng::shader::validate(module);
+    REQUIRE_FALSE(validity);
+    CHECK(validity.error().code == vng::shader::DiagnosticCode::invalid_ir);
+}
+
+TEST_CASE("matrix buffer reads preserve sharing and prune unused read-only resources",
+          "[shader][matrix_buffer]")
+{
+    auto build = [] {
+        return vng::shader::vertex<VertexIn, VertexOut>([](auto& stage) {
+            const auto index = stage.constant(vng::u32{2});
+            const auto matrix = stage.template matrix_buffer<3>(index);
+            const auto copy = matrix;
+            const auto unused = stage.template matrix_buffer<9>(index);
+            (void)unused;
+            return stage.output(
+                vng::dsl::field<vng::shader::ClipPosition>(
+                    (matrix + copy) * vng::dsl::vec4(stage.input(Position{}), 0.0F, 1.0F)),
+                vng::dsl::field<Tint>(stage.input(Tint{})));
+        });
+    };
+    const auto first = build();
+    const auto second = build();
+    REQUIRE(first);
+    REQUIRE(second);
+    CHECK(first->dump_ir() == second->dump_ir());
+    CHECK(first->dump_ir().find("matrix_buffer_read") != std::string::npos);
+    CHECK(first->dump_ir().find("[binding=3]") != std::string::npos);
+    CHECK(first->dump_ir().find("[binding=9]") == std::string::npos);
+    CHECK(std::ranges::count(first->ir().operations,
+                            vng::shader::OpCode::matrix_buffer_read,
+                            &vng::shader::Operation::opcode) == 1);
+    const auto read = std::ranges::find(first->ir().operations,
+                                      vng::shader::OpCode::matrix_buffer_read,
+                                      &vng::shader::Operation::opcode);
+    REQUIRE(read != first->ir().operations.end());
+    CHECK(read->effect == vng::shader::Effect::storage_read);
+}
+
+TEST_CASE("matrix buffer reads reject foreign-builder indices", "[shader][matrix_buffer][diagnostic]")
+{
+    vng::shader::ModuleIR foreign_module;
+    vng::shader::FunctionBuilder foreign_builder{foreign_module};
+    const auto foreign_index = vng::dsl::detail::literal(foreign_builder, vng::u32{});
+    const auto stage = vng::shader::fragment<FragmentIn, FragmentOut>([&](auto& s) {
+        return s.output(vng::dsl::field<vng::shader::Color<0>>(
+            s.template matrix_buffer<0>(foreign_index) * s.input(Tint{})));
+    });
+    REQUIRE_FALSE(stage);
+    CHECK(stage.error().code == vng::shader::DiagnosticCode::mixed_builders);
+}
+
+TEST_CASE("IR validation rejects malformed matrix buffer reads", "[shader][matrix_buffer][validator]")
+{
+    const auto stage = vng::shader::fragment<FragmentIn, FragmentOut>([](auto& s) {
+        return s.output(vng::dsl::field<vng::shader::Color<0>>(
+            s.template matrix_buffer<0>(s.constant(vng::u32{})) * s.input(Tint{})));
+    });
+    REQUIRE(stage);
+    auto module = stage->ir();
+    auto read = std::ranges::find(module.operations,
+                                 vng::shader::OpCode::matrix_buffer_read,
+                                 &vng::shader::Operation::opcode);
+    REQUIRE(read != module.operations.end());
+
+    SECTION("stage") { module.stage = static_cast<vng::shader::StageKind>(255); }
+    SECTION("payload") { read->payload = std::monostate{}; }
+    SECTION("effect") { read->effect = vng::shader::Effect::pure; }
+    SECTION("arity") { read->operands.clear(); }
+    SECTION("result") { read->result = {}; }
+    SECTION("index type") {
+        const auto input = std::ranges::find(module.operations,
+                                            vng::shader::OpCode::input,
+                                            &vng::shader::Operation::opcode);
+        REQUIRE(input != module.operations.end());
+        read->operands[0] = input->result;
+    }
+    SECTION("matrix type") {
+        module.values[read->result.value].type =
+            module.values[read->operands[0].value].type;
+    }
+    const auto validity = vng::shader::validate(module);
+    REQUIRE_FALSE(validity);
+    CHECK(validity.error().code == vng::shader::DiagnosticCode::invalid_ir);
 }
 
 } // namespace

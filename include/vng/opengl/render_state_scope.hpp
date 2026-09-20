@@ -16,11 +16,15 @@ class Device;
 
 // Saves the context state that a contained render operation may replace and
 // restores it at scope exit. The caller lists the fragment-output/draw-buffer
-// indices whose indexed blend and color-mask state will be touched.
+// indices whose indexed blend enables, factors, equations, and color masks
+// will be touched.
 //
 // Capturing state is intentionally explicit and comparatively heavyweight.
 // The eventual renderer can instead own complete state, but tool/capture paths
 // need a safe boundary while they coexist with caller-managed OpenGL.
+// Restoration invalidates managed program/view caches, not command handles.
+// Reselect with run(program), supply view if needed, and set desired graphics
+// settings before continuing through the frame's shared command context.
 class RenderStateScope final {
 public:
     [[nodiscard]] static std::expected<RenderStateScope, Diagnostic> capture(
@@ -43,6 +47,10 @@ private:
     struct DrawBufferState final {
         std::uint32_t index{};
         bool blend_enabled{};
+        // Source RGB, destination RGB, source alpha, destination alpha.
+        std::array<std::uint32_t, 4> blend_factors{};
+        // RGB and alpha equations.
+        std::array<std::uint32_t, 2> blend_equations{};
         std::array<bool, 4> color_write{};
     };
 

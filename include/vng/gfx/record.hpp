@@ -266,4 +266,7 @@ using record_codec_t = typename std::remove_cvref_t<RecordType>::template codec_
 template<class RecordType>
 using record_semantics_t = typename std::remove_cvref_t<RecordType>::semantics;
 
+template<class T>
+concept RecordType = std::same_as<T, std::remove_cvref_t<T>> && is_record_v<T>;
+
 } // namespace vng::gfx

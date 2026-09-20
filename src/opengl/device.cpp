@@ -446,6 +446,15 @@ std::expected<void, Diagnostic> Device::require_current(
     return state_->require_current(operation);
 }
 
+std::expected<void, Diagnostic> Device::require_resource_update(std::string_view operation) const {
+    if (auto current = require_current(operation); !current) return current;
+    if (state_->active_frame_generation.load(std::memory_order_acquire) != 0) {
+        return std::unexpected(Diagnostic{.code = ErrorCode::operation_failed,
+            .message = std::string(operation) + ": finish the active frame before replacing resources"});
+    }
+    return {};
+}
+
 std::vector<DebugMessage> Device::take_debug_messages() const {
     if (!state_ || !state_->diagnostics) {
         return {};
@@ -681,59 +690,23 @@ std::expected<void, Diagnostic> Device::clear_default(
         });
 }
 
-std::expected<void, Diagnostic> Device::set_pipeline_color_output_baseline(
-    std::span<const std::uint32_t> color_attachments,
-    bool all_color_attachments) const {
-    if (auto current = require_current(
-            "Device::set_pipeline_color_output_baseline");
-        !current) {
+std::expected<void, Diagnostic> Device::reset_color_outputs() const {
+    if (auto current = require_current("Device::reset_color_outputs"); !current)
         return current;
-    }
-
     const auto maximum_draw_buffers = state_->maximum_draw_buffers;
     if (maximum_draw_buffers <= 0) {
         return std::unexpected(Diagnostic{
             .code = ErrorCode::operation_failed,
-            .message = "OpenGL reported an invalid GL_MAX_DRAW_BUFFERS while binding a graphics pipeline",
+            .message = "OpenGL reported an invalid GL_MAX_DRAW_BUFFERS",
         });
     }
-    if (!all_color_attachments) {
-        for (const auto attachment : color_attachments) {
-            if (attachment >= static_cast<std::uint32_t>(
-                    maximum_draw_buffers)) {
-                return std::unexpected(Diagnostic{
-                    .code = ErrorCode::invalid_argument,
-                    .message = "graphics-pipeline fragment output exceeds GL_MAX_DRAW_BUFFERS",
-                });
-            }
+    return detail::checked_gl_call("reset color output state", [&] {
+        for (GLint attachment = 0; attachment < maximum_draw_buffers; ++attachment) {
+            const auto index = static_cast<GLuint>(attachment);
+            glDisablei(GL_BLEND, index);
+            glColorMaski(index, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
-    }
-
-    return detail::checked_gl_call(
-        "configure graphics-pipeline color outputs",
-        [&] {
-            const auto configure = [](GLuint attachment) {
-                glDisablei(GL_BLEND, attachment);
-                glColorMaski(
-                    attachment,
-                    GL_TRUE,
-                    GL_TRUE,
-                    GL_TRUE,
-                    GL_TRUE);
-            };
-
-            if (all_color_attachments) {
-                for (GLint attachment = 0;
-                     attachment < maximum_draw_buffers;
-                     ++attachment) {
-                    configure(static_cast<GLuint>(attachment));
-                }
-                return;
-            }
-            for (const auto attachment : color_attachments) {
-                configure(static_cast<GLuint>(attachment));
-            }
-        });
+    });
 }
 
 std::expected<void, Diagnostic> Device::set_depth_state(DepthState state) const {

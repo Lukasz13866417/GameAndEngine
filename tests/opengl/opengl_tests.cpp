@@ -19,6 +19,7 @@
 #include <span>
 #include <string>
 #include <vector>
+#include <thread>
 
 namespace {
 
@@ -678,6 +679,7 @@ TEST_CASE("OpenGL texture render targets keep normalized integer and depth data 
         0, vng::opengl::Rg32uiPixel{0U, 0U}).has_value());
     CHECK_FALSE(framebuffer->attach_color(2, *depth).has_value());
     CHECK_FALSE(framebuffer->attach_depth(*color).has_value());
+    CHECK_FALSE(framebuffer->read_rgba8(1, 0, 0, 4, 3)); // Integer attachments stay typed.
 
     auto colors = framebuffer->read_rgba8_pixels(0, 0, 0, 4, 3);
     INFO((colors ? std::string{} : describe(colors.error())));
@@ -702,6 +704,150 @@ TEST_CASE("OpenGL texture render targets keep normalized integer and depth data 
     CHECK(std::ranges::all_of(*depths, [](float value) {
         return std::abs(value - 0.375F) < 0.00001F;
     }));
+}
+
+TEST_CASE("OpenGL byte readback is tightly packed and preserves readback state",
+          "[opengl][integration][readback]")
+{
+    auto window = vng::test::create_hidden_opengl_window(5, 3, "vng byte readback");
+    if (!window) skip_ctest("OpenGL context unavailable: " + window.error().message);
+    auto access = window->make_current();
+    REQUIRE(access);
+    auto device = vng::opengl::Device::create(*access);
+    REQUIRE(device);
+    using Set = void (*)(std::uint32_t, std::int32_t);
+    using Bind = void (*)(std::uint32_t, std::uint32_t);
+    using Get = void (*)(std::uint32_t, std::int32_t*);
+    auto pixel_store = reinterpret_cast<Set>(access->resolve("glPixelStorei"));
+    auto bind_buffer = reinterpret_cast<Bind>(access->resolve("glBindBuffer"));
+    auto bind_framebuffer = reinterpret_cast<Bind>(access->resolve("glBindFramebuffer"));
+    auto get = reinterpret_cast<Get>(access->resolve("glGetIntegerv"));
+    REQUIRE(pixel_store); REQUIRE(bind_buffer); REQUIRE(bind_framebuffer); REQUIRE(get);
+    const auto integer = [&](std::uint32_t key) { std::int32_t value{}; get(key, &value); return value; };
+    // Alignment, row length, pixel/row/image skips, image height and bit order.
+    const std::array<std::pair<std::uint32_t, std::int32_t>, 8> pack{{
+        {0x0D05, 8}, {0x0D02, 11}, {0x0D04, 2}, {0x0D03, 1},
+        {0x806C, 7}, {0x806B, 1}, {0x0D00, 1}, {0x0D01, 1}}};
+    std::array<std::int32_t, 8> original_pack{};
+    for (std::size_t i = 0; i < pack.size(); ++i) original_pack[i] = integer(pack[i].first);
+    constexpr std::uint32_t pack_buffer = 0x88EB, pack_binding = 0x88ED;
+    constexpr std::uint32_t read_framebuffer = 0x8CA8, read_binding = 0x8CAA, read_buffer = 0x0C02;
+    auto pbo = vng::opengl::Buffer::create(*device, {.size = 256});
+    auto previous = vng::opengl::Framebuffer::create(*device);
+    REQUIRE(pbo); REQUIRE(previous);
+    const auto old_pbo = integer(pack_binding), old_framebuffer = integer(read_binding);
+    bind_buffer(pack_buffer, pbo->native_handle());
+    bind_framebuffer(read_framebuffer, previous->native_handle());
+    for (auto [key, value] : pack) pixel_store(key, value);
+
+    std::array<std::byte, 5 * 3 * 4> input{};
+    for (std::size_t i = 0; i < input.size(); ++i) input[i] = std::byte(i * 3);
+    auto async = vng::opengl::Rgba8ReadbackQueue::create(*device); REQUIRE(async);
+    vng::u64 readback_id{};
+    for (const auto format : {vng::opengl::ImageFormat::rgba8, vng::opengl::ImageFormat::srgb8_alpha8}) {
+        auto image = vng::opengl::Image2D::create(*device, 5, 3, format);
+        auto target = vng::opengl::Framebuffer::create(*device);
+        REQUIRE(image); REQUIRE(target);
+        REQUIRE(image->write_rgba8(0, 0, 5, 3, input));
+        REQUIRE(target->attach_color(0, *image));
+        REQUIRE(target->check_complete());
+        const auto previous_read_buffer = integer(read_buffer);
+        auto bytes = target->read_rgba8(0, 1, 1, 3, 2);
+        auto typed = target->read_rgba8_pixels(0, 1, 1, 3, 2);
+        REQUIRE(bytes); REQUIRE(typed);
+        auto submitted = async->try_submit(*target, 0, {5, 3}, ++readback_id);
+        REQUIRE(submitted); REQUIRE(*submitted);
+        const auto typed_bytes = std::as_bytes(std::span(*typed));
+        CHECK(std::ranges::equal(*bytes, typed_bytes));
+        REQUIRE(bytes->size() == 24);
+        for (std::size_t row = 0; row < 2; ++row)
+            for (std::size_t component = 0; component < 12; ++component)
+                CHECK((*bytes)[row * 12 + component] == input[((row + 1) * 5 + 1) * 4 + component]);
+        CHECK_FALSE(target->read_rgba8(1, 0, 0, 1, 1)); // Unattached.
+        CHECK_FALSE(target->read_rgba8(0, 0, 0, 0, 1));
+        CHECK_FALSE(target->read_rgba8(0, 0, 0, 1, 0));
+        CHECK_FALSE(target->read_rgba8(0, 0, 0, std::numeric_limits<std::uint32_t>::max(), 1));
+        CHECK(integer(pack_binding) == static_cast<std::int32_t>(pbo->native_handle()));
+        CHECK(integer(read_binding) == static_cast<std::int32_t>(previous->native_handle()));
+        CHECK(integer(read_buffer) == previous_read_buffer);
+        for (auto [key, value] : pack) CHECK(integer(key) == value);
+    }
+    for (std::size_t i = 0; i < pack.size(); ++i) pixel_store(pack[i].first, original_pack[i]);
+    bind_buffer(pack_buffer, static_cast<std::uint32_t>(old_pbo));
+    bind_framebuffer(read_framebuffer, static_cast<std::uint32_t>(old_framebuffer));
+}
+
+TEST_CASE("Asynchronous RGBA8 readback is bounded, latest-complete, and context-owned",
+          "[opengl][integration][readback][async]") {
+    using namespace vng;
+    auto window = test::create_hidden_opengl_window(9, 4, "vng async readback");
+    if (!window) skip_ctest("OpenGL context unavailable: " + window.error().message);
+    auto access=window->make_current(); REQUIRE(access);
+    auto device=opengl::Device::create(*access); REQUIRE(device);
+    const auto finish=reinterpret_cast<void(*)()>(access->resolve("glFinish"));
+    REQUIRE(finish);
+    auto queue=opengl::Rgba8ReadbackQueue::create(*device); REQUIRE(queue);
+    auto empty=queue->try_take(); REQUIRE(empty); CHECK_FALSE(*empty);
+    CHECK(queue->available()); CHECK_FALSE(queue->pending());
+    auto image=opengl::Image2D::create(*device,5,3,opengl::ImageFormat::srgb8_alpha8); REQUIRE(image);
+    auto target=opengl::Framebuffer::create(*device); REQUIRE(target);
+    REQUIRE(target->attach_color(0,*image)); REQUIRE(target->check_complete());
+    std::array<std::byte,60> pixels{};
+    for(std::size_t i=0;i<pixels.size();++i) pixels[i]=std::byte(i);
+    REQUIRE(image->write_rgba8(0,0,5,3,pixels));
+    CHECK_FALSE(queue->try_submit(*target,0,{5,3},0));
+    CHECK_FALSE(queue->try_submit(*target,1,{5,3},1));
+    CHECK_FALSE(queue->try_submit(*target,0,{6,3},1));
+    for(u64 id=1;id<=3;++id) {
+        auto submitted=queue->try_submit(*target,0,{5,3},id);
+        REQUIRE(submitted); REQUIRE(*submitted);
+    }
+    CHECK_FALSE(queue->available()); CHECK(queue->pending());
+    auto full=queue->try_submit(*target,0,{5,3},4);
+    REQUIRE(full); CHECK_FALSE(*full); // No waiting/reusing a slot, even if already signalled.
+    finish(); // Test-only deterministic readiness; production never calls this.
+    auto completed=queue->try_take(); REQUIRE(completed); REQUIRE(*completed);
+    CHECK((**completed).id==3);
+    CHECK((**completed).image.extent==Extent2D{5,3});
+    for(std::size_t y=0;y<3;++y)
+        for(std::size_t x=0;x<20;++x)
+            CHECK((**completed).image.pixels[y*20+x]==pixels[(2-y)*20+x]);
+    CHECK_FALSE(queue->pending()); CHECK(queue->available());
+    auto consumed=queue->try_take(); REQUIRE(consumed); CHECK_FALSE(*consumed);
+    CHECK_FALSE(queue->try_submit(*target,0,{5,3},3)); // Non-increasing ID.
+
+    // A resize does not relabel or reuse storage for the in-flight old image.
+    auto old=queue->try_submit(*target,0,{5,3},4); REQUIRE(old); REQUIRE(*old);
+    auto larger=opengl::Image2D::create(*device,9,4,opengl::ImageFormat::rgba8); REQUIRE(larger);
+    REQUIRE(larger->clear_rgba8({1,0,0,1}));
+    REQUIRE(target->attach_color(0,*larger));
+    auto resized=queue->try_submit(*target,0,{9,4},5); REQUIRE(resized); REQUIRE(*resized);
+    finish();
+    completed=queue->try_take(); REQUIRE(completed); REQUIRE(*completed);
+    CHECK((**completed).id==5); CHECK((**completed).image.extent==Extent2D{9,4});
+    CHECK((**completed).image.pixels.size()==9*4*4);
+    CHECK(approximately_red((**completed).image.pixels,9,4,3));
+
+    auto queued=queue->try_submit(*target,0,{9,4},6); REQUIRE(queued); REQUIRE(*queued);
+    queue->discard(); CHECK(queue->pending());
+    finish();
+    auto discarded=queue->try_take(); REQUIRE(discarded); CHECK_FALSE(*discarded);
+    CHECK_FALSE(queue->pending());
+    {
+        auto foreign_window=test::create_hidden_opengl_window(8,8,"foreign readback context"); REQUIRE(foreign_window);
+        auto foreign_access=foreign_window->make_current(); REQUIRE(foreign_access);
+        auto foreign=opengl::Device::create(*foreign_access); REQUIRE(foreign);
+        auto foreign_queue=opengl::Rgba8ReadbackQueue::create(*foreign); REQUIRE(foreign_queue);
+        auto rejected=foreign_queue->try_submit(*target,0,{9,4},1);
+        REQUIRE_FALSE(rejected); CHECK(rejected.error().code==opengl::ErrorCode::incompatible_device);
+    }
+    REQUIRE(window->make_current());
+    std::optional<opengl::ErrorCode> thread_error;
+    std::thread other([&]{auto r=queue->try_take();if(!r)thread_error=r.error().code;});other.join();
+    CHECK(thread_error==opengl::ErrorCode::wrong_thread);
+    auto moved=std::move(*queue);
+    CHECK_FALSE(queue->try_take()); CHECK_FALSE(queue->available());
+    REQUIRE(moved.try_submit(*target,0,{9,4},7)); // Destructor may retire an in-flight transfer.
 }
 
 TEST_CASE("OpenGL render state scope restores capture state exactly",

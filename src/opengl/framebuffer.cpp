@@ -6,12 +6,12 @@
 
 #include "context_state.hpp"
 #include "gl_error.hpp"
+#include "readback_state.hpp"
 
 #include <glad/gl.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #include <iterator>
 #include <limits>
 #include <sstream>
@@ -65,69 +65,9 @@ namespace {
     return draw_buffers;
 }
 
-class ReadbackState final {
-public:
-    explicit ReadbackState(GLuint framebuffer) noexcept {
-        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous_read_framebuffer_);
-        glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previous_pixel_pack_buffer_);
-        glGetIntegerv(GL_PACK_ALIGNMENT, &previous_pack_alignment_);
-        glGetIntegerv(GL_PACK_ROW_LENGTH, &previous_pack_row_length_);
-        glGetIntegerv(GL_PACK_SKIP_PIXELS, &previous_pack_skip_pixels_);
-        glGetIntegerv(GL_PACK_SKIP_ROWS, &previous_pack_skip_rows_);
-        glGetIntegerv(GL_PACK_IMAGE_HEIGHT, &previous_pack_image_height_);
-        glGetIntegerv(GL_PACK_SKIP_IMAGES, &previous_pack_skip_images_);
-        glGetIntegerv(GL_PACK_SWAP_BYTES, &previous_pack_swap_bytes_);
-        glGetIntegerv(GL_PACK_LSB_FIRST, &previous_pack_lsb_first_);
+using detail::ReadbackState;
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
-        glGetIntegerv(GL_READ_BUFFER, &framebuffer_read_buffer_);
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-        glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
-        glPixelStorei(GL_PACK_SKIP_ROWS, 0);
-        glPixelStorei(GL_PACK_IMAGE_HEIGHT, 0);
-        glPixelStorei(GL_PACK_SKIP_IMAGES, 0);
-        glPixelStorei(GL_PACK_SWAP_BYTES, GL_FALSE);
-        glPixelStorei(GL_PACK_LSB_FIRST, GL_FALSE);
-    }
-
-    ReadbackState(const ReadbackState&) = delete;
-    ReadbackState& operator=(const ReadbackState&) = delete;
-
-    ~ReadbackState() {
-        glPixelStorei(GL_PACK_ALIGNMENT, previous_pack_alignment_);
-        glPixelStorei(GL_PACK_ROW_LENGTH, previous_pack_row_length_);
-        glPixelStorei(GL_PACK_SKIP_PIXELS, previous_pack_skip_pixels_);
-        glPixelStorei(GL_PACK_SKIP_ROWS, previous_pack_skip_rows_);
-        glPixelStorei(GL_PACK_IMAGE_HEIGHT, previous_pack_image_height_);
-        glPixelStorei(GL_PACK_SKIP_IMAGES, previous_pack_skip_images_);
-        glPixelStorei(GL_PACK_SWAP_BYTES, previous_pack_swap_bytes_);
-        glPixelStorei(GL_PACK_LSB_FIRST, previous_pack_lsb_first_);
-        glBindBuffer(
-            GL_PIXEL_PACK_BUFFER,
-            static_cast<GLuint>(previous_pixel_pack_buffer_));
-        glReadBuffer(static_cast<GLenum>(framebuffer_read_buffer_));
-        glBindFramebuffer(
-            GL_READ_FRAMEBUFFER,
-            static_cast<GLuint>(previous_read_framebuffer_));
-    }
-
-private:
-    GLint previous_read_framebuffer_{};
-    GLint previous_pixel_pack_buffer_{};
-    GLint previous_pack_alignment_{};
-    GLint previous_pack_row_length_{};
-    GLint previous_pack_skip_pixels_{};
-    GLint previous_pack_skip_rows_{};
-    GLint previous_pack_image_height_{};
-    GLint previous_pack_skip_images_{};
-    GLint previous_pack_swap_bytes_{};
-    GLint previous_pack_lsb_first_{};
-    GLint framebuffer_read_buffer_{};
-};
-
-template<class Pixel>
+template<class Pixel, std::size_t ElementsPerPixel = 1>
 [[nodiscard]] std::expected<std::vector<Pixel>, Diagnostic> read_pixels(
     GLuint framebuffer,
     std::optional<std::uint32_t> color_attachment,
@@ -139,17 +79,18 @@ template<class Pixel>
     GLenum type,
     std::string_view operation) {
     static_assert(std::is_trivially_copyable_v<Pixel>);
+    static_assert(ElementsPerPixel > 0);
     if (width == 0 || height == 0
         || width > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max())
         || height > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max())
-        || width > std::numeric_limits<std::size_t>::max() / sizeof(Pixel) / height) {
+        || width > std::numeric_limits<std::size_t>::max() / sizeof(Pixel) / ElementsPerPixel / height) {
         return std::unexpected(Diagnostic{
             .code = ErrorCode::invalid_argument,
             .message = std::string(operation) + " received invalid dimensions",
         });
     }
 
-    std::vector<Pixel> pixels(static_cast<std::size_t>(width) * height);
+    std::vector<Pixel> pixels(static_cast<std::size_t>(width) * height * ElementsPerPixel);
     ReadbackState state(framebuffer);
     if (color_attachment) {
         glReadBuffer(GL_COLOR_ATTACHMENT0 + *color_attachment);
@@ -172,7 +113,7 @@ template<class Pixel>
     return pixels;
 }
 
-template<class Pixel>
+template<class Pixel, std::size_t ElementsPerPixel = 1>
 [[nodiscard]] std::expected<std::vector<Pixel>, Diagnostic>
 read_typed_color_pixels(
     GLuint framebuffer,
@@ -202,7 +143,9 @@ read_typed_color_pixels(
             .message = std::string(operation) + " references an unattached color target",
         });
     }
-    if (formats.at(attachment) != required_format) {
+    if (formats.at(attachment) != required_format
+        && !(required_format == ImageFormat::rgba8 && formats.at(attachment) == ImageFormat::srgb8_alpha8)
+        && !(required_format == ImageFormat::rgba32f && formats.at(attachment) == ImageFormat::rgba16f)) {
         return std::unexpected(Diagnostic{
             .code = ErrorCode::invalid_argument,
             .message = std::string(operation) + " received the wrong attachment format",
@@ -218,7 +161,7 @@ read_typed_color_pixels(
     if (auto current = state->require_current(operation); !current) {
         return std::unexpected(std::move(current.error()));
     }
-    return read_pixels<Pixel>(
+    return read_pixels<Pixel, ElementsPerPixel>(
         framebuffer,
         attachment,
         x,
@@ -245,7 +188,10 @@ Framebuffer::Framebuffer(Framebuffer&& other) noexcept
       color_attachment_handles_(std::move(other.color_attachment_handles_)),
       color_attachment_formats_(std::move(other.color_attachment_formats_)),
       color_attachment_objects_(std::move(other.color_attachment_objects_)),
-      depth_attachment_format_(std::exchange(other.depth_attachment_format_, std::nullopt)) {}
+      color_attachment_extents_(std::move(other.color_attachment_extents_)),
+      depth_attachment_format_(std::exchange(other.depth_attachment_format_, std::nullopt)),
+      depth_extent_(std::exchange(other.depth_extent_, {})),
+      depth_image_handle_(std::exchange(other.depth_image_handle_, 0)) {}
 
 Framebuffer& Framebuffer::operator=(Framebuffer&& other) noexcept {
     if (this != &other) {
@@ -257,14 +203,66 @@ Framebuffer& Framebuffer::operator=(Framebuffer&& other) noexcept {
         color_attachment_handles_ = std::move(other.color_attachment_handles_);
         color_attachment_formats_ = std::move(other.color_attachment_formats_);
         color_attachment_objects_ = std::move(other.color_attachment_objects_);
+        color_attachment_extents_ = std::move(other.color_attachment_extents_);
         depth_attachment_format_ = std::exchange(
             other.depth_attachment_format_, std::nullopt);
+        depth_extent_ = std::exchange(other.depth_extent_, {});
+        depth_image_handle_ = std::exchange(other.depth_image_handle_, 0);
     }
     return *this;
 }
 
 Framebuffer::~Framebuffer() {
     release_noexcept();
+}
+
+bool Framebuffer::belongs_to(const Device& device) const noexcept {
+    return handle_ && state_ && state_.get() == device.state_.get();
+}
+
+Extent2D Framebuffer::extent() const noexcept {
+    if (!handle_) return {};
+    auto result = depth_extent_;
+    for (const auto& [attachment, area] : color_attachment_extents_) {
+        (void)attachment;
+        result = result.empty() ? area : Extent2D{
+            std::min(result.width, area.width), std::min(result.height, area.height)};
+    }
+    return result;
+}
+
+std::optional<render::ColorEncoding> Framebuffer::color_encoding() const noexcept {
+    std::optional<render::ColorEncoding> encoding;
+    for (const auto& [attachment, format] : color_attachment_formats_) {
+        (void)attachment;
+        const auto next = format == ImageFormat::srgb8_alpha8
+            ? render::ColorEncoding::srgb : render::ColorEncoding::linear;
+        if (encoding && *encoding != next) return std::nullopt;
+        encoding = next;
+    }
+    return encoding;
+}
+
+bool Framebuffer::has_color_image(u32 handle) const noexcept {
+    if (!handle) return false;
+    for (const auto& [attachment, object] : color_attachment_objects_)
+        if (object == AttachmentObject::image && color_attachment_handles_.at(attachment) == handle)
+            return true;
+    return false;
+}
+
+std::vector<u32> Framebuffer::attachment_image_handles() const {
+    std::vector<u32> handles;
+    for (const auto& [attachment, object] : color_attachment_objects_)
+        if (object == AttachmentObject::image) handles.push_back(color_attachment_handles_.at(attachment));
+    if (depth_image_handle_) handles.push_back(depth_image_handle_);
+    return handles;
+}
+
+bool Framebuffer::has_integer_color() const noexcept {
+    return std::ranges::any_of(color_attachment_formats_, [](const auto& entry) {
+        return gfx::is_integer_format(entry.second);
+    });
 }
 
 std::expected<Framebuffer, Diagnostic> Framebuffer::create(const Device& device) {
@@ -321,7 +319,8 @@ std::expected<void, Diagnostic> Framebuffer::attach_color(
         renderbuffer.handle_,
         renderbuffer.samples_,
         ImageFormat::rgba8,
-        AttachmentObject::renderbuffer);
+        AttachmentObject::renderbuffer,
+        {renderbuffer.width_, renderbuffer.height_});
 }
 
 std::expected<void, Diagnostic> Framebuffer::attach_color(
@@ -347,7 +346,8 @@ std::expected<void, Diagnostic> Framebuffer::attach_color(
         image.handle_,
         0,
         image.format_,
-        AttachmentObject::image);
+        AttachmentObject::image,
+        image.extent());
 }
 
 std::expected<void, Diagnostic> Framebuffer::attach_color_storage(
@@ -355,7 +355,8 @@ std::expected<void, Diagnostic> Framebuffer::attach_color_storage(
     std::uint32_t storage_handle,
     std::uint32_t samples,
     ImageFormat format,
-    AttachmentObject object) {
+    AttachmentObject object,
+    Extent2D extent) {
     if (auto current = state_->require_current("Framebuffer::attach_color"); !current) {
         return current;
     }
@@ -388,6 +389,8 @@ std::expected<void, Diagnostic> Framebuffer::attach_color_storage(
         std::ranges::sort(next_attachments);
     }
     auto next_samples = color_attachment_samples_;
+    auto next_extents = color_attachment_extents_;
+    next_extents[attachment] = extent;
     next_samples[attachment] = samples;
     auto next_handles = color_attachment_handles_;
     const auto previous = next_handles.find(attachment);
@@ -459,6 +462,7 @@ std::expected<void, Diagnostic> Framebuffer::attach_color_storage(
 
     color_attachments_ = std::move(next_attachments);
     color_attachment_samples_ = std::move(next_samples);
+    color_attachment_extents_ = std::move(next_extents);
     color_attachment_handles_ = std::move(next_handles);
     color_attachment_formats_ = std::move(next_formats);
     color_attachment_objects_ = std::move(next_objects);
@@ -498,6 +502,8 @@ std::expected<void, Diagnostic> Framebuffer::attach_depth_stencil(
         return attached;
     }
     depth_attachment_format_ = DepthAttachmentFormat::depth24_stencil8;
+    depth_extent_ = {renderbuffer.width_, renderbuffer.height_};
+    depth_image_handle_ = 0;
     return {};
 }
 
@@ -533,6 +539,8 @@ std::expected<void, Diagnostic> Framebuffer::attach_depth(const Image2D& image) 
         return attached;
     }
     depth_attachment_format_ = DepthAttachmentFormat::depth32f;
+    depth_extent_ = image.extent();
+    depth_image_handle_ = image.native_handle();
     return {};
 }
 
@@ -546,7 +554,10 @@ std::expected<void, Diagnostic> Framebuffer::check_complete() const {
     if (auto current = state_->require_current("Framebuffer::check_complete"); !current) {
         return current;
     }
-    const GLenum status = glCheckNamedFramebufferStatus(handle_, GL_FRAMEBUFFER);
+    GLenum status{};
+    if (auto checked = detail::checked_gl_call("glCheckNamedFramebufferStatus", [&] {
+            status = glCheckNamedFramebufferStatus(handle_, GL_FRAMEBUFFER);
+        }); !checked) return checked;
     if (status != GL_FRAMEBUFFER_COMPLETE) {
         std::ostringstream message;
         message << "Framebuffer is " << framebuffer_status_name(status)
@@ -569,8 +580,9 @@ std::expected<void, Diagnostic> Framebuffer::bind() const {
     if (auto current = state_->require_current("Framebuffer::bind"); !current) {
         return current;
     }
-    glBindFramebuffer(GL_FRAMEBUFFER, handle_);
-    return {};
+    return detail::checked_gl_call("glBindFramebuffer", [&] {
+        glBindFramebuffer(GL_FRAMEBUFFER, handle_);
+    });
 }
 
 std::expected<void, Diagnostic> Framebuffer::clear_color(
@@ -591,10 +603,10 @@ std::expected<void, Diagnostic> Framebuffer::clear_color(
             .message = "Framebuffer::clear_color references an unattached color target",
         });
     }
-    if (color_attachment_formats_.at(attachment) != ImageFormat::rgba8) {
+    if (gfx::is_integer_format(color_attachment_formats_.at(attachment))) {
         return std::unexpected(Diagnostic{
             .code = ErrorCode::invalid_argument,
-            .message = "Framebuffer::clear_color(float) requires an rgba8 target",
+            .message = "Framebuffer::clear_color(float) requires normalized or floating color storage",
         });
     }
     return detail::checked_gl_call(
@@ -678,36 +690,11 @@ std::expected<std::vector<Rgba8Pixel>, Diagnostic> Framebuffer::read_rgba8_pixel
     std::uint32_t width,
     std::uint32_t height) const {
     static_assert(sizeof(Rgba8Pixel) == 4);
-    if (handle_ == 0 || !state_) {
-        return std::unexpected(Diagnostic{
-            .code = ErrorCode::invalid_argument,
-            .message = "Framebuffer::read_rgba8_pixels called on an empty framebuffer",
-        });
-    }
-    if (std::ranges::find(color_attachments_, attachment) == color_attachments_.end()) {
-        return std::unexpected(Diagnostic{
-            .code = ErrorCode::invalid_argument,
-            .message = "Framebuffer::read_rgba8_pixels references an unattached color target",
-        });
-    }
-    if (color_attachment_formats_.at(attachment) != ImageFormat::rgba8) {
-        return std::unexpected(Diagnostic{
-            .code = ErrorCode::invalid_argument,
-            .message = "Framebuffer::read_rgba8_pixels requires an rgba8 target",
-        });
-    }
-    if (color_attachment_samples_.at(attachment) != 0) {
-        return std::unexpected(Diagnostic{
-            .code = ErrorCode::invalid_argument,
-            .message = "Framebuffer::read_rgba8_pixels cannot read a multisample attachment directly; resolve it first",
-        });
-    }
-    if (auto current = state_->require_current("Framebuffer::read_rgba8_pixels"); !current) {
-        return std::unexpected(std::move(current.error()));
-    }
-    return read_pixels<Rgba8Pixel>(
+    return read_typed_color_pixels<Rgba8Pixel>(
         handle_,
+        state_, color_attachments_, color_attachment_samples_, color_attachment_formats_,
         attachment,
+        ImageFormat::rgba8,
         x,
         y,
         width,
@@ -723,13 +710,12 @@ std::expected<std::vector<std::byte>, Diagnostic> Framebuffer::read_rgba8(
     std::int32_t y,
     std::uint32_t width,
     std::uint32_t height) const {
-    auto pixels = read_rgba8_pixels(attachment, x, y, width, height);
-    if (!pixels) {
-        return std::unexpected(std::move(pixels.error()));
-    }
-    std::vector<std::byte> bytes(pixels->size() * sizeof(Rgba8Pixel));
-    std::memcpy(bytes.data(), pixels->data(), bytes.size());
-    return bytes;
+    // Read directly into the returned byte allocation. Do not construct a
+    // temporary array of pixel structs and copy the entire image afterwards.
+    return read_typed_color_pixels<std::byte, 4>(
+        handle_, state_, color_attachments_, color_attachment_samples_, color_attachment_formats_,
+        attachment, ImageFormat::rgba8, x, y, width, height,
+        GL_RGBA, GL_UNSIGNED_BYTE, "Framebuffer::read_rgba8");
 }
 
 std::expected<std::vector<Rg32uiPixel>, Diagnostic> Framebuffer::read_rg32ui(
@@ -873,7 +859,10 @@ std::expected<void, Diagnostic> Framebuffer::destroy() {
     color_attachment_handles_.clear();
     color_attachment_formats_.clear();
     color_attachment_objects_.clear();
+    color_attachment_extents_.clear();
     depth_attachment_format_.reset();
+    depth_extent_ = {};
+    depth_image_handle_ = 0;
     state_.reset();
     return {};
 }
@@ -895,7 +884,10 @@ void Framebuffer::release_noexcept() noexcept {
     color_attachment_handles_.clear();
     color_attachment_formats_.clear();
     color_attachment_objects_.clear();
+    color_attachment_extents_.clear();
     depth_attachment_format_.reset();
+    depth_extent_ = {};
+    depth_image_handle_ = 0;
     state_.reset();
 }
 

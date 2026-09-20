@@ -14,10 +14,11 @@ GlfwOpenGLSession::GlfwOpenGLSession(
 std::expected<GlfwOpenGLSession, StartupDiagnostic>
 GlfwOpenGLSession::create(
     const vng::window::WindowDesc& window_description,
-    const vng::opengl::ContextDesc& context_description)
+    const vng::opengl::ContextDesc& context_description,
+    const vng::window::PresentationDesc& presentation)
 {
     auto window = vng::glfw_opengl::create_window(
-        window_description, context_description);
+        window_description, context_description, presentation);
     if (!window) {
         return std::unexpected(StartupDiagnostic{
             std::in_place_type<vng::window::Diagnostic>,

@@ -77,19 +77,19 @@ Window::Window(
     vng::window::GlfwWindow window,
     std::shared_ptr<vng::opengl::ContextLifetime> context_lifetime,
     vng::render::ColorEncoding required_default_framebuffer_encoding,
-    std::int32_t swap_interval) noexcept
+    vng::window::VSync vsync) noexcept
     : window_(std::move(window)),
       context_lifetime_(std::move(context_lifetime)),
       required_default_framebuffer_encoding_(
           required_default_framebuffer_encoding),
-      swap_interval_(swap_interval) {}
+      vsync_(vsync) {}
 
 Window::Window(Window&& other) noexcept
     : window_(std::move(other.window_)),
       context_lifetime_(std::move(other.context_lifetime_)),
       required_default_framebuffer_encoding_(
           other.required_default_framebuffer_encoding_),
-      swap_interval_(other.swap_interval_) {}
+      vsync_(other.vsync_) {}
 
 Window& Window::operator=(Window&& other) noexcept {
     if (this != &other) {
@@ -98,7 +98,7 @@ Window& Window::operator=(Window&& other) noexcept {
         context_lifetime_ = std::move(other.context_lifetime_);
         required_default_framebuffer_encoding_ =
             other.required_default_framebuffer_encoding_;
-        swap_interval_ = other.swap_interval_;
+        vsync_ = other.vsync_;
     }
     return *this;
 }
@@ -115,9 +115,27 @@ bool Window::should_close() const noexcept {
     return window_.should_close();
 }
 
+bool Window::key_down(vng::window::Key key) const noexcept {
+    return window_.key_down(key);
+}
+input::Frame Window::take_input() { return window_.take_input(); }
+std::string Window::clipboard_text() const { return window_.clipboard_text(); }
+void Window::set_clipboard_text(std::string_view text) { window_.set_clipboard_text(text); }
+
 void Window::request_close() noexcept {
     window_.request_close();
 }
+void Window::cancel_close() noexcept { window_.cancel_close(); }
+bool Window::visible() const noexcept { return window_.visible(); }
+void Window::show() noexcept { window_.show(); }
+void Window::maximize() noexcept { window_.maximize(); }
+void Window::restore() noexcept { window_.restore(); }
+bool Window::maximized() const noexcept { return window_.maximized(); }
+bool Window::fullscreen() const noexcept { return window_.fullscreen(); }
+std::expected<void, vng::window::Diagnostic> Window::set_fullscreen(bool enabled) {
+    return window_.set_fullscreen(enabled);
+}
+void Window::hide() noexcept { window_.hide(); }
 
 std::array<std::int32_t, 2> Window::framebuffer_size() const noexcept {
     return window_.framebuffer_size();
@@ -160,8 +178,30 @@ Window::make_current() {
             vng::window::ErrorCode::operation_failed,
             "GLFW did not make the requested OpenGL context current"));
     }
-    glfwSwapInterval(swap_interval_);
+    if (auto applied = set_vsync(vsync_); !applied)
+        return std::unexpected(std::move(applied.error()));
     return current_context_access();
+}
+
+std::expected<void, vng::window::Diagnostic> Window::set_vsync(vng::window::VSync mode) {
+    if (auto access = current_context_access(); !access)
+        return std::unexpected(std::move(access.error()));
+    if (mode != vng::window::VSync::off && mode != vng::window::VSync::on)
+        return std::unexpected(vng::window::Diagnostic{
+            .code = vng::window::ErrorCode::operation_failed,
+            .message = "Invalid VSync mode",
+        });
+    (void)glfwGetError(nullptr); // Diagnose only this operation's native error.
+    glfwSwapInterval(mode == vng::window::VSync::on ? 1 : 0);
+    const char* message = nullptr;
+    if (const auto code = glfwGetError(&message); code != GLFW_NO_ERROR)
+        return std::unexpected(vng::window::Diagnostic{
+            .code = vng::window::ErrorCode::operation_failed,
+            .message = std::string{"Could not set VSync"} + (message ? ": " + std::string{message} : ""),
+            .native_code = code,
+        });
+    vsync_ = mode;
+    return {};
 }
 
 std::expected<vng::opengl::CurrentContextAccess, vng::window::Diagnostic>
@@ -242,7 +282,13 @@ void Window::release_context_noexcept() noexcept {
 
 std::expected<Window, vng::window::Diagnostic> create_window(
     const vng::window::WindowDesc& window,
-    const vng::opengl::ContextDesc& context) {
+    const vng::opengl::ContextDesc& context,
+    const vng::window::PresentationDesc& presentation) {
+    if (presentation.vsync != vng::window::VSync::off && presentation.vsync != vng::window::VSync::on)
+        return std::unexpected(vng::window::Diagnostic{
+            .code = vng::window::ErrorCode::window_creation_failed,
+            .message = "Invalid VSync mode",
+        });
     constexpr auto maximum_int =
         static_cast<std::uint32_t>(std::numeric_limits<int>::max());
     if (context.version.major > maximum_int
@@ -286,7 +332,7 @@ std::expected<Window, vng::window::Diagnostic> create_window(
         std::move(*created),
         std::move(lifetime),
         context.default_framebuffer_encoding,
-        context.swap_interval);
+        presentation.vsync);
 }
 
 } // namespace vng::glfw_opengl

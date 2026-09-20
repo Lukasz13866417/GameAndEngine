@@ -168,11 +168,13 @@ std::expected<void, Diagnostic> Buffer::write(
         return current;
     }
     if (!bytes.empty()) {
-        glNamedBufferSubData(
-            handle_,
-            static_cast<GLintptr>(offset),
-            static_cast<GLsizeiptr>(bytes.size()),
-            bytes.data());
+        return detail::checked_gl_call("glNamedBufferSubData", [&] {
+            glNamedBufferSubData(
+                handle_,
+                static_cast<GLintptr>(offset),
+                static_cast<GLsizeiptr>(bytes.size()),
+                bytes.data());
+        });
     }
     return {};
 }

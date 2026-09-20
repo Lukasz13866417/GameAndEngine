@@ -17,33 +17,6 @@ concept FloatValue = std::is_same_v<T, f32> || float_vector_v<T>;
 template<class T>
 concept NumericValue = numeric_scalar_v<T> || numeric_vector_v<T>;
 
-template<class Composite, class... Arguments>
-[[nodiscard]] consteval bool directly_constructible()
-{
-    if constexpr (is_vector_v<Composite>) {
-        using Element = typename vector_traits<Composite>::value_type;
-        return sizeof...(Arguments) == vector_traits<Composite>::component_count &&
-               (std::is_same_v<host_or_expression_value_t<Arguments>, Element> && ...);
-    } else if constexpr (shader::detail::is_matrix_v<Composite>) {
-        using Column = Vector<f32, shader::detail::matrix_traits<Composite>::rows>;
-        return sizeof...(Arguments) == shader::detail::matrix_traits<Composite>::columns &&
-               (std::is_same_v<host_or_expression_value_t<Arguments>, Column> && ...);
-    }
-    return false;
-}
-
-template<class Composite, class Low, class High>
-[[nodiscard]] consteval bool valid_clamp_bounds()
-{
-    if constexpr (std::is_same_v<Composite, Low> && std::is_same_v<Composite, High>) {
-        return true;
-    } else if constexpr (is_vector_v<Composite>) {
-        using Element = typename vector_traits<Composite>::value_type;
-        return std::is_same_v<Element, Low> && std::is_same_v<Element, High>;
-    }
-    return false;
-}
-
 template<class Result, class... Arguments>
     requires HasAnyExpression<Arguments...>
 [[nodiscard]] Expr<Result> construct(const Arguments&... arguments)
@@ -61,107 +34,203 @@ template<class Result, class... Arguments>
     };
 }
 
-template<class Left, class Right>
-concept SameNumericPair = ShaderOperand<Left> && ShaderOperand<Right> &&
-    HasExpressionOperand<Left, Right> &&
-    std::is_same_v<host_or_expression_value_t<Left>, host_or_expression_value_t<Right>> &&
-    NumericValue<host_or_expression_value_t<Left>>;
+template<class T>
+struct composite_components;
+
+template<class E, std::size_t N>
+struct composite_components<Vector<E, N>> {
+    using type = E;
+    static constexpr std::size_t count = N;
+};
+
+template<std::size_t N>
+struct composite_components<Matrix<N>> {
+    using type = Vector<f32, N>;
+    static constexpr std::size_t count = N;
+};
+
+template<class T>
+using component_t = typename composite_components<T>::type;
+
+// Non-deduced wrappers ensure conversion happens at the original call site.
+template<class T>
+using operand_t = Operand<std::type_identity_t<T>>;
+template<class T>
+using constant_t = Constant<std::type_identity_t<T>>;
 
 } // namespace detail
 
-template<class Left, class Right> requires detail::SameNumericPair<Left, Right>
-[[nodiscard]] auto min(const Left& left, const Right& right)
+#define VNG_DSL_BINARY_INTRINSIC(NAME, OPCODE, REQUIREMENT, RESULT)                 \
+    template<shader::Value T> requires (REQUIREMENT)                               \
+    [[nodiscard]] Expr<RESULT> NAME(Expr<T> left, detail::operand_t<T> right)        \
+    { return detail::binary<RESULT>(shader::OpCode::OPCODE, left, right); }         \
+    template<shader::Value T> requires (REQUIREMENT)                               \
+    [[nodiscard]] Expr<RESULT> NAME(detail::constant_t<T> left, Expr<T> right)      \
+    { return detail::binary<RESULT>(shader::OpCode::OPCODE, left, right); }
+
+VNG_DSL_BINARY_INTRINSIC(min, minimum, detail::NumericValue<T>, T)
+VNG_DSL_BINARY_INTRINSIC(max, maximum, detail::NumericValue<T>, T)
+VNG_DSL_BINARY_INTRINSIC(dot, dot, detail::float_vector_v<T>, f32)
+VNG_DSL_BINARY_INTRINSIC(pow, power, detail::FloatValue<T>, T)
+#undef VNG_DSL_BINARY_INTRINSIC
+
+// Choose the first actual expression as the type/builder anchor. Constants
+// before it and expression-or-constant operands after it make these overloads
+// disjoint; host values never enter a generic forwarding function unchecked.
+#define VNG_DSL_TERNARY_SAME(NAME, OPCODE, REQUIREMENT)                             \
+    template<shader::Value T> requires (REQUIREMENT)                               \
+    [[nodiscard]] Expr<T> NAME(Expr<T> a, detail::operand_t<T> b,                   \
+        detail::operand_t<T> c)                                                   \
+    { return detail::intrinsic<T>(shader::OpCode::OPCODE, a, b, c); }              \
+    template<shader::Value T> requires (REQUIREMENT)                               \
+    [[nodiscard]] Expr<T> NAME(detail::constant_t<T> a, Expr<T> b,                  \
+        detail::operand_t<T> c)                                                   \
+    { return detail::intrinsic<T>(shader::OpCode::OPCODE, a, b, c); }              \
+    template<shader::Value T> requires (REQUIREMENT)                               \
+    [[nodiscard]] Expr<T> NAME(detail::constant_t<T> a,                            \
+        detail::constant_t<T> b, Expr<T> c)                                        \
+    { return detail::intrinsic<T>(shader::OpCode::OPCODE, a, b, c); }
+
+VNG_DSL_TERNARY_SAME(clamp, clamp, detail::NumericValue<T>)
+VNG_DSL_TERNARY_SAME(mix, mix, detail::FloatValue<T>)
+#undef VNG_DSL_TERNARY_SAME
+
+template<class E, std::size_t N> requires detail::numeric_scalar_v<E>
+[[nodiscard]] Expr<Vector<E, N>> clamp(Expr<Vector<E, N>> value,
+    detail::operand_t<E> low, detail::operand_t<E> high)
 {
-    using Result = detail::host_or_expression_value_t<Left>;
-    return detail::binary<Result>(shader::OpCode::minimum, left, right);
+    return detail::intrinsic<Vector<E, N>>(shader::OpCode::clamp, value, low, high);
 }
 
-template<class Left, class Right> requires detail::SameNumericPair<Left, Right>
-[[nodiscard]] auto max(const Left& left, const Right& right)
+// A vector-valued constant does not provide a deducible template argument.
+// Spell out the supported widths while still deducing the scalar logical type.
+#define VNG_DSL_CONSTANT_VECTOR_CLAMP(N)                                           \
+    template<class E> requires detail::numeric_scalar_v<E>                        \
+    [[nodiscard]] Expr<Vector<E, N>> clamp(detail::constant_t<Vector<E, N>> value, \
+        Expr<E> low, detail::operand_t<E> high)                                   \
+    { return detail::intrinsic<Vector<E, N>>(shader::OpCode::clamp, value, low, high); } \
+    template<class E> requires detail::numeric_scalar_v<E>                        \
+    [[nodiscard]] Expr<Vector<E, N>> clamp(detail::constant_t<Vector<E, N>> value, \
+        detail::constant_t<E> low, Expr<E> high)                                  \
+    { return detail::intrinsic<Vector<E, N>>(shader::OpCode::clamp, value, low, high); }
+
+VNG_DSL_CONSTANT_VECTOR_CLAMP(2)
+VNG_DSL_CONSTANT_VECTOR_CLAMP(3)
+VNG_DSL_CONSTANT_VECTOR_CLAMP(4)
+#undef VNG_DSL_CONSTANT_VECTOR_CLAMP
+
+template<std::size_t N>
+[[nodiscard]] Expr<Vector<f32, N>> mix(Expr<Vector<f32, N>> a,
+    detail::operand_t<Vector<f32, N>> b, detail::Operand<f32> factor)
 {
-    using Result = detail::host_or_expression_value_t<Left>;
-    return detail::binary<Result>(shader::OpCode::maximum, left, right);
+    return detail::intrinsic<Vector<f32, N>>(shader::OpCode::mix, a, b, factor);
 }
 
-template<class ValueArg, class Low, class High>
-    requires detail::ShaderOperand<ValueArg> && detail::ShaderOperand<Low> && detail::ShaderOperand<High> &&
-             detail::HasAnyExpression<ValueArg, Low, High> &&
-             (detail::valid_clamp_bounds<
-                 detail::host_or_expression_value_t<ValueArg>,
-                 detail::host_or_expression_value_t<Low>,
-                 detail::host_or_expression_value_t<High>>()) &&
-             detail::NumericValue<detail::host_or_expression_value_t<ValueArg>>
-[[nodiscard]] auto clamp(const ValueArg& value, const Low& low, const High& high)
+template<std::size_t N>
+[[nodiscard]] Expr<Vector<f32, N>> mix(detail::constant_t<Vector<f32, N>> a,
+    Expr<Vector<f32, N>> b, detail::Operand<f32> factor)
 {
-    using Result = detail::host_or_expression_value_t<ValueArg>;
-    return detail::intrinsic<Result>(shader::OpCode::clamp, value, low, high);
+    return detail::intrinsic<Vector<f32, N>>(shader::OpCode::mix, a, b, factor);
 }
 
-template<class Left, class Right>
-    requires detail::ShaderOperand<Left> && detail::ShaderOperand<Right> &&
-             detail::HasExpressionOperand<Left, Right> &&
-             std::is_same_v<detail::host_or_expression_value_t<Left>, detail::host_or_expression_value_t<Right>> &&
-             detail::float_vector_v<detail::host_or_expression_value_t<Left>>
-[[nodiscard]] auto dot(const Left& left, const Right& right)
-{
-    return detail::binary<f32>(shader::OpCode::dot, left, right);
-}
+#define VNG_DSL_CONSTANT_VECTOR_MIX(T)                                             \
+    [[nodiscard]] inline Expr<T> mix(detail::Constant<T> a, detail::Constant<T> b, \
+        Float factor)                                                            \
+    { return detail::intrinsic<T>(shader::OpCode::mix, a, b, factor); }
+
+VNG_DSL_CONSTANT_VECTOR_MIX(Vec2)
+VNG_DSL_CONSTANT_VECTOR_MIX(Vec3)
+VNG_DSL_CONSTANT_VECTOR_MIX(Vec4)
+#undef VNG_DSL_CONSTANT_VECTOR_MIX
 
 [[nodiscard]] inline Float3 cross(Float3 left, Float3 right)
 {
     return detail::binary<Vec3>(shader::OpCode::cross, left, right);
 }
 
-template<shader::Value T>
-    requires detail::float_vector_v<T>
+template<shader::Value T> requires detail::float_vector_v<T>
 [[nodiscard]] Expr<T> normalize(Expr<T> value)
 {
     return detail::intrinsic<T>(shader::OpCode::normalize, value);
 }
 
-template<shader::Value T>
-    requires detail::FloatValue<T>
+template<shader::Value T> requires detail::FloatValue<T>
 [[nodiscard]] Expr<T> sqrt(Expr<T> value)
 {
     return detail::intrinsic<T>(shader::OpCode::square_root, value);
 }
 
-template<class A, class B, class Factor>
-    requires detail::ShaderOperand<A> && detail::ShaderOperand<B> && detail::ShaderOperand<Factor> &&
-             detail::HasAnyExpression<A, B, Factor> &&
-             std::is_same_v<detail::host_or_expression_value_t<A>, detail::host_or_expression_value_t<B>> &&
-             detail::FloatValue<detail::host_or_expression_value_t<A>> &&
-             (std::is_same_v<detail::host_or_expression_value_t<Factor>, f32> ||
-              std::is_same_v<detail::host_or_expression_value_t<Factor>, detail::host_or_expression_value_t<A>>)
-[[nodiscard]] auto mix(const A& a, const B& b, const Factor& factor)
+#define VNG_DSL_FLOAT_UNARY(NAME, OPCODE)                                        \
+    template<shader::Value T> requires detail::FloatValue<T>                     \
+    [[nodiscard]] Expr<T> NAME(Expr<T> value)                                    \
+    { return detail::intrinsic<T>(shader::OpCode::OPCODE, value); }
+
+VNG_DSL_FLOAT_UNARY(sin, sine)
+VNG_DSL_FLOAT_UNARY(cos, cosine)
+VNG_DSL_FLOAT_UNARY(floor, floor)
+VNG_DSL_FLOAT_UNARY(fract, fract)
+VNG_DSL_FLOAT_UNARY(exp, exponential)
+#undef VNG_DSL_FLOAT_UNARY
+
+template<shader::Value T>
+    requires (detail::NumericValue<T> && !detail::unsigned_value_v<T>)
+[[nodiscard]] Expr<T> abs(Expr<T> value)
 {
-    using Result = detail::host_or_expression_value_t<A>;
-    return detail::intrinsic<Result>(shader::OpCode::mix, a, b, factor);
+    return detail::intrinsic<T>(shader::OpCode::absolute, value);
 }
 
-template<shader::Value Condition, class True, class False>
-    requires detail::ShaderOperand<True> && detail::ShaderOperand<False> &&
-             std::is_same_v<detail::host_or_expression_value_t<True>, detail::host_or_expression_value_t<False>> &&
-             (std::is_same_v<Condition, bool> ||
-              detail::vector_selectable<Condition, detail::host_or_expression_value_t<True>>::value)
-[[nodiscard]] auto select(Expr<Condition> condition, const True& when_true, const False& when_false)
+template<shader::Value Condition, shader::Value T>
+    requires (std::same_as<Condition, bool> ||
+              detail::vector_selectable<Condition, T>::value)
+[[nodiscard]] Expr<T> select(Expr<Condition> condition, Expr<T> when_true,
+    detail::operand_t<T> when_false)
 {
-    using T = detail::host_or_expression_value_t<True>;
     return detail::intrinsic<T>(shader::OpCode::select, condition, when_true, when_false);
 }
+
+template<shader::Value Condition, shader::Value T>
+    requires (std::same_as<Condition, bool> ||
+              detail::vector_selectable<Condition, T>::value)
+[[nodiscard]] Expr<T> select(Expr<Condition> condition,
+    detail::constant_t<T> when_true, Expr<T> when_false)
+{
+    return detail::intrinsic<T>(shader::OpCode::select, condition, when_true, when_false);
+}
+
+// When both branches are host constants, neither can deduce a logical type
+// through its conversion. These overloads cover all primitive DSL value types.
+#define VNG_DSL_CONSTANT_SELECT(...)                                                 \
+    template<shader::Value Condition>                                             \
+        requires (std::same_as<Condition, bool> ||                                \
+                  detail::vector_selectable<Condition, __VA_ARGS__>::value)                 \
+    [[nodiscard]] Expr<__VA_ARGS__> select(Expr<Condition> condition,                        \
+        detail::Constant<__VA_ARGS__> when_true, detail::Constant<__VA_ARGS__> when_false)             \
+    { return detail::intrinsic<__VA_ARGS__>(shader::OpCode::select, condition, when_true, when_false); }
+
+VNG_DSL_CONSTANT_SELECT(bool)
+VNG_DSL_CONSTANT_SELECT(i32)
+VNG_DSL_CONSTANT_SELECT(u32)
+VNG_DSL_CONSTANT_SELECT(f32)
+VNG_DSL_CONSTANT_SELECT(Vec2)
+VNG_DSL_CONSTANT_SELECT(Vec3)
+VNG_DSL_CONSTANT_SELECT(Vec4)
+VNG_DSL_CONSTANT_SELECT(IVec2)
+VNG_DSL_CONSTANT_SELECT(IVec3)
+VNG_DSL_CONSTANT_SELECT(IVec4)
+VNG_DSL_CONSTANT_SELECT(UVec2)
+VNG_DSL_CONSTANT_SELECT(UVec3)
+VNG_DSL_CONSTANT_SELECT(UVec4)
+VNG_DSL_CONSTANT_SELECT(Mat3)
+VNG_DSL_CONSTANT_SELECT(Mat4)
+VNG_DSL_CONSTANT_SELECT(Vector<bool, 2>)
+VNG_DSL_CONSTANT_SELECT(Vector<bool, 3>)
+VNG_DSL_CONSTANT_SELECT(Vector<bool, 4>)
+#undef VNG_DSL_CONSTANT_SELECT
 
 template<std::size_t N>
 [[nodiscard]] Bool all(Expr<Vector<bool, N>> value)
 {
     return detail::intrinsic<bool>(shader::OpCode::all, value);
-}
-
-template<shader::Value Composite, class... Arguments>
-    requires detail::HasAnyExpression<Arguments...> &&
-             (detail::directly_constructible<Composite, Arguments...>())
-[[nodiscard]] Expr<Composite> make(const Arguments&... arguments)
-{
-    return detail::construct<Composite>(arguments...);
 }
 
 template<std::size_t N>
@@ -170,71 +239,218 @@ template<std::size_t N>
     return detail::intrinsic<bool>(shader::OpCode::any, value);
 }
 
-template<class X, class Y>
-    requires detail::HasAnyExpression<X, Y> &&
-             std::is_same_v<detail::host_or_expression_value_t<X>, f32> &&
-             std::is_same_v<detail::host_or_expression_value_t<Y>, f32>
-[[nodiscard]] Float2 vec2(const X& x, const Y& y)
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 2)
+[[nodiscard]] Expr<Composite> make(Expr<detail::component_t<Composite>> a,
+    detail::operand_t<detail::component_t<Composite>> b)
 {
-    return detail::construct<Vec2>(x, y);
+    return detail::construct<Composite>(a, b);
 }
 
-template<class X, class Y, class Z>
-    requires detail::HasAnyExpression<X, Y, Z> &&
-             std::is_same_v<detail::host_or_expression_value_t<X>, f32> &&
-             std::is_same_v<detail::host_or_expression_value_t<Y>, f32> &&
-             std::is_same_v<detail::host_or_expression_value_t<Z>, f32>
-[[nodiscard]] Float3 vec3(const X& x, const Y& y, const Z& z)
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 2)
+[[nodiscard]] Expr<Composite> make(detail::constant_t<detail::component_t<Composite>> a,
+    Expr<detail::component_t<Composite>> b)
 {
-    return detail::construct<Vec3>(x, y, z);
+    return detail::construct<Composite>(a, b);
 }
 
-template<class XY, class Z>
-    requires detail::HasAnyExpression<XY, Z> &&
-             std::is_same_v<detail::host_or_expression_value_t<XY>, Vec2> &&
-             std::is_same_v<detail::host_or_expression_value_t<Z>, f32>
-[[nodiscard]] Float3 vec3(const XY& xy, const Z& z)
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 3)
+[[nodiscard]] Expr<Composite> make(Expr<detail::component_t<Composite>> a,
+    detail::operand_t<detail::component_t<Composite>> b,
+    detail::operand_t<detail::component_t<Composite>> c)
 {
-    return detail::construct<Vec3>(xy, z);
+    return detail::construct<Composite>(a, b, c);
 }
 
-template<class X, class Y, class Z, class W>
-    requires detail::HasAnyExpression<X, Y, Z, W> &&
-             std::is_same_v<detail::host_or_expression_value_t<X>, f32> &&
-             std::is_same_v<detail::host_or_expression_value_t<Y>, f32> &&
-             std::is_same_v<detail::host_or_expression_value_t<Z>, f32> &&
-             std::is_same_v<detail::host_or_expression_value_t<W>, f32>
-[[nodiscard]] Float4 vec4(const X& x, const Y& y, const Z& z, const W& w)
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 3)
+[[nodiscard]] Expr<Composite> make(detail::constant_t<detail::component_t<Composite>> a,
+    Expr<detail::component_t<Composite>> b,
+    detail::operand_t<detail::component_t<Composite>> c)
 {
-    return detail::construct<Vec4>(x, y, z, w);
+    return detail::construct<Composite>(a, b, c);
 }
 
-template<class XYZ, class W>
-    requires detail::HasAnyExpression<XYZ, W> &&
-             std::is_same_v<detail::host_or_expression_value_t<XYZ>, Vec3> &&
-             std::is_same_v<detail::host_or_expression_value_t<W>, f32>
-[[nodiscard]] Float4 vec4(const XYZ& xyz, const W& w)
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 3)
+[[nodiscard]] Expr<Composite> make(detail::constant_t<detail::component_t<Composite>> a,
+    detail::constant_t<detail::component_t<Composite>> b,
+    Expr<detail::component_t<Composite>> c)
 {
-    return detail::construct<Vec4>(xyz, w);
+    return detail::construct<Composite>(a, b, c);
 }
 
-template<class XY, class Z, class W>
-    requires detail::HasAnyExpression<XY, Z, W> &&
-             std::is_same_v<detail::host_or_expression_value_t<XY>, Vec2> &&
-             std::is_same_v<detail::host_or_expression_value_t<Z>, f32> &&
-             std::is_same_v<detail::host_or_expression_value_t<W>, f32>
-[[nodiscard]] Float4 vec4(const XY& xy, const Z& z, const W& w)
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 4)
+[[nodiscard]] Expr<Composite> make(Expr<detail::component_t<Composite>> a,
+    detail::operand_t<detail::component_t<Composite>> b,
+    detail::operand_t<detail::component_t<Composite>> c,
+    detail::operand_t<detail::component_t<Composite>> d)
 {
-    return detail::construct<Vec4>(xy, z, w);
+    return detail::construct<Composite>(a, b, c, d);
 }
 
-template<class XY, class ZW>
-    requires detail::HasAnyExpression<XY, ZW> &&
-             std::is_same_v<detail::host_or_expression_value_t<XY>, Vec2> &&
-             std::is_same_v<detail::host_or_expression_value_t<ZW>, Vec2>
-[[nodiscard]] Float4 vec4(const XY& xy, const ZW& zw)
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 4)
+[[nodiscard]] Expr<Composite> make(detail::constant_t<detail::component_t<Composite>> a,
+    Expr<detail::component_t<Composite>> b,
+    detail::operand_t<detail::component_t<Composite>> c,
+    detail::operand_t<detail::component_t<Composite>> d)
 {
-    return detail::construct<Vec4>(xy, zw);
+    return detail::construct<Composite>(a, b, c, d);
+}
+
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 4)
+[[nodiscard]] Expr<Composite> make(detail::constant_t<detail::component_t<Composite>> a,
+    detail::constant_t<detail::component_t<Composite>> b,
+    Expr<detail::component_t<Composite>> c,
+    detail::operand_t<detail::component_t<Composite>> d)
+{
+    return detail::construct<Composite>(a, b, c, d);
+}
+
+template<shader::Value Composite>
+    requires requires { typename detail::composite_components<Composite>::type; } &&
+             (detail::composite_components<Composite>::count == 4)
+[[nodiscard]] Expr<Composite> make(detail::constant_t<detail::component_t<Composite>> a,
+    detail::constant_t<detail::component_t<Composite>> b,
+    detail::constant_t<detail::component_t<Composite>> c,
+    Expr<detail::component_t<Composite>> d)
+{
+    return detail::construct<Composite>(a, b, c, d);
+}
+
+[[nodiscard]] inline Expr<Vec2> vec2(Expr<f32> a,
+    detail::Operand<f32> b)
+{
+    return detail::construct<Vec2>(a, b);
+}
+
+[[nodiscard]] inline Expr<Vec2> vec2(detail::Constant<f32> a,
+    Expr<f32> b)
+{
+    return detail::construct<Vec2>(a, b);
+}
+
+[[nodiscard]] inline Expr<Vec3> vec3(Expr<f32> a,
+    detail::Operand<f32> b,
+    detail::Operand<f32> c)
+{
+    return detail::construct<Vec3>(a, b, c);
+}
+
+[[nodiscard]] inline Expr<Vec3> vec3(detail::Constant<f32> a,
+    Expr<f32> b,
+    detail::Operand<f32> c)
+{
+    return detail::construct<Vec3>(a, b, c);
+}
+
+[[nodiscard]] inline Expr<Vec3> vec3(detail::Constant<f32> a,
+    detail::Constant<f32> b,
+    Expr<f32> c)
+{
+    return detail::construct<Vec3>(a, b, c);
+}
+
+[[nodiscard]] inline Expr<Vec3> vec3(Expr<Vec2> a,
+    detail::Operand<f32> b)
+{
+    return detail::construct<Vec3>(a, b);
+}
+
+[[nodiscard]] inline Expr<Vec3> vec3(detail::Constant<Vec2> a,
+    Expr<f32> b)
+{
+    return detail::construct<Vec3>(a, b);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(Expr<f32> a,
+    detail::Operand<f32> b,
+    detail::Operand<f32> c,
+    detail::Operand<f32> d)
+{
+    return detail::construct<Vec4>(a, b, c, d);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(detail::Constant<f32> a,
+    Expr<f32> b,
+    detail::Operand<f32> c,
+    detail::Operand<f32> d)
+{
+    return detail::construct<Vec4>(a, b, c, d);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(detail::Constant<f32> a,
+    detail::Constant<f32> b,
+    Expr<f32> c,
+    detail::Operand<f32> d)
+{
+    return detail::construct<Vec4>(a, b, c, d);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(detail::Constant<f32> a,
+    detail::Constant<f32> b,
+    detail::Constant<f32> c,
+    Expr<f32> d)
+{
+    return detail::construct<Vec4>(a, b, c, d);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(Expr<Vec3> a,
+    detail::Operand<f32> b)
+{
+    return detail::construct<Vec4>(a, b);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(detail::Constant<Vec3> a,
+    Expr<f32> b)
+{
+    return detail::construct<Vec4>(a, b);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(Expr<Vec2> a,
+    detail::Operand<f32> b,
+    detail::Operand<f32> c)
+{
+    return detail::construct<Vec4>(a, b, c);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(detail::Constant<Vec2> a,
+    Expr<f32> b,
+    detail::Operand<f32> c)
+{
+    return detail::construct<Vec4>(a, b, c);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(detail::Constant<Vec2> a,
+    detail::Constant<f32> b,
+    Expr<f32> c)
+{
+    return detail::construct<Vec4>(a, b, c);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(Expr<Vec2> a,
+    detail::Operand<Vec2> b)
+{
+    return detail::construct<Vec4>(a, b);
+}
+
+[[nodiscard]] inline Expr<Vec4> vec4(detail::Constant<Vec2> a,
+    Expr<Vec2> b)
+{
+    return detail::construct<Vec4>(a, b);
 }
 
 } // namespace vng::dsl

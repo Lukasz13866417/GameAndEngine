@@ -28,10 +28,6 @@ struct ContextDesc final {
     render::ColorEncoding default_framebuffer_encoding{
         render::ColorEncoding::srgb};
 
-    // 0 presents immediately, 1 synchronizes to the display. Other values are
-    // forwarded when supported by the selected window-system integration.
-    std::int32_t swap_interval{1};
-
     constexpr bool operator==(const ContextDesc&) const = default;
 };
 

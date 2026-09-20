@@ -20,9 +20,6 @@
 
 namespace vng::gfx {
 
-template<class T>
-concept RecordType = std::same_as<T, std::remove_cvref_t<T>> && is_record_v<T>;
-
 struct MeshInfo final {
     std::string name;
 

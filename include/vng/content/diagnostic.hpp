@@ -27,6 +27,9 @@ enum class ErrorCode {
     invalid_field_type,
     invalid_document,
     index_out_of_range,
+    missing_property,
+    type_mismatch,
+    duplicate_property,
 };
 
 struct SourceLocation final {
@@ -43,6 +46,8 @@ struct Diagnostic final {
     std::optional<SourceLocation> location;
     std::filesystem::path path;
     std::vector<std::string> notes;
+    // A literal-key-aware path within a structured document, when available.
+    std::string property_path{};
 
     [[nodiscard]] Diagnostic& note(std::string text)
     {

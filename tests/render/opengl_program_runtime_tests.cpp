@@ -63,11 +63,10 @@ using CameraVertexInputs = vng::shader::VertexInputs<Position3D, Color>;
     return result;
 }
 
-[[nodiscard]] constexpr vng::render::GraphicsPipelineDesc linear_pipeline(
-    vng::render::GraphicsPipelineDesc description = {}) noexcept
+[[nodiscard]] vng::opengl::CaptureState capture_state(
+    vng::opengl::GraphicsStateSnapshot raster = {}) noexcept
 {
-    description.output_encoding = vng::render::ColorEncoding::linear;
-    return description;
+    return {raster, vng::render::ColorEncoding::linear};
 }
 
 } // namespace
@@ -88,8 +87,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
             .samples = 0,
             .default_framebuffer_encoding =
                 vng::render::ColorEncoding::linear,
-            .swap_interval = 0,
-        });
+        }, {.vsync = vng::window::VSync::off});
     if (!window) {
         skip_ctest("OpenGL context unavailable: " + window.error().message);
     }
@@ -134,21 +132,14 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
     const auto original_fragment_ir = shader_program->fragment().dump_ir();
 
     auto renderer = vng::render::OpenGLProgramRuntime::create(
-        *device, *shader_program, linear_pipeline());
+        *device, *shader_program);
     INFO((renderer ? std::string{} : describe(renderer.error())));
     REQUIRE(renderer);
     CHECK(renderer->analysis_source() == nullptr);
 
     auto normal_only_renderer = vng::render::OpenGLProgramRuntime::create(
         *device,
-        *shader_program,
-        linear_pipeline(vng::render::GraphicsPipelineDesc{
-            .depth = {
-                .test = true,
-                .write = false,
-                .compare = vng::render::DepthCompare::less,
-            },
-        }));
+        *shader_program);
     INFO((normal_only_renderer
         ? std::string{}
         : describe(normal_only_renderer.error())));
@@ -178,7 +169,13 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
     REQUIRE(gpu_mesh);
 
     auto unsupported_analysis = normal_only_renderer->render_analysis(
-        *device, mesh, *gpu_mesh, {32, 32});
+        *device, mesh, *gpu_mesh, {32, 32},capture_state(vng::opengl::GraphicsStateSnapshot{
+            .depth = {
+                .test = true,
+                .write = false,
+                .compare = vng::render::DepthCompare::less,
+            },
+        }));
     REQUIRE_FALSE(unsupported_analysis);
     CHECK(unsupported_analysis.error().code
           == vng::opengl::ErrorCode::invalid_argument);
@@ -191,7 +188,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         wrong_source_mesh.faces()[0][1],
         wrong_source_mesh.faces()[0][2]);
     auto mismatched = renderer->render_analysis(
-        *device, wrong_source_mesh, *gpu_mesh, {32, 32});
+        *device, wrong_source_mesh, *gpu_mesh, {32, 32},capture_state());
     REQUIRE_FALSE(mismatched);
     CHECK(mismatched.error().code
           == vng::opengl::ErrorCode::invalid_argument);
@@ -275,7 +272,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         *device,
         mesh,
         *gpu_mesh,
-        {32, 32},
+        {32, 32},capture_state(),
         vng::render::AnalysisOptions{
             .provenance = {
                 .entity = a::EntityId{11},
@@ -318,20 +315,19 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
     // against a clear value of one.
     auto reverse_depth_renderer = vng::render::OpenGLProgramRuntime::create(
         *device,
-        *shader_program,
-        linear_pipeline(vng::render::GraphicsPipelineDesc{
+        *shader_program);
+    INFO((reverse_depth_renderer
+        ? std::string{}
+        : describe(reverse_depth_renderer.error())));
+    REQUIRE(reverse_depth_renderer);
+    auto reverse_depth_capture = reverse_depth_renderer->render_analysis(
+        *device, mesh, *gpu_mesh, {32, 32},capture_state(vng::opengl::GraphicsStateSnapshot{
             .depth = {
                 .test = true,
                 .write = true,
                 .compare = vng::render::DepthCompare::greater_equal,
             },
         }));
-    INFO((reverse_depth_renderer
-        ? std::string{}
-        : describe(reverse_depth_renderer.error())));
-    REQUIRE(reverse_depth_renderer);
-    auto reverse_depth_capture = reverse_depth_renderer->render_analysis(
-        *device, mesh, *gpu_mesh, {32, 32});
     INFO((reverse_depth_capture
         ? std::string{}
         : describe(reverse_depth_capture.error())));
@@ -356,9 +352,15 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
     CHECK(second_face->color.r < 10);
     CHECK(second_face->color.g > 245);
 
-    REQUIRE(renderer->normal_pipeline().bind(*device));
+    REQUIRE(device->set_standard_raster_state());
+    REQUIRE(device->set_depth_state({false, false}));
+    REQUIRE(device->set_cull_state({vng::opengl::CullMode::none}));
+    REQUIRE(device->set_blend_enabled(0, false));
+    REQUIRE(device->set_color_write_mask(0, {true, true, true, true}));
+    REQUIRE(device->set_framebuffer_srgb_enabled(false));
+    REQUIRE(renderer->production().bind());
     REQUIRE(gpu_mesh->draw_bound(
-        *device, renderer->normal_pipeline()));
+        *device, renderer->production()));
     auto ordinary_pixels = caller_framebuffer->read_rgba8_pixels(
         0, 0, 0, 16, 16);
     REQUIRE(ordinary_pixels);
@@ -369,7 +371,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
     CHECK(ordinary_center.a == center->color.a);
 
     auto second_capture = renderer->render_analysis(
-        *device, mesh, *gpu_mesh, {24, 20});
+        *device, mesh, *gpu_mesh, {24, 20},capture_state());
     INFO((second_capture
         ? std::string{}
         : describe(second_capture.error())));
@@ -410,7 +412,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         std::move(*sparse_vertex), std::move(*sparse_fragment));
     REQUIRE(sparse_program);
     auto sparse_renderer = vng::render::OpenGLProgramRuntime::create(
-        *device, *sparse_program, linear_pipeline());
+        *device, *sparse_program);
     INFO((sparse_renderer
         ? std::string{}
         : describe(sparse_renderer.error())));
@@ -436,7 +438,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         untouched_location, untouched_analysis_mask));
 
     auto sparse_capture = sparse_renderer->render_analysis(
-        *device, mesh, *gpu_mesh, {32, 32});
+        *device, mesh, *gpu_mesh, {32, 32},capture_state());
     INFO((sparse_capture
         ? std::string{}
         : describe(sparse_capture.error())));
@@ -484,7 +486,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         *device,
         mesh,
         *gpu_mesh,
-        vng::render::RenderView::without_camera({32, 32}),
+        vng::render::RenderView::without_camera({32, 32}),capture_state(),
         vng::analysis::CaptureRequest::standard()
             .observe(ObservedTint{}));
     INFO((sparse_evidence
@@ -522,7 +524,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
             *device,
             mesh,
             *gpu_mesh,
-            view,
+            view,capture_state(),
             std::move(request),
             vng::render::AnalysisOptions{
                 .label = "observed triangle",
@@ -588,7 +590,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         const auto* observed_semantic = evidence->backend_artifact(
             "shader/observation-0/semantic.txt");
         const auto* pipeline_state = evidence->backend_artifact(
-            "pipeline/state.txt");
+            "raster/state.txt");
         REQUIRE(normal_fragment != nullptr);
         REQUIRE(observed_fragment != nullptr);
         REQUIRE(observed_semantic != nullptr);
@@ -627,14 +629,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         namespace a = vng::analysis;
         auto depth_rejected_renderer = vng::render::OpenGLProgramRuntime::create(
             *device,
-            *shader_program,
-            linear_pipeline(vng::render::GraphicsPipelineDesc{
-                .depth = {
-                    .test = true,
-                    .write = true,
-                    .compare = vng::render::DepthCompare::never,
-                },
-            }));
+            *shader_program);
         INFO((depth_rejected_renderer
             ? std::string{}
             : describe(depth_rejected_renderer.error())));
@@ -645,7 +640,13 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
             *device,
             mesh,
             *gpu_mesh,
-            view,
+            view,capture_state(vng::opengl::GraphicsStateSnapshot{
+                .depth = {
+                    .test = true,
+                    .write = true,
+                    .compare = vng::render::DepthCompare::never,
+                },
+            }),
             a::CaptureRequest::diagnostic(),
             vng::render::AnalysisOptions{
                 .label = "depth rejection sweep",
@@ -708,7 +709,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
                 : property->value;
         };
         CHECK(property_value(
-                  *depth_always, "pipeline.production.depth.compare")
+                  *depth_always, "raster.production.depth.compare")
               == "never");
         CHECK(property_value(
                   *production, "raster.effective.depth.compare")
@@ -750,11 +751,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         REQUIRE(facing_program);
         auto facing_renderer = vng::render::OpenGLProgramRuntime::create(
             *device,
-            *facing_program,
-            linear_pipeline(vng::render::GraphicsPipelineDesc{
-                .cull = vng::render::CullMode::back,
-                .front_face = vng::render::FrontFace::clockwise,
-            }));
+            *facing_program);
         INFO((facing_renderer
             ? std::string{}
             : describe(facing_renderer.error())));
@@ -764,7 +761,10 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
             *device,
             mesh,
             *gpu_mesh,
-            vng::render::RenderView::without_camera({32, 32}),
+            vng::render::RenderView::without_camera({32, 32}),capture_state(vng::opengl::GraphicsStateSnapshot{
+                .cull = vng::render::CullMode::back,
+                .front_face = vng::render::FrontFace::clockwise,
+            }),
             vng::analysis::CaptureRequest::diagnostic());
         INFO((sweep ? std::string{} : describe(sweep.error())));
         REQUIRE(sweep);
@@ -789,7 +789,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
             *device,
             mesh,
             *gpu_mesh,
-            view,
+            view,capture_state(),
             vng::analysis::CaptureRequest::standard()
                 .observe(MissingObservation{}));
         REQUIRE_FALSE(missing);
@@ -802,16 +802,61 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
     }
 
     {
-        INFO("the optional simple mesh renderer is a concrete Renderer<MeshDraw>");
-        auto linear_output = linear_pipeline();
+        INFO("capture reflects each invocation's live graphics state, not cached shader state");
+        auto frame = vng::render::begin_frame(*device, vng::render::FrameDesc{
+            .extent = {32, 32}, .color_encoding = vng::render::ColorEncoding::linear,
+            .clear_color = std::nullopt, .clear_depth = std::nullopt});
+        REQUIRE(frame);
+        auto commands = frame->commands();
+        auto graphics = commands.graphics_state();
+        const auto view = vng::render::RenderView::without_camera({32, 32});
+        REQUIRE(graphics.set(vng::opengl::GraphicsStateSnapshot{}));
+        auto visible = renderer->capture(*frame, mesh, *gpu_mesh, view);
+        REQUIRE(visible);
+        CHECK(visible->summary().covered_pixel_count > 0);
+        REQUIRE(graphics.set(vng::render::DepthState{true, true, vng::render::DepthCompare::never}));
+        auto rejected = renderer->capture(*frame, mesh, *gpu_mesh, view);
+        REQUIRE(rejected);
+        CHECK(rejected->summary().covered_pixel_count == 0);
+        CHECK(visible->metadata().invocation != rejected->metadata().invocation);
+        REQUIRE(graphics.set(vng::render::DepthCompare::greater_equal));
+        auto reverse = renderer->capture(*frame, mesh, *gpu_mesh, view);
+        REQUIRE(reverse);
+        CHECK(reverse->summary().covered_pixel_count > 0);
+        REQUIRE(graphics.set(vng::render::BlendMode::additive));
+        CHECK_FALSE(renderer->capture(*frame, mesh, *gpu_mesh, view));
+        auto srgb = renderer->capture(*device, mesh, *gpu_mesh, view,
+            vng::opengl::CaptureState{vng::opengl::GraphicsStateSnapshot{}, vng::render::ColorEncoding::srgb});
+        REQUIRE(srgb);
+        REQUIRE(srgb->metadata().invocation);
+        REQUIRE(visible->metadata().invocation);
+        CHECK(srgb->metadata().invocation->renderer_fingerprint == visible->metadata().invocation->renderer_fingerprint);
+        CHECK(srgb->metadata().invocation->target_fingerprint != visible->metadata().invocation->target_fingerprint);
+        const auto encoding = std::ranges::find(srgb->metadata().properties,
+            std::string_view{"raster.production.color_encoding"}, &vng::analysis::MetadataEntry::key);
+        REQUIRE(encoding != srgb->metadata().properties.end());
+        CHECK(encoding->value == "srgb");
+        REQUIRE(graphics.set(vng::render::BlendMode::disabled));
+        REQUIRE(graphics.set(vng::opengl::PolygonMode::line));
+        CHECK_FALSE(renderer->capture(*frame, mesh, *gpu_mesh, view));
+        REQUIRE(graphics.set(vng::opengl::PolygonMode::fill));
+        REQUIRE(graphics.set(vng::render::DepthWrite{false}));
+        CHECK_FALSE(renderer->capture(*frame, mesh, *gpu_mesh, view));
+        CHECK_FALSE(renderer->capture(*frame, mesh, *gpu_mesh,
+            vng::render::RenderView::without_camera({16, 16})));
+        REQUIRE(frame->end());
+        CHECK_FALSE(renderer->capture(*frame, mesh, *gpu_mesh, view));
+    }
+
+    {
+        INFO("the optional simple mesh renderer is a concrete opengl::Renderer<MeshDraw>");
 
         vng::gfx::Mesh<PositionOnlyVertex> incompatible_mesh(3);
         incompatible_mesh.add_face(0, 1, 2);
         auto incompatible = vng::render::make_simple_mesh_renderer(
             *device,
             *shader_program,
-            std::move(incompatible_mesh),
-            linear_output);
+            std::move(incompatible_mesh));
         REQUIRE_FALSE(incompatible);
         CHECK(incompatible.error().message.find("does not provide")
               != std::string::npos);
@@ -819,8 +864,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         auto routed = vng::render::make_simple_mesh_renderer(
             *device,
             *shader_program,
-            mesh,
-            linear_output);
+            mesh);
         INFO((routed ? std::string{} : describe(routed.error())));
         REQUIRE(routed);
         using ConvenienceRenderer =
@@ -858,11 +902,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
         const std::array one_draw{draw};
         auto mismatched = mismatched_renderer->render(
             *mismatched_frame, view, std::span{one_draw});
-        REQUIRE_FALSE(mismatched);
-        CHECK(mismatched.error().code
-              == vng::opengl::ErrorCode::invalid_argument);
-        CHECK(mismatched.error().message.find("output encoding")
-              != std::string::npos);
+        REQUIRE(mismatched); // Target encoding belongs to the frame, never the program.
         REQUIRE(mismatched_frame->end());
 
         auto frame = vng::render::begin_frame(
@@ -884,7 +924,7 @@ TEST_CASE("renderer emits and runs an enhanced analysis shader automatically",
 
         const std::array draw_batch{draw, draw};
         REQUIRE(routed->render(*frame, view, std::span{draw_batch}));
-        CHECK_FALSE(existing_commands.active());
+        CHECK(existing_commands.active());
 
         auto evidence = routed->capture(
             *frame,
@@ -925,8 +965,7 @@ TEST_CASE("renderer supplies a dynamic backend-neutral camera to normal and anal
             .samples = 0,
             .default_framebuffer_encoding =
                 vng::render::ColorEncoding::linear,
-            .swap_interval = 0,
-        });
+        }, {.vsync = vng::window::VSync::off});
     if (!window) {
         skip_ctest("OpenGL context unavailable: " + window.error().message);
     }
@@ -962,7 +1001,7 @@ TEST_CASE("renderer supplies a dynamic backend-neutral camera to normal and anal
     REQUIRE(shader_program);
 
     auto renderer = vng::render::OpenGLProgramRuntime::create(
-        *device, *shader_program, linear_pipeline());
+        *device, *shader_program);
     INFO((renderer ? std::string{} : describe(renderer.error())));
     REQUIRE(renderer);
     REQUIRE(renderer->normal_source().parameters.size() == 1);
@@ -993,7 +1032,7 @@ TEST_CASE("renderer supplies a dynamic backend-neutral camera to normal and anal
         });
     REQUIRE(frame);
     auto commands = frame->commands();
-    REQUIRE(commands.bind(renderer->normal_pipeline()));
+    REQUIRE(commands.run(renderer->production()));
 
     // A shader that reads stage.camera() cannot accidentally draw before the
     // renderer supplies the current view through the frame command stream.
@@ -1009,7 +1048,7 @@ TEST_CASE("renderer supplies a dynamic backend-neutral camera to normal and anal
     REQUIRE(frame->end());
 
     auto centered = renderer->render_analysis(
-        *device, mesh, *gpu_mesh, camera, extent);
+        *device, mesh, *gpu_mesh, camera, extent,capture_state());
     INFO((centered ? std::string{} : describe(centered.error())));
     REQUIRE(centered);
     CHECK(centered->surface_at({16, 16}).has_value());
@@ -1025,7 +1064,7 @@ TEST_CASE("renderer supplies a dynamic backend-neutral camera to normal and anal
     // reused. set_position deliberately preserves the viewing direction.
     camera.set_position({3.0F, 0.0F, 0.0F});
     auto moved = renderer->render_analysis(
-        *device, mesh, *gpu_mesh, camera, extent);
+        *device, mesh, *gpu_mesh, camera, extent,capture_state());
     INFO((moved ? std::string{} : describe(moved.error())));
     REQUIRE(moved);
     CHECK_FALSE(moved->surface_at({16, 16}).has_value());

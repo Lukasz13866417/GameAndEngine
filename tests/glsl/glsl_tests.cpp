@@ -938,6 +938,128 @@ TEST_CASE("GLSL emission preserves matrix construction and matrix-vector multipl
     CHECK(generated_again->vertex.source == source);
 }
 
+TEST_CASE("2D texture emission declares live bindings and preserves diagnostic variants",
+          "[glsl][texture]")
+{
+    auto base = make_simple_program();
+    REQUIRE(base);
+    auto fragment = vng::shader::fragment<SimpleFragmentInputs, SimpleFragmentOutputs>(
+        [](auto& stage) {
+            const auto uv = stage.input(VertexColor{}).xy();
+            const auto sampled = stage.template sample_2d<3>(uv);
+            const auto other = stage.template sample_2d<1>(uv);
+            const auto unused = stage.template sample_2d<9>(uv);
+            (void)unused;
+            stage.observe(DiagnosticColor{}, stage.template sample_2d<7>(uv).xyz());
+            return stage.output(vng::dsl::field<vng::shader::Color<0>>(
+                sampled + other));
+        });
+    REQUIRE(fragment);
+    auto program = vng::shader::link(base->vertex(), std::move(*fragment));
+    REQUIRE(program);
+    auto normal = vng::glsl::emit(*program);
+    auto enhanced = vng::glsl::emit(*program, vng::glsl::AnalysisEmission{});
+    auto observed = vng::glsl::emit(*program, vng::glsl::observation(DiagnosticColor{}));
+    REQUIRE(normal);
+    REQUIRE(enhanced);
+    REQUIRE(observed);
+    CHECK(normal->vertex.texture_bindings.empty());
+    CHECK(normal->fragment.texture_bindings == std::vector<vng::u32>{1, 3});
+    CHECK(normal->texture_bindings == std::vector<vng::u32>{1, 3});
+    CHECK(enhanced->texture_bindings == normal->texture_bindings);
+    CHECK(observed->texture_bindings == std::vector<vng::u32>{1, 3, 7});
+    require_contains(normal->fragment.source,
+        "layout(binding = 1) uniform sampler2D vng_texture_1;\n"
+        "layout(binding = 3) uniform sampler2D vng_texture_3;\n");
+    require_contains(normal->fragment.source, "texture(vng_texture_3, ");
+    require_contains(enhanced->fragment.source, "texture(vng_texture_3, ");
+    require_contains(observed->fragment.source, "texture(vng_texture_7, ");
+    CHECK(normal->fragment.source.find("vng_texture_7") == std::string::npos);
+    CHECK(observed->fragment.source.find("vng_texture_9") == std::string::npos);
+
+    const auto texture_position = normal->fragment.source.find("texture(vng_texture_3");
+    REQUIRE(texture_position != std::string::npos);
+    const auto generated_line = static_cast<vng::u32>(std::count(
+        normal->fragment.source.begin(),
+        normal->fragment.source.begin() + static_cast<std::ptrdiff_t>(texture_position), '\n') + 1);
+    const auto* mapping = normal->fragment.mapping_for_line(generated_line);
+    REQUIRE(mapping != nullptr);
+    CHECK(program->fragment().ir().operations[mapping->operation.value].opcode
+          == vng::shader::OpCode::texture_sample);
+    auto repeated = vng::glsl::emit(*program);
+    REQUIRE(repeated);
+    CHECK(repeated->dump() == normal->dump());
+}
+
+TEST_CASE("matrix buffer emission declares live bindings and preserves deformation in diagnostic variants",
+          "[glsl][matrix_buffer]")
+{
+    auto vertex = vng::shader::vertex<SimpleVertexInputs, SimpleVertexOutputs>([](auto& s) {
+        const auto index = s.constant(vng::u32{});
+        const auto moved = s.template matrix_buffer<4>(index)
+                         * s.template matrix_buffer<1>(index)
+                         * vng::dsl::vec4(s.input(Position{}), 0.0F, 1.0F);
+        return s.output(vng::dsl::field<vng::shader::ClipPosition>(moved),
+                        vng::dsl::field<VertexColor>(s.input(VertexColor{})));
+    });
+    auto fragment = vng::shader::fragment<SimpleFragmentInputs, SimpleFragmentOutputs>([](auto& s) {
+        const auto index = s.constant(vng::u32{2});
+        const auto first = s.template matrix_buffer<3>(index);
+        const auto second = s.template matrix_buffer<1>(index);
+        const auto duplicate = s.template matrix_buffer<3>(index);
+        const auto unused = s.template matrix_buffer<9>(index);
+        (void)unused;
+        s.observe(DiagnosticColor{}, (s.template matrix_buffer<7>(index) * s.input(VertexColor{})).xyz());
+        return s.output(vng::dsl::field<vng::shader::Color<0>>(
+            (first + second + duplicate) * s.input(VertexColor{})));
+    });
+    REQUIRE(vertex);
+    REQUIRE(fragment);
+    auto program = vng::shader::link(std::move(*vertex), std::move(*fragment));
+    REQUIRE(program);
+    const auto original_ir = program->vertex().dump_ir() + program->fragment().dump_ir();
+    auto normal = vng::glsl::emit(*program);
+    auto enhanced = vng::glsl::emit(*program, vng::glsl::AnalysisEmission{});
+    auto observed = vng::glsl::emit(*program, vng::glsl::observation(DiagnosticColor{}));
+    REQUIRE(normal);
+    REQUIRE(enhanced);
+    REQUIRE(observed);
+    CHECK(normal->vertex.matrix_buffer_bindings == std::vector<vng::u32>{1, 4});
+    CHECK(normal->fragment.matrix_buffer_bindings == std::vector<vng::u32>{1, 3});
+    CHECK(normal->matrix_buffer_bindings == std::vector<vng::u32>{1, 3, 4});
+    CHECK(enhanced->matrix_buffer_bindings == normal->matrix_buffer_bindings);
+    CHECK(observed->matrix_buffer_bindings == std::vector<vng::u32>{1, 3, 4, 7});
+    CHECK(normal->texture_bindings.empty());
+    CHECK(program->vertex().dump_ir() + program->fragment().dump_ir() == original_ir);
+
+    const std::string declarations =
+        "layout(std430, binding = 1) readonly buffer vng_matrices_1\n"
+        "{\n    mat4 vng_matrix_1[];\n};\n"
+        "layout(std430, binding = 3) readonly buffer vng_matrices_3\n"
+        "{\n    mat4 vng_matrix_3[];\n};\n";
+    require_contains(normal->fragment.source, declarations);
+    require_contains(enhanced->fragment.source, declarations);
+    require_contains(normal->vertex.source, " = vng_matrix_4[");
+    require_contains(enhanced->vertex.source, " = vng_matrix_4[");
+    CHECK(observed->vertex.source == normal->vertex.source);
+    require_contains(observed->fragment.source, " = vng_matrix_7[");
+    CHECK(normal->fragment.source.find("vng_matrix_7") == std::string::npos);
+    CHECK(observed->fragment.source.find("vng_matrix_9") == std::string::npos);
+
+    const auto position = normal->vertex.source.find(" = vng_matrix_4[");
+    REQUIRE(position != std::string::npos);
+    const auto line = static_cast<vng::u32>(std::count(
+        normal->vertex.source.begin(),
+        normal->vertex.source.begin() + static_cast<std::ptrdiff_t>(position), '\n') + 1);
+    const auto* mapping = normal->vertex.mapping_for_line(line);
+    REQUIRE(mapping != nullptr);
+    CHECK(program->vertex().ir().operations[mapping->operation.value].opcode
+          == vng::shader::OpCode::matrix_buffer_read);
+    auto repeated = vng::glsl::emit(*program);
+    REQUIRE(repeated);
+    CHECK(repeated->dump() == normal->dump());
+}
+
 TEST_CASE("unsupported IR returns a source-preserving diagnostic", "[glsl][diagnostic]")
 {
     auto program = make_simple_program();

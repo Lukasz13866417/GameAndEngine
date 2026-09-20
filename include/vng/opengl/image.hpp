@@ -1,10 +1,14 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <span>
 
+#include <vng/core/types.hpp>
+#include <vng/gfx/image.hpp>
 #include <vng/opengl/diagnostic.hpp>
 
 namespace vng::opengl {
@@ -16,32 +20,17 @@ class Framebuffer;
 // The storage format is part of an image's type-erased runtime contract.  It
 // is intentionally independent from vertex formats: framebuffer images and
 // vertex delivery obey different OpenGL rules.
-enum class ImageFormat {
-    rgba8,
-    rg32ui,
-    rgba32f,
-    rgba32i,
-    rgba32ui,
-    depth32f,
-};
+using gfx::ImageFormat;
+using gfx::is_color_format;
+using gfx::is_depth_format;
 
-[[nodiscard]] constexpr bool is_color_format(ImageFormat format) noexcept {
-    return format == ImageFormat::rgba8
-        || format == ImageFormat::rg32ui
-        || format == ImageFormat::rgba32f
-        || format == ImageFormat::rgba32i
-        || format == ImageFormat::rgba32ui;
-}
-
-[[nodiscard]] constexpr bool is_depth_format(ImageFormat format) noexcept {
-    return format == ImageFormat::depth32f;
-}
-
-// A single-level, single-sample, sampleable two-dimensional image.  It is the
+// A single-sample, sampleable two-dimensional image. It is the
 // texture-backed building block for render targets; sampling policy can later
 // move into a separate Sampler object without changing image ownership.
 class Image2D final {
 public:
+    static std::expected<Image2D, Diagnostic> create(
+        const Device& device, const gfx::ImageDesc& description);
     static std::expected<Image2D, Diagnostic> create(
         const Device& device,
         std::uint32_t width,
@@ -58,10 +47,27 @@ public:
     [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
     [[nodiscard]] std::uint32_t height() const noexcept { return height_; }
     [[nodiscard]] ImageFormat format() const noexcept { return format_; }
+    [[nodiscard]] Extent2D extent() const noexcept { return {width_, height_}; }
+    [[nodiscard]] u32 mip_levels() const noexcept { return mip_levels_; }
     [[nodiscard]] bool belongs_to(const Device& device) const noexcept;
 
     [[nodiscard]] std::expected<void, Diagnostic> bind_to_unit(
         std::uint32_t unit) const;
+
+    // Tightly packed single-channel coverage upload; preserves unpack state
+    // (including PBO bindings) so callers never configure pixel-store rules.
+    [[nodiscard]] std::expected<void, Diagnostic> write_r8(
+        u32 x, u32 y, u32 width, u32 height,
+        std::span<const std::byte> pixels);
+    [[nodiscard]] std::expected<void, Diagnostic> clear_r8(u8 value = 0) const;
+    [[nodiscard]] std::expected<void, Diagnostic> use_linear_filtering() const;
+    [[nodiscard]] std::expected<void, Diagnostic> set_sampler(
+        const gfx::SamplerDesc& description) const;
+    [[nodiscard]] std::expected<void, Diagnostic> generate_mipmaps() const;
+    [[nodiscard]] std::expected<void, Diagnostic> write_rgba8(
+        u32 x, u32 y, u32 width, u32 height, std::span<const std::byte> pixels);
+    [[nodiscard]] std::expected<void, Diagnostic> write_rgba32f(
+        u32 x, u32 y, u32 width, u32 height, std::span<const float> components);
 
     // Storage clears do not depend on framebuffer bindings, scissor state, or
     // color/depth write masks. They are useful for deterministic tool targets
@@ -86,7 +92,7 @@ private:
         std::uint32_t handle,
         std::uint32_t width,
         std::uint32_t height,
-        ImageFormat format) noexcept;
+        ImageFormat format, u32 mip_levels) noexcept;
 
     void release_noexcept() noexcept;
 
@@ -95,8 +101,15 @@ private:
     std::uint32_t width_{};
     std::uint32_t height_{};
     ImageFormat format_{ImageFormat::rgba8};
+    u32 mip_levels_{};
 
     friend class Framebuffer;
 };
+
+[[nodiscard]] std::expected<Image2D, Diagnostic> make_backend_image(
+    const Device& device, const gfx::ImageDesc& description);
+[[nodiscard]] std::expected<Image2D, Diagnostic> upload_backend_image(
+    const Device& device, const gfx::ImageData& data,
+    const gfx::ImageUploadOptions& options = {});
 
 } // namespace vng::opengl

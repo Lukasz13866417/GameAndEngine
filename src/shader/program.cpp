@@ -17,6 +17,15 @@ namespace {
     return type.kind == TypeKind::matrix ? type.columns : 1;
 }
 
+[[nodiscard]] u64 parameter_locations(const TypeTable& types, TypeId id)
+{
+    const auto& type = types[id];
+    if (type.kind != TypeKind::record) return 1;
+    u64 width = 0;
+    for (const auto& member : type.members) width += parameter_locations(types, member.type);
+    return width;
+}
+
 [[nodiscard]] Interpolation effective_interpolation(const InterfaceField& field)
 {
     if (field.interpolation != Interpolation::none) {
@@ -52,6 +61,11 @@ namespace {
 
 Result<GraphicsProgram> link(ShaderStage vertex, ShaderStage fragment)
 {
+    return detail::link_stages(std::move(vertex), std::move(fragment), false);
+}
+
+Result<GraphicsProgram> detail::link_stages(ShaderStage vertex, ShaderStage fragment, bool shared)
+{
     if (vertex.kind() != StageKind::vertex || fragment.kind() != StageKind::fragment) {
         return std::unexpected(Diagnostic{
             .code = DiagnosticCode::interface_mismatch,
@@ -84,6 +98,22 @@ Result<GraphicsProgram> link(ShaderStage vertex, ShaderStage fragment)
     }
     if (auto validity = validate(fragment_ir); !validity) {
         return std::unexpected(std::move(validity.error()));
+    }
+
+    // Stage factories number their own arguments. Re-linking copies is also
+    // safe: normalize from declaration order instead of retaining old slots.
+    u32 next_argument = 0;
+    for (auto& field : vertex_ir.parameters)
+        if (field.kind == ParameterKind::argument) field.argument_index = next_argument++;
+    const auto vertex_arguments = next_argument;
+    if (shared) next_argument = 0;
+    for (auto& field : fragment_ir.parameters)
+        if (field.kind == ParameterKind::argument) field.argument_index = next_argument++;
+    if (shared && vertex_arguments != next_argument) {
+        return std::unexpected(Diagnostic{
+            .code = DiagnosticCode::interface_mismatch,
+            .message = "Shared stage arguments require identical signatures",
+            .notes = {}, .origin = {}, .generated_source = {}});
     }
 
     const auto clip_positions = std::count_if(
@@ -120,18 +150,24 @@ Result<GraphicsProgram> link(ShaderStage vertex, ShaderStage fragment)
         const ModuleIR* module;
         TypeId type;
         u32 location;
+        u32 argument_index;
+        std::type_index argument_type;
     };
     std::vector<LinkedParameter> linked_parameters;
     u32 next_parameter_location = 0;
     auto assign_parameter_locations = [&](ModuleIR& module) -> Result<void> {
         for (auto& parameter : module.parameters) {
-            const auto match = std::ranges::find(
-                linked_parameters,
-                parameter.kind,
-                &LinkedParameter::kind);
+            const auto match = std::ranges::find_if(linked_parameters,
+                [&](const LinkedParameter& previous) {
+                    return previous.kind == parameter.kind
+                        && (parameter.kind != ParameterKind::argument
+                            || previous.argument_index == parameter.argument_index);
+                });
             if (match != linked_parameters.end()) {
                 if (module.types[parameter.type].canonical_key !=
-                    match->module->types[match->type].canonical_key) {
+                    match->module->types[match->type].canonical_key
+                    || (parameter.kind == ParameterKind::argument
+                        && parameter.argument_type != match->argument_type)) {
                     return std::unexpected(Diagnostic{
                         .code = DiagnosticCode::interface_mismatch,
                         .message = "linked shader parameter has incompatible stage types",
@@ -147,7 +183,8 @@ Result<GraphicsProgram> link(ShaderStage vertex, ShaderStage fragment)
                 continue;
             }
 
-            if (next_parameter_location == std::numeric_limits<u32>::max()) {
+            const auto width = parameter_locations(module.types, parameter.type);
+            if (width > std::numeric_limits<u32>::max() - next_parameter_location) {
                 return std::unexpected(Diagnostic{
                     .code = DiagnosticCode::interface_mismatch,
                     .message = "no representable shader parameter location remains",
@@ -162,8 +199,10 @@ Result<GraphicsProgram> link(ShaderStage vertex, ShaderStage fragment)
                 .module = &module,
                 .type = parameter.type,
                 .location = next_parameter_location,
+                .argument_index = parameter.argument_index,
+                .argument_type = parameter.argument_type,
             });
-            ++next_parameter_location;
+            next_parameter_location += static_cast<u32>(width);
         }
         return {};
     };

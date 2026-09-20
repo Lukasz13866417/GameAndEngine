@@ -13,7 +13,9 @@
 #include <vng/opengl/context_access.hpp>
 #include <vng/opengl/default_framebuffer.hpp>
 #include <vng/opengl/diagnostic.hpp>
+#include <vng/opengl/graphics_state.hpp>
 
+namespace vng::opengl { class Program; }
 namespace vng::opengl::detail {
 
 // Append-only context history. The legacy take_* APIs use independent
@@ -42,13 +44,21 @@ struct ContextState final {
     std::atomic_uint64_t next_frame_generation{1};
     std::atomic_uint64_t active_frame_generation{};
 
-    // Command streams are scoped by both the active frame generation and this
-    // context-owned epoch. Keeping the epoch here avoids allocating a separate
-    // shared authority object for every frame: Commands already retains the
-    // ContextState through its lightweight Device facade. Only the latest
-    // epoch issued for the active frame is accepted.
-    std::atomic_uint64_t next_command_epoch{1};
-    std::atomic_uint64_t active_command_epoch{};
+    // One frame-owned logical command state, stored alongside native context
+    // state to avoid an allocation per frame. All command handles borrow it;
+    // acquiring or destroying a handle never replaces this authority.
+    const Program* command_program{};
+    bool command_view_ready{};
+
+    // Desired state of the active frame. Handles carry the generation, not a
+    // pointer into Frame/Commands, and cannot access a later frame's state.
+    render::DepthState graphics_depth{};
+    render::CullMode graphics_cull{render::CullMode::none};
+    render::FrontFace graphics_front_face{render::FrontFace::counter_clockwise};
+    PolygonMode graphics_polygon{PolygonMode::fill};
+    render::BlendMode graphics_blend{render::BlendMode::disabled};
+    bool graphics_synchronized{};
+    u64 graphics_generation{};
 
     ~ContextState();
 
@@ -100,7 +110,8 @@ struct ContextState final {
                 std::memory_order_acquire)) {
             return 0;
         }
-        active_command_epoch.store(0, std::memory_order_release);
+        command_program = nullptr;
+        command_view_ready = false;
         return generation;
     }
 
@@ -119,50 +130,7 @@ struct ContextState final {
             0,
             std::memory_order_acq_rel,
             std::memory_order_acquire);
-        if (ended) {
-            active_command_epoch.store(0, std::memory_order_release);
-        }
         return ended;
-    }
-
-    [[nodiscard]] std::uint64_t renew_command_stream(
-        std::uint64_t frame_generation) noexcept
-    {
-        if (!frame_is_active(frame_generation)) {
-            return 0;
-        }
-
-        auto epoch = next_command_epoch.fetch_add(
-            1, std::memory_order_relaxed);
-        while (epoch == 0) {
-            epoch = next_command_epoch.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        active_command_epoch.store(epoch, std::memory_order_release);
-
-        // Commands are owner-thread objects, but retain a defensive second
-        // generation check so an overlapping end cannot publish a usable
-        // stream after its frame has closed.
-        if (!frame_is_active(frame_generation)) {
-            std::uint64_t expected = epoch;
-            (void)active_command_epoch.compare_exchange_strong(
-                expected,
-                0,
-                std::memory_order_acq_rel,
-                std::memory_order_acquire);
-            return 0;
-        }
-        return epoch;
-    }
-
-    [[nodiscard]] bool command_stream_is_active(
-        std::uint64_t frame_generation,
-        std::uint64_t command_epoch) const noexcept
-    {
-        return command_epoch != 0
-            && frame_is_active(frame_generation)
-            && active_command_epoch.load(std::memory_order_acquire)
-                == command_epoch;
     }
 
     void record_lifecycle_failure(std::string message) noexcept {

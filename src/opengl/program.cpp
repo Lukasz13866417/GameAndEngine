@@ -10,6 +10,7 @@
 
 #include <array>
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -18,6 +19,21 @@
 
 namespace vng::opengl {
 namespace {
+
+void delete_program(detail::ContextState& state, GLuint program) noexcept
+{
+    // Deleting the current program only marks it for deferred deletion. A
+    // later state scope could capture that handle, unbind it (finally deleting
+    // it), and then try to restore a name that no longer exists. End the native
+    // binding before relinquishing ownership, as buffer/VAO deletion does.
+    GLint current{};
+    glGetIntegerv(GL_CURRENT_PROGRAM, &current);
+    if (static_cast<GLuint>(current) == program) {
+        glUseProgram(0);
+        state.graphics_synchronized = false;
+    }
+    glDeleteProgram(program);
+}
 
 [[nodiscard]] std::string program_log(GLuint program) {
     GLint length = 0;
@@ -86,7 +102,15 @@ Program::Program(Program&& other) noexcept
     : state_(std::move(other.state_)),
       handle_(std::exchange(other.handle_, 0)),
       driver_log_(std::move(other.driver_log_)),
-      vertex_inputs_(std::move(other.vertex_inputs_)) {}
+      vertex_inputs_(std::move(other.vertex_inputs_)),
+      generated_source_(std::move(other.generated_source_)),
+      arguments_(std::move(other.arguments_)),
+      arguments_uploaded_(std::exchange(other.arguments_uploaded_, false)) {
+    if (state_ && state_->command_program == &other) {
+        state_->command_program = nullptr;
+        state_->command_view_ready = false;
+    }
+}
 
 Program& Program::operator=(Program&& other) noexcept {
     if (this != &other) {
@@ -95,12 +119,25 @@ Program& Program::operator=(Program&& other) noexcept {
         handle_ = std::exchange(other.handle_, 0);
         driver_log_ = std::move(other.driver_log_);
         vertex_inputs_ = std::move(other.vertex_inputs_);
+        generated_source_ = std::move(other.generated_source_);
+        arguments_ = std::move(other.arguments_);
+        arguments_uploaded_ = std::exchange(other.arguments_uploaded_, false);
+        if (state_ && state_->command_program == &other) {
+            state_->command_program = nullptr;
+            state_->command_view_ready = false;
+        }
     }
     return *this;
 }
 
 Program::~Program() {
     release_noexcept();
+}
+void Program::invalidate_command_binding() noexcept {
+    if (state_ && state_->command_program == this) {
+        state_->command_program = nullptr;
+        state_->command_view_ready = false;
+    }
 }
 
 std::expected<Program, Diagnostic> Program::link(
@@ -212,6 +249,10 @@ std::expected<void, Diagnostic> Program::bind() const {
     if (auto current = state_->require_current("Program::bind"); !current) {
         return current;
     }
+    // Raw program binding bypasses Commands. Invalidate its shared cache even
+    // on a failed native switch; Commands::bind republishes after success.
+    state_->command_program = nullptr;
+    state_->command_view_ready = false;
     return detail::checked_gl_call(
         "glUseProgram",
         [&] { glUseProgram(handle_); });
@@ -284,6 +325,153 @@ std::expected<void, Diagnostic> Program::set_uniform_mat4(
         });
 }
 
+bool Program::arguments_ready() const noexcept
+{
+    return arguments_uploaded_ || !generated_source_
+        || std::ranges::none_of(generated_source_->parameters, [](const auto& parameter) {
+            return parameter.kind == shader::ParameterKind::argument;
+        });
+}
+
+std::expected<void, Diagnostic> Program::set_arguments(
+    std::span<const shader::ArgumentView> values) const
+{
+    arguments_uploaded_ = false;
+    auto invalid = [](std::string message) -> std::expected<void, Diagnostic> {
+        return std::unexpected(Diagnostic{
+            .code = ErrorCode::invalid_argument, .message = std::move(message),
+        });
+    };
+    if (!state_ || handle_ == 0) return invalid("Program::set_arguments received an empty program");
+    if (auto current = state_->require_current("Program::set_arguments"); !current) return current;
+    const auto* source = generated_source();
+    const auto count = source ? std::ranges::count_if(source->parameters, [](const auto& field) {
+        return field.kind == shader::ParameterKind::argument;
+    }) : 0;
+    if (values.size() != static_cast<std::size_t>(count)) {
+        return invalid("Program::set_arguments argument count disagrees with the shader contract");
+    }
+    if (source) {
+        for (const auto& field : source->parameters) {
+            if (field.kind != shader::ParameterKind::argument) continue;
+            if (field.argument_index >= values.size()) {
+                return invalid("Program::set_arguments encountered an invalid argument index");
+            }
+            const auto& value = values[field.argument_index];
+            if (value.type != field.argument_type || value.words.size() != field.word_count) {
+                return invalid("Program::set_arguments type or logical word count disagrees at argument "
+                    + std::to_string(field.argument_index));
+            }
+            for (const auto& leaf : field.leaves) {
+                if (leaf.columns == 0 || leaf.rows == 0 || leaf.columns > 4 || leaf.rows > 4
+                    || leaf.word_offset > value.words.size()
+                    || leaf.columns * leaf.rows > value.words.size() - leaf.word_offset
+                    || (leaf.columns > 1 && (leaf.scalar != shader::ScalarKind::f32
+                        || leaf.rows != leaf.columns || leaf.columns < 3))) {
+                    return invalid("Program::set_arguments encountered invalid uniform leaf metadata");
+                }
+            }
+        }
+    }
+    // Resolve native activity once. Unused declared arguments still belong to
+    // the typed contract, but drivers may optimize their uniforms away (-1).
+    if (arguments_.size() != values.size()) arguments_.resize(values.size());
+    if (source) {
+        for (const auto& field : source->parameters) {
+            if (field.kind != shader::ParameterKind::argument) continue;
+            auto& saved = arguments_[field.argument_index];
+            if (saved.native_locations.size() != field.leaves.size()) {
+                saved.native_locations.resize(field.leaves.size());
+                auto resolved = detail::checked_gl_call("Program::set_arguments uniform locations", [&] {
+                    for (std::size_t index = 0; index < field.leaves.size(); ++index) {
+                        saved.native_locations[index] = glGetUniformLocation(
+                            handle_, field.leaves[index].name.c_str());
+                    }
+                });
+                if (!resolved) {
+                    saved.native_locations.clear();
+                    return resolved;
+                }
+            }
+        }
+    }
+    auto uploaded = detail::checked_gl_call("Program::set_arguments", [&] {
+        if (!source) return;
+        for (const auto& field : source->parameters) {
+            if (field.kind != shader::ParameterKind::argument) continue;
+            const auto& words = values[field.argument_index].words;
+            const auto& locations = arguments_[field.argument_index].native_locations;
+            for (std::size_t index = 0; index < field.leaves.size(); ++index) {
+                const auto& leaf = field.leaves[index];
+                const auto location = locations[index];
+                if (location < 0) continue;
+                const auto count = leaf.columns * leaf.rows;
+                std::array<GLfloat, 16> floats{};
+                std::array<GLint, 4> signed_values{};
+                std::array<GLuint, 4> unsigned_values{};
+                for (u32 component = 0; component < count; ++component) {
+                    const auto word = words[leaf.word_offset + component];
+                    if (leaf.scalar == shader::ScalarKind::f32) {
+                        floats[component] = std::bit_cast<f32>(word);
+                    } else if (leaf.scalar == shader::ScalarKind::u32) {
+                        unsigned_values[component] = word;
+                    } else {
+                        signed_values[component] = leaf.scalar == shader::ScalarKind::boolean
+                            ? static_cast<GLint>(word != 0) : std::bit_cast<i32>(word);
+                    }
+                }
+                if (leaf.columns == 3) {
+                    glProgramUniformMatrix3fv(handle_, location, 1, GL_FALSE, floats.data());
+                } else if (leaf.columns == 4) {
+                    glProgramUniformMatrix4fv(handle_, location, 1, GL_FALSE, floats.data());
+                } else if (leaf.scalar == shader::ScalarKind::f32) {
+                    switch (leaf.rows) {
+                    case 1: glProgramUniform1fv(handle_, location, 1, floats.data()); break;
+                    case 2: glProgramUniform2fv(handle_, location, 1, floats.data()); break;
+                    case 3: glProgramUniform3fv(handle_, location, 1, floats.data()); break;
+                    case 4: glProgramUniform4fv(handle_, location, 1, floats.data()); break;
+                    }
+                } else if (leaf.scalar == shader::ScalarKind::u32) {
+                    switch (leaf.rows) {
+                    case 1: glProgramUniform1uiv(handle_, location, 1, unsigned_values.data()); break;
+                    case 2: glProgramUniform2uiv(handle_, location, 1, unsigned_values.data()); break;
+                    case 3: glProgramUniform3uiv(handle_, location, 1, unsigned_values.data()); break;
+                    case 4: glProgramUniform4uiv(handle_, location, 1, unsigned_values.data()); break;
+                    }
+                } else {
+                    switch (leaf.rows) {
+                    case 1: glProgramUniform1iv(handle_, location, 1, signed_values.data()); break;
+                    case 2: glProgramUniform2iv(handle_, location, 1, signed_values.data()); break;
+                    case 3: glProgramUniform3iv(handle_, location, 1, signed_values.data()); break;
+                    case 4: glProgramUniform4iv(handle_, location, 1, signed_values.data()); break;
+                    }
+                }
+            }
+        }
+    });
+    if (!uploaded) return uploaded;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        arguments_[index].type = values[index].type;
+        arguments_[index].words.assign(values[index].words.begin(), values[index].words.end());
+    }
+    arguments_uploaded_ = true;
+    return {};
+}
+
+std::expected<void, Diagnostic> Program::copy_arguments_to(const Program& target) const
+{
+    if (!arguments_ready()) {
+        return std::unexpected(Diagnostic{
+            .code = ErrorCode::invalid_argument,
+            .message = "shader arguments have not been supplied before diagnostic rendering",
+        });
+    }
+    std::vector<shader::ArgumentView> views;
+    views.reserve(arguments_.size());
+    for (const auto& argument : arguments_) views.push_back({argument.type, argument.words});
+    return target.set_arguments(views);
+}
+
 bool Program::belongs_to(const Device& device) const noexcept {
     return handle_ != 0 && state_ && state_.get() == device.state_.get();
 }
@@ -301,19 +489,24 @@ std::expected<void, Diagnostic> Program::destroy() {
     if (auto current = state_->require_current("Program::destroy"); !current) {
         return current;
     }
-    glDeleteProgram(handle_);
+    invalidate_command_binding();
+    delete_program(*state_, handle_);
     handle_ = 0;
     vertex_inputs_.reset();
+    generated_source_.reset();
+    arguments_.clear();
+    arguments_uploaded_ = false;
     state_.reset();
     return {};
 }
 
 void Program::release_noexcept() noexcept {
+    invalidate_command_binding();
     if (handle_ == 0) {
         return;
     }
     if (state_ && state_->is_current()) {
-        glDeleteProgram(handle_);
+        delete_program(*state_, handle_);
     } else if (state_) {
         state_->record_lifecycle_failure(
             "Program destroyed without its owning context current; native handle was leaked safely");

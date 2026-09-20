@@ -11,12 +11,13 @@
 #include <vector>
 
 #include <vng/opengl/context_access.hpp>
+#include <vng/opengl/backend.hpp>
 #include <vng/opengl/default_framebuffer.hpp>
 #include <vng/opengl/diagnostic.hpp>
 
 namespace vng::opengl {
 
-namespace detail { struct ContextState; }
+namespace detail { struct ContextState; class GraphicsStateAccess; }
 
 class Shader;
 class Program;
@@ -26,7 +27,6 @@ class Renderbuffer;
 class Framebuffer;
 class Image2D;
 class RenderStateScope;
-class GraphicsPipeline;
 class Frame;
 class Commands;
 
@@ -120,6 +120,7 @@ struct CullState final {
 
 class Device final {
 public:
+    using backend_type = Backend;
     static std::expected<Device, Diagnostic> create(
         CurrentContextAccess access,
         DeviceOptions options = {});
@@ -137,6 +138,10 @@ public:
     [[nodiscard]] bool is_current() const noexcept;
     [[nodiscard]] std::expected<void, Diagnostic> require_current(
         std::string_view operation = "OpenGL operation") const;
+    // Resource replacement must not invalidate a live frame's borrowed
+    // programs, attachments, or vertex-input state.
+    [[nodiscard]] std::expected<void, Diagnostic> require_resource_update(
+        std::string_view operation = "resource update") const;
 
     [[nodiscard]] std::vector<DebugMessage> take_debug_messages() const;
     [[nodiscard]] std::vector<Diagnostic> take_lifecycle_diagnostics() const;
@@ -166,7 +171,7 @@ public:
 
     // Default-target clears establish full write masks for each attachment
     // they clear and preserve OpenGL's ambient clear-value state. This makes
-    // beginning a frame independent of the previously bound pipeline.
+    // beginning a frame independent of the previous draw state.
     // Clearing both together is the usual beginning-of-frame operation for a
     // depth-tested render path; the default depth value accepts every GL_LESS
     // fragment in the conventional depth configuration.
@@ -229,14 +234,9 @@ public:
 private:
     explicit Device(std::shared_ptr<detail::ContextState> state) noexcept;
 
-    // GraphicsPipeline uses this as one atomic state-ownership operation. A
-    // pipeline compiled from neutral IR supplies its exact sparse output
-    // locations; an expert raw program requests the conservative all-targets
-    // fallback because no portable interface metadata is available.
+    // Establish deterministic per-attachment write/blend defaults.
     [[nodiscard]] std::expected<void, Diagnostic>
-    set_pipeline_color_output_baseline(
-        std::span<const std::uint32_t> color_attachments,
-        bool all_color_attachments) const;
+    reset_color_outputs() const;
 
     std::shared_ptr<detail::ContextState> state_;
 
@@ -246,11 +246,12 @@ private:
     friend class VertexArray;
     friend class Renderbuffer;
     friend class Framebuffer;
+    friend class Rgba8ReadbackQueue;
     friend class Image2D;
     friend class RenderStateScope;
-    friend class GraphicsPipeline;
     friend class Frame;
     friend class Commands;
+    friend class detail::GraphicsStateAccess;
 };
 
 } // namespace vng::opengl

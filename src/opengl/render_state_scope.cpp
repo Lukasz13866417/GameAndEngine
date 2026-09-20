@@ -208,6 +208,26 @@ std::expected<RenderStateScope, Diagnostic> RenderStateScope::capture(
                 for (auto& draw_buffer : snapshot.draw_buffers) {
                     draw_buffer.blend_enabled = enabled(
                         GL_BLEND, draw_buffer.index);
+                    std::array<GLint, 4> blend_factors{};
+                    glGetIntegeri_v(GL_BLEND_SRC_RGB, draw_buffer.index,
+                                    &blend_factors[0]);
+                    glGetIntegeri_v(GL_BLEND_DST_RGB, draw_buffer.index,
+                                    &blend_factors[1]);
+                    glGetIntegeri_v(GL_BLEND_SRC_ALPHA, draw_buffer.index,
+                                    &blend_factors[2]);
+                    glGetIntegeri_v(GL_BLEND_DST_ALPHA, draw_buffer.index,
+                                    &blend_factors[3]);
+                    std::ranges::transform(
+                        blend_factors, draw_buffer.blend_factors.begin(),
+                        [](GLint value) { return static_cast<std::uint32_t>(value); });
+                    std::array<GLint, 2> blend_equations{};
+                    glGetIntegeri_v(GL_BLEND_EQUATION_RGB, draw_buffer.index,
+                                    &blend_equations[0]);
+                    glGetIntegeri_v(GL_BLEND_EQUATION_ALPHA, draw_buffer.index,
+                                    &blend_equations[1]);
+                    std::ranges::transform(
+                        blend_equations, draw_buffer.blend_equations.begin(),
+                        [](GLint value) { return static_cast<std::uint32_t>(value); });
                     std::array<GLboolean, 4> write_mask{};
                     glGetBooleani_v(
                         GL_COLOR_WRITEMASK,
@@ -358,6 +378,16 @@ std::expected<void, Diagnostic> RenderStateScope::restore()
                     GL_BLEND,
                     draw_buffer.index,
                     draw_buffer.blend_enabled);
+                glBlendFuncSeparatei(
+                    draw_buffer.index,
+                    draw_buffer.blend_factors[0],
+                    draw_buffer.blend_factors[1],
+                    draw_buffer.blend_factors[2],
+                    draw_buffer.blend_factors[3]);
+                glBlendEquationSeparatei(
+                    draw_buffer.index,
+                    draw_buffer.blend_equations[0],
+                    draw_buffer.blend_equations[1]);
                 glColorMaski(
                     draw_buffer.index,
                     draw_buffer.color_write[0] ? GL_TRUE : GL_FALSE,
@@ -438,6 +468,15 @@ std::expected<void, Diagnostic> RenderStateScope::restore()
             }
         });
 
+    // Native restoration may differ from the desired state of a command
+    // stream used inside this scope. The next managed update must reassert it
+    // even when the requested setting equals its cached desired value.
+    state_->graphics_synchronized = false;
+    // A scope can restore a native program different from the last managed
+    // selection inside it. Keep handles live, but require explicit reselection
+    // instead of letting run() skip a bind based on a now-stale program cache.
+    state_->command_program = nullptr;
+    state_->command_view_ready = false;
     active_ = false;
     state_.reset();
     if (!restored) {

@@ -299,6 +299,22 @@ std::expected<void, Diagnostic> VertexArray::set_element_buffer(
         [&] { glVertexArrayElementBuffer(handle_, buffer.handle_); });
 }
 
+std::expected<void, Diagnostic> VertexArray::set_vertex_buffer(
+    std::uint32_t binding, const Buffer& buffer, std::size_t offset, std::uint32_t stride) {
+    if (!handle_ || !state_ || !buffer.handle_ || !buffer.state_ ||
+        offset > buffer.size_ || offset > static_cast<std::size_t>(std::numeric_limits<GLintptr>::max()) ||
+        !stride || stride > static_cast<std::uint32_t>(std::numeric_limits<GLsizei>::max()))
+        return std::unexpected(Diagnostic{.code = ErrorCode::invalid_argument,
+            .message = "VertexArray::set_vertex_buffer requires live storage and representable offset/stride"});
+    if (state_.get() != buffer.state_.get())
+        return std::unexpected(detail::incompatible_device("Vertex buffer"));
+    if (auto current = state_->require_current("VertexArray::set_vertex_buffer"); !current) return current;
+    return detail::checked_gl_call("glVertexArrayVertexBuffer", [&] {
+        glVertexArrayVertexBuffer(handle_, binding, buffer.handle_,
+            static_cast<GLintptr>(offset), static_cast<GLsizei>(stride));
+    });
+}
+
 std::expected<void, Diagnostic> VertexArray::bind() const {
     if (handle_ == 0 || !state_) {
         return std::unexpected(Diagnostic{

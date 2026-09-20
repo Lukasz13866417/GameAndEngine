@@ -6,6 +6,7 @@
 #include <type_traits>
 
 #include <vng/render/view.hpp>
+#include <vng/render/frame.hpp>
 
 namespace vng::render {
 
@@ -15,17 +16,22 @@ namespace vng::render {
 //
 // Concrete renderers derive publicly and provide their own render() function:
 //
-//   class ModelRenderer : public Renderer<ModelDraw> {
+//   template<Backend B>
+//   class ModelRenderer : public Renderer<ModelDraw, B> {
 //   public:
-//       Result render(Frame&, const RenderView&, span<const ModelDraw>);
+//       Result render(typename B::frame_type&, const RenderView&, span<const ModelDraw>);
 //   };
 //
-// Keeping the constructor and destructor protected prevents Renderer<Ticket>
+// A concrete implementation may instead use its backend's short alias, e.g.
+// opengl::Renderer<ModelDraw>. There is no default "portable" backend: a
+// backend-neutral algorithm is a template, its realized resources are not.
+// Keeping the constructor and destructor protected prevents Renderer<Ticket, B>
 // itself from becoming the accidental "plain renderer" abstraction.
-template<class Ticket>
+template<class Ticket, Backend B>
 class Renderer {
 public:
     using ticket_type = Ticket;
+    using backend_type = B;
 
     Renderer(const Renderer&) noexcept = default;
     Renderer& operator=(const Renderer&) noexcept = default;
@@ -49,30 +55,31 @@ using renderer_ticket_t = typename renderer_type_t<Candidate>::ticket_type;
 
 // Identifies an actual renderer policy, rather than anything that happens to
 // have a similarly named function. Public inheritance is intentional: it
-// makes the ticket contract inspectable by generic render orchestration while
+// makes the ticket/backend contract inspectable by generic render orchestration while
 // adding no runtime representation.
 template<class Candidate>
-concept RendererType = requires {
+concept RendererType = BackendBound<Candidate> && requires {
     typename detail::renderer_type_t<Candidate>::ticket_type;
 } && std::derived_from<
     detail::renderer_type_t<Candidate>,
-    Renderer<detail::renderer_ticket_t<Candidate>>
+    Renderer<detail::renderer_ticket_t<Candidate>, backend_t<Candidate>>
 > && (!std::same_as<
     detail::renderer_type_t<Candidate>,
-    Renderer<detail::renderer_ticket_t<Candidate>>
+    Renderer<detail::renderer_ticket_t<Candidate>, backend_t<Candidate>>
 >);
 
 template<RendererType Candidate>
 using renderer_ticket_t = detail::renderer_ticket_t<Candidate>;
 
-// A renderer may support different frame/backend types through overloads or
-// constrained templates. RendererFor asks only whether this particular pair
-// has the canonical batch entry point. It deliberately does not prescribe the
-// result/diagnostic type; that remains part of the concrete backend API.
-template<class Candidate, class Frame>
-concept RendererFor = RendererType<Candidate> && requires(
+// Both backend identity and the callable batch entry point must agree. In
+// particular, an unconstrained render() template cannot silently opt an
+// OpenGL renderer into another backend. Frame variants of the same backend
+// are allowed. The result/diagnostic type remains the renderer's choice.
+template<class Candidate, class FrameType>
+concept RendererFor = RendererType<Candidate> && Frame<FrameType>
+    && SameBackend<Candidate, FrameType> && requires(
     Candidate& renderer,
-    Frame& frame,
+    FrameType& frame,
     const RenderView& view,
     std::span<const detail::renderer_ticket_t<Candidate>> tickets) {
     renderer.render(frame, view, tickets);

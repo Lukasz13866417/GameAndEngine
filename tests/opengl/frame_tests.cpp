@@ -13,6 +13,15 @@
 
 #include "../support/glfw_opengl.hpp"
 
+TEST_CASE("OpenGL entry points declare one backend identity", "[opengl][frame][backend]") {
+    STATIC_CHECK(vng::render::Frame<vng::opengl::Frame>);
+    STATIC_CHECK(std::same_as<vng::render::backend_t<vng::opengl::Frame>,vng::opengl::Backend>);
+    STATIC_CHECK(vng::render::SameBackend<vng::opengl::Device,vng::opengl::Frame>);
+    STATIC_CHECK(vng::render::SameBackend<vng::opengl::Commands,vng::opengl::Frame>);
+    STATIC_CHECK(std::same_as<vng::opengl::Backend::frame_type,vng::opengl::Frame>);
+    STATIC_CHECK(std::same_as<vng::opengl::Backend::device_type,vng::opengl::Device>);
+}
+
 TEST_CASE("OpenGL frames establish and close a default-target scope",
           "[opengl][frame]")
 {
@@ -245,8 +254,7 @@ TEST_CASE("OpenGL frames require the physical default-target encoding",
             .samples = 0,
             .default_framebuffer_encoding =
                 vng::render::ColorEncoding::linear,
-            .swap_interval = 0,
-        });
+        }, {.vsync = vng::window::VSync::off});
     if (!window) {
         std::cerr << "OpenGL frame test skipped: "
                   << window.error().message << '\n';

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <vector>
 
 #include <vng/opengl/commands.hpp>
 #include <vng/opengl/device.hpp>
@@ -15,6 +16,7 @@ namespace vng::opengl {
 // render extent. A context admits one active Frame at a time.
 class Frame final {
 public:
+    using backend_type = Backend;
     Frame(Frame&& other) noexcept;
     Frame& operator=(Frame&& other) noexcept;
     Frame(const Frame&) = delete;
@@ -35,11 +37,15 @@ public:
     [[nodiscard]] const Device& device() const noexcept { return device_; }
 
     [[nodiscard]] bool belongs_to(const Device& device) const noexcept;
+    // Detect texture feedback before a pass samples an output attachment.
+    [[nodiscard]] bool uses_image(const Image2D& image) const noexcept;
 
-    // Starts a fresh backend-specific command stream. Acquiring another stream
-    // from this Frame revokes the previous one, which prevents two stateful
-    // OpenGL recorders from making contradictory assumptions.
+    // Borrows this frame's command context. All handles share the current
+    // program, view readiness and graphics state. Nested renderers may borrow
+    // it too without revoking their parent's handles or resetting settings.
     [[nodiscard]] Commands commands() noexcept;
+
+    [[nodiscard]] Commands render_context() noexcept { return commands(); }
 
     // Ending validates the context and closes its generation-owned logical
     // recording scope. A stale or moved-from value cannot close a newer frame.
@@ -69,17 +75,25 @@ private:
     Extent2D extent_{};
     render::ColorEncoding color_encoding_{render::ColorEncoding::srgb};
     u64 generation_{};
-
-    [[nodiscard]] u64 renew_command_stream() noexcept;
+    std::vector<u32> attachment_image_handles_;
 
     friend std::expected<Frame, Diagnostic> begin_backend_frame(
         Device&, render::DefaultTarget, const render::FrameDesc&);
+    friend std::expected<Frame, Diagnostic> begin_backend_frame(
+        Device&, const Framebuffer&, const render::FrameDesc&);
 };
 
 [[nodiscard]] std::expected<Frame, Diagnostic> begin_backend_frame(
     Device& device,
     render::DefaultTarget,
     const render::FrameDesc& description);
+
+// The target and its attachments must remain alive and unchanged until the
+// Frame ends, including while commands obtained from it are in use.
+[[nodiscard]] std::expected<Frame, Diagnostic> begin_backend_frame(
+    Device& device, Framebuffer& target, const render::FrameDesc& description);
+[[nodiscard]] std::expected<Frame, Diagnostic> begin_backend_frame(
+    Device& device, const Framebuffer& target, const render::FrameDesc& description);
 
 static_assert(render::Frame<Frame>);
 

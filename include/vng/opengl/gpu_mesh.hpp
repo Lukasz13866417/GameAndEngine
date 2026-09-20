@@ -17,10 +17,10 @@
 #include <vng/gfx/mesh.hpp>
 #include <vng/gfx/vertex_layout.hpp>
 #include <vng/opengl/buffer.hpp>
+#include <vng/opengl/instance_buffer.hpp>
 #include <vng/opengl/device.hpp>
 #include <vng/opengl/diagnostic.hpp>
 #include <vng/opengl/gfx_vertex_input.hpp>
-#include <vng/opengl/graphics_pipeline.hpp>
 #include <vng/opengl/program.hpp>
 #include <vng/opengl/vertex_array.hpp>
 #include <vng/shader/interface.hpp>
@@ -45,10 +45,19 @@ concept VertexInputInterface = shader::Interface<Inputs>
 
 } // namespace detail
 
-// An immutable OpenGL snapshot of a CPU mesh. Vertex streams remain split in
+struct MeshUploadOptions final {
+    // Keep static uploads immutable by default. Opt in for vertex deformation
+    // without replacing element buffers or shader-specific cached VAOs.
+    bool dynamic_vertices{};
+    // Temporary face visibility without changing source topology/primitive IDs.
+    bool dynamic_face_visibility{};
+};
+
+// An OpenGL snapshot of a CPU mesh. Vertex streams remain split in
 // the same order as the source Mesh, while faces become one u32 element buffer.
-// MeshInfo and explicit edges stay CPU-side, and later CPU edits require a new
-// upload. Shader-specific vertex arrays are created lazily because attribute
+// MeshInfo and explicit edges stay CPU-side. Dynamic vertex storage permits
+// in-place record updates; topology changes require a new upload.
+// Shader-specific vertex arrays are created lazily because attribute
 // locations belong to a shader input contract, not to the mesh alone.
 template<gfx::RecordType... RecordTypes>
     requires (sizeof...(RecordTypes) > 0)
@@ -60,7 +69,8 @@ public:
 
     static std::expected<GpuMesh, Diagnostic> upload(
         const Device& device,
-        const cpu_mesh_type& mesh)
+        const cpu_mesh_type& mesh,
+        MeshUploadOptions options = {})
     {
         if (auto valid = mesh.validate(); !valid) {
             return std::unexpected(detail::mesh_upload_diagnostic(valid.error()));
@@ -124,9 +134,10 @@ public:
                 return;
             }
 
+            const auto storage = options.dynamic_vertices ? BufferStorage::dynamic : BufferStorage::none;
             std::expected<Buffer, Diagnostic> uploaded = stream.empty()
-                ? Buffer::create(device, BufferCreateInfo{.size = 1})
-                : Buffer::from_bytes(device, stream.bytes());
+                ? Buffer::create(device, BufferCreateInfo{.size = 1, .storage = storage})
+                : Buffer::from_bytes(device, stream.bytes(), storage);
             if (!uploaded) {
                 streams_uploaded = std::unexpected(std::move(uploaded.error()));
                 return;
@@ -137,9 +148,10 @@ public:
             return std::unexpected(std::move(streams_uploaded.error()));
         }
 
+        const auto index_storage=options.dynamic_face_visibility?BufferStorage::dynamic:BufferStorage::none;
         std::expected<Buffer, Diagnostic> index_buffer = indices.empty()
-            ? Buffer::create(device, BufferCreateInfo{.size = sizeof(std::uint32_t)})
-            : Buffer::from_bytes(device, std::as_bytes(std::span{indices}));
+            ? Buffer::create(device, BufferCreateInfo{.size = sizeof(std::uint32_t),.storage=index_storage})
+            : Buffer::from_bytes(device, std::as_bytes(std::span{indices}),index_storage);
         if (!index_buffer) {
             return std::unexpected(std::move(index_buffer.error()));
         }
@@ -204,6 +216,27 @@ public:
         return topology_fingerprint_;
     }
 
+    // An empty mask restores all faces. Source data stays with the caller;
+    // hiding uploads only indices and preserves resident vertices/cached VAOs.
+    // Degenerate triangles retain the original gl_PrimitiveID for diagnostics.
+    [[nodiscard]] std::expected<void,Diagnostic> set_hidden_faces(
+        const Device& device,const cpu_mesh_type& source,std::span<const u32> hidden)
+    {
+        if(!index_buffer_.belongs_to(device))
+            return std::unexpected(Diagnostic{.code=ErrorCode::incompatible_device,
+                .message="Face visibility requires the mesh's device"});
+        if(auto ready=device.require_resource_update("GpuMesh::set_hidden_faces");!ready) return ready;
+        if(source.topology_fingerprint()!=topology_fingerprint_ ||
+           std::ranges::any_of(hidden,[&](u32 id){return id>=face_count();}))
+            return std::unexpected(Diagnostic{.code=ErrorCode::invalid_argument,
+                .message="Face visibility requires matching source topology and valid face IDs"});
+        if(!index_count_) return {};
+        std::vector<u32> indices;indices.reserve(index_count_);
+        for(const auto& f:source.faces()) indices.insert(indices.end(),f.vertices.begin(),f.vertices.end());
+        for(auto id:hidden) indices[3*id+1]=indices[3*id+2]=indices[3*id];
+        return index_buffer_.write(0,std::as_bytes(std::span{indices}));
+    }
+
     [[nodiscard]] static consteval std::size_t vertex_stream_count() noexcept
     {
         return sizeof...(RecordTypes);
@@ -214,9 +247,39 @@ public:
         return vertex_arrays_.size();
     }
 
+    // Record type selects its stream; offsets and byte encoding stay internal.
+    // This preserves vertex count, topology, buffer identity, and cached VAOs.
+    // Call at a resource-update boundary, outside an active Frame.
+    template<gfx::RecordType Record>
+        requires ((std::same_as<Record, RecordTypes>) || ...)
+    [[nodiscard]] std::expected<void, Diagnostic> update_vertices(
+        const Device& device, std::span<const Record> records, std::size_t first_vertex = 0)
+    {
+        constexpr std::size_t binding = [] {
+            constexpr std::array matches{std::same_as<Record, RecordTypes>...};
+            for (std::size_t i = 0; i < matches.size(); ++i) if (matches[i]) return i;
+            return matches.size();
+        }();
+        if (binding >= vertex_buffers_.size() || !vertex_buffers_[binding].belongs_to(device))
+            return std::unexpected(Diagnostic{.code = ErrorCode::incompatible_device,
+                .message = "GpuMesh::update_vertices requires a live mesh and its creating device"});
+        if (first_vertex > vertex_count_ || records.size() > vertex_count_ - first_vertex)
+            return std::unexpected(Diagnostic{.code = ErrorCode::invalid_argument,
+                .message = "GpuMesh::update_vertices exceeds its existing vertex count"});
+        if (auto allowed = device.require_resource_update("GpuMesh::update_vertices"); !allowed)
+            return allowed;
+        return vertex_buffers_[binding].write(first_vertex * Record::stride, std::as_bytes(records));
+    }
+
+    template<gfx::RecordType Record>
+        requires ((std::same_as<Record, RecordTypes>) || ...)
+    [[nodiscard]] std::expected<void, Diagnostic> update_vertices(
+        const Device& device, const gfx::VertexStream<Record>& records, std::size_t first_vertex = 0)
+    { return update_vertices(device, std::span<const Record>{records.data(), records.size()}, first_vertex); }
+
     // Optional compile-time prewarming hook. Ordinary rendering should call
-    // draw(device, pipeline), which derives the contract from the compiled
-    // pipeline and binds both pipeline and VAO.
+    // draw(device, program), which derives the contract from the compiled
+    // program and binds both program and VAO.
     template<detail::VertexInputInterface Inputs>
     [[nodiscard]] std::expected<void, Diagnostic> prepare_vertex_input(
         const Device& device)
@@ -232,35 +295,34 @@ public:
         return {};
     }
 
-    // Runtime-contract prewarming for factories that receive an already
-    // linked program. This resolves and caches the inferred VAO without
-    // binding it, so a validating renderer factory can fail before returning
-    // an object that could never draw with its pipeline.
+    // Resolve and cache vertex input against the program contract.
     [[nodiscard]] std::expected<void, Diagnostic> prepare_vertex_input(
-        const Device& device,
-        const GraphicsPipeline& pipeline)
+        const Device& device, const Program& program)
     {
-        auto vertex_array = resolved_vertex_array_for(
-            device, pipeline.program());
-        if (!vertex_array) {
-            return std::unexpected(std::move(vertex_array.error()));
-        }
+        auto vertex_array = resolved_vertex_array_for(device, program);
+        if (!vertex_array) return std::unexpected(std::move(vertex_array.error()));
         return {};
     }
 
-    // Resolves and binds only the vertex-input state. This is the efficient
-    // path after a GraphicsPipeline has already bound its owned program.
-    // Program metadata remains the source of truth for semantic identity and
-    // attribute location.
-    [[nodiscard]] std::expected<void, Diagnostic> bind_vertex_input(
-        const Device& device,
-        const GraphicsPipeline& pipeline)
-    {
-        return bind_vertex_input(device, pipeline.program());
-    }
+    template<class ProgramType>
+        requires requires(const ProgramType& program) {
+            typename ProgramType::signature;
+            { program.untyped() } -> std::same_as<const Program&>;
+        }
+    [[nodiscard]] std::expected<void, Diagnostic> prepare_vertex_input(
+        const Device& device, const ProgramType& program)
+    { return prepare_vertex_input(device, program.untyped()); }
 
-    // Expert path for integrations that intentionally manage a raw backend
-    // program instead of a GraphicsPipeline.
+    template<class ProgramType>
+        requires requires(const ProgramType& program) {
+            typename ProgramType::signature;
+            { program.untyped() } -> std::same_as<const Program&>;
+        }
+    [[nodiscard]] std::expected<void, Diagnostic> bind_vertex_input(
+        const Device& device, const ProgramType& program)
+    { return bind_vertex_input(device, program.untyped()); }
+
+    // Resolve and bind vertex input without changing the selected program.
     [[nodiscard]] std::expected<void, Diagnostic> bind_vertex_input(
         const Device& device,
         const Program& program)
@@ -270,18 +332,6 @@ public:
             return std::unexpected(std::move(vertex_array.error()));
         }
         return (*vertex_array)->bind();
-    }
-
-    // Preferred standalone path: establish the pipeline state and bind this
-    // mesh's inferred vertex input as one operation.
-    [[nodiscard]] std::expected<void, Diagnostic> bind(
-        const Device& device,
-        const GraphicsPipeline& pipeline)
-    {
-        if (auto bound_pipeline = pipeline.bind(device); !bound_pipeline) {
-            return bound_pipeline;
-        }
-        return bind_vertex_input(device, pipeline);
     }
 
     // Expert path for callers that intentionally manage a raw backend
@@ -300,45 +350,14 @@ public:
         return (*vertex_array)->bind();
     }
 
-    [[nodiscard]] std::expected<void, Diagnostic> draw(
-        const Device& device,
-        const GraphicsPipeline& pipeline,
-        std::uint32_t instance_count = 1)
-    {
-        if (auto bound = bind(device, pipeline); !bound) {
-            return bound;
-        }
-        return device.draw_elements_instanced(
-            Primitive::triangles,
-            IndexFormat::u32,
-            index_count_,
-            0,
-            instance_count);
-    }
-
     // Expert raw-program draw path.
     [[nodiscard]] std::expected<void, Diagnostic> draw(
         const Device& device,
         const Program& program,
         std::uint32_t instance_count = 1)
     {
+        if (auto ready = require_arguments(program); !ready) return ready;
         if (auto bound = bind(device, program); !bound) {
-            return bound;
-        }
-        return device.draw_elements_instanced(
-            Primitive::triangles,
-            IndexFormat::u32,
-            index_count_,
-            0,
-            instance_count);
-    }
-
-    [[nodiscard]] std::expected<void, Diagnostic> draw_bound(
-        const Device& device,
-        const GraphicsPipeline& bound_pipeline,
-        std::uint32_t instance_count = 1)
-    {
-        if (auto bound = bind_vertex_input(device, bound_pipeline); !bound) {
             return bound;
         }
         return device.draw_elements_instanced(
@@ -355,6 +374,7 @@ public:
         const Program& bound_program,
         std::uint32_t instance_count = 1)
     {
+        if (auto ready = require_arguments(bound_program); !ready) return ready;
         if (auto bound = bind_vertex_input(device, bound_program); !bound) {
             return bound;
         }
@@ -366,7 +386,38 @@ public:
             instance_count);
     }
 
+    // The extra stream has divisor one. Its semantic contract, locations and
+    // VAO remain inferred; callers never resolve or configure attributes.
+    template<gfx::RecordType Instance>
+    [[nodiscard]] std::expected<void, Diagnostic> draw_bound(
+        const Device& device, const Program& program, const InstanceBuffer<Instance>& instances)
+    {
+        using Layout=gfx::VertexLayout<gfx::Stream<RecordTypes>...,gfx::Stream<Instance,gfx::PerInstance<1>>>;
+        static_assert(sizeof(Layout)>0); // also rejects duplicate stream semantics
+        if(!program.belongs_to(device) || !index_buffer_.belongs_to(device) ||
+           (instances.storage() && instances.storage()->native_handle() && !instances.storage()->belongs_to(device)))
+            return std::unexpected(Diagnostic{.code=ErrorCode::incompatible_device,
+                .message="Instanced mesh draw requires resources from the same device"});
+        if(auto ready=require_arguments(program);!ready)return ready;
+        if(!program.vertex_inputs())return std::unexpected(Diagnostic{.code=ErrorCode::invalid_argument,
+            .message="Instanced mesh draw requires typed vertex metadata"});
+        if(!instances.size())return {};
+        auto vao=vertex_array_for<Instance>(device,*program.vertex_inputs(),instances.storage());
+        if(!vao)return std::unexpected(vao.error());
+        if(auto bound=(*vao)->bind();!bound)return bound;
+        return device.draw_elements_instanced(Primitive::triangles,IndexFormat::u32,index_count_,0,instances.size());
+    }
+
 private:
+    [[nodiscard]] static std::expected<void, Diagnostic> require_arguments(const Program& program)
+    {
+        if (program.arguments_ready()) return {};
+        return std::unexpected(Diagnostic{
+            .code = ErrorCode::invalid_argument,
+            .message = "GpuMesh draw requires the shader's typed arguments",
+        });
+    }
+
     [[nodiscard]] std::expected<VertexArray*, Diagnostic>
     resolved_vertex_array_for(
         const Device& device,
@@ -388,6 +439,7 @@ private:
     }
 
     struct VertexInputKey final {
+        std::type_index instance_record{typeid(void)};
         std::vector<std::type_index> semantics;
         std::vector<std::uint32_t> locations;
 
@@ -398,7 +450,24 @@ private:
     struct CachedVertexArray final {
         VertexInputKey inputs;
         VertexArray vertex_array;
+        std::optional<std::uint32_t> instance_binding;
+        std::uint32_t instance_stride{};
     };
+
+    [[nodiscard]] std::expected<VertexArray*, Diagnostic> reuse_vertex_array(
+        const Device& device, CachedVertexArray& cached, const Buffer* instances) {
+        if (!index_buffer_.belongs_to(device))
+            return std::unexpected(Diagnostic{.code = ErrorCode::incompatible_device,
+                .message = "GpuMesh belongs to a different OpenGL device/context"});
+        if (instances && cached.instance_binding) {
+            // Rebind even if the GLuint looks unchanged: deleted GL names can
+            // be reused, and a renderer may alternate multiple instance buffers.
+            if (auto bound = cached.vertex_array.set_vertex_buffer(
+                    *cached.instance_binding, *instances, 0, cached.instance_stride); !bound)
+                return std::unexpected(bound.error());
+        }
+        return &cached.vertex_array;
+    }
 
     GpuMesh(
         std::vector<Buffer> vertex_buffers,
@@ -442,15 +511,29 @@ private:
         return key;
     }
 
+    template<class Instance = void>
     [[nodiscard]] std::expected<VertexArray*, Diagnostic> vertex_array_for(
         const Device& device,
-        const std::vector<VertexInputMetadata>& metadata)
+        const std::vector<VertexInputMetadata>& metadata,
+        const Buffer* instance_buffer = nullptr)
     {
+        // The common path needs no allocations, sorting, semantic resolution
+        // or attribute configuration. Metadata is immutable once linked.
+        for (auto& cached : vertex_arrays_) {
+            if (cached.inputs.instance_record != typeid(Instance) ||
+                cached.inputs.semantics.size() != metadata.size()) continue;
+            bool matches = true;
+            for (std::size_t i = 0; i < metadata.size(); ++i)
+                if (metadata[i].semantic_type != cached.inputs.semantics[i] ||
+                    metadata[i].location != cached.inputs.locations[i]) { matches = false; break; }
+            if (matches) return reuse_vertex_array(device, cached, instance_buffer);
+        }
         gfx::ResolvedVertexInput resolved;
         resolved.stream_count = sizeof...(RecordTypes);
         resolved.attributes.reserve(metadata.size());
 
         VertexInputKey key;
+        key.instance_record=typeid(Instance);
         key.semantics.reserve(metadata.size());
         key.locations.reserve(metadata.size());
         std::vector<const VertexInputMetadata*> ordered_inputs;
@@ -492,7 +575,7 @@ private:
                             .binding = static_cast<std::uint32_t>(binding),
                             .offset = Field::offset,
                             .stride = Record::stride,
-                            .divisor = 0,
+                            .divisor = binding==sizeof...(RecordTypes) ? 1U : 0U,
                             .format = Field::format,
                         });
                         found = true;
@@ -501,6 +584,7 @@ private:
                 ++binding;
             };
             (find_in_record.template operator()<RecordTypes>(), ...);
+            if constexpr (!std::same_as<Instance,void>)find_in_record.template operator()<Instance>();
 
             if (!found) {
                 return std::unexpected(Diagnostic{
@@ -512,23 +596,18 @@ private:
             key.semantics.push_back(input.semantic_type);
             key.locations.push_back(*input.location);
         }
-        return vertex_array_for(device, std::move(resolved), std::move(key));
+        return vertex_array_for(device, std::move(resolved), std::move(key),instance_buffer);
     }
 
     [[nodiscard]] std::expected<VertexArray*, Diagnostic> vertex_array_for(
         const Device& device,
         gfx::ResolvedVertexInput resolved,
-        VertexInputKey key)
+        VertexInputKey key,
+        const Buffer* instance_buffer = nullptr)
     {
         for (auto& cached : vertex_arrays_) {
             if (cached.inputs == key) {
-                if (!index_buffer_.belongs_to(device)) {
-                    return std::unexpected(Diagnostic{
-                        .code = ErrorCode::incompatible_device,
-                        .message = "GpuMesh belongs to a different OpenGL device/context",
-                    });
-                }
-                return &cached.vertex_array;
+                return reuse_vertex_array(device, cached, instance_buffer);
             }
         }
 
@@ -558,16 +637,22 @@ private:
         }
         resolved.stream_count = used_streams.size();
 
-        auto vertex_array = VertexArray::create(device);
-        if (!vertex_array) {
-            return std::unexpected(std::move(vertex_array.error()));
-        }
+        auto created = VertexArray::create(device);
+        if (!created) return std::unexpected(created.error());
+        std::optional<std::uint32_t> instance_binding;
+        std::uint32_t instance_stride{};
+        for (const auto& attribute : resolved.attributes)
+            if (used_streams[attribute.binding] == vertex_buffers_.size()) {
+                instance_binding = attribute.binding;
+                instance_stride = static_cast<std::uint32_t>(attribute.stride);
+                break;
+            }
 
         std::vector<ResolvedStreamBuffer> streams;
         streams.reserve(used_streams.size());
         for (std::size_t binding = 0; binding < used_streams.size(); ++binding) {
             const auto source_stream = used_streams[binding];
-            if (source_stream >= vertex_buffers_.size()) {
+            if (source_stream >= vertex_buffers_.size() && !(instance_buffer && source_stream==vertex_buffers_.size())) {
                 return std::unexpected(Diagnostic{
                     .code = ErrorCode::invalid_argument,
                     .message = "GpuMesh resolved an invalid internal vertex stream",
@@ -575,22 +660,24 @@ private:
             }
             streams.push_back(ResolvedStreamBuffer{
                 .binding = static_cast<std::uint32_t>(binding),
-                .buffer = &vertex_buffers_[source_stream],
+                .buffer = source_stream==vertex_buffers_.size()?instance_buffer:&vertex_buffers_[source_stream],
                 .base_offset = 0,
             });
         }
 
-        if (auto configured = configure_vertex_input(*vertex_array, resolved, streams);
+        if (auto configured = configure_vertex_input(*created, resolved, streams);
             !configured) {
             return std::unexpected(std::move(configured.error()));
         }
-        if (auto elements = vertex_array->set_element_buffer(index_buffer_); !elements) {
+        if (auto elements = created->set_element_buffer(index_buffer_); !elements) {
             return std::unexpected(std::move(elements.error()));
         }
 
         vertex_arrays_.push_back(CachedVertexArray{
             .inputs = std::move(key),
-            .vertex_array = std::move(*vertex_array),
+            .vertex_array = std::move(*created),
+            .instance_binding = instance_binding,
+            .instance_stride = instance_stride,
         });
         return &vertex_arrays_.back().vertex_array;
     }
@@ -608,9 +695,10 @@ private:
 template<gfx::RecordType... RecordTypes>
 [[nodiscard]] std::expected<GpuMesh<RecordTypes...>, Diagnostic> upload_mesh(
     const Device& device,
-    const gfx::Mesh<RecordTypes...>& mesh)
+    const gfx::Mesh<RecordTypes...>& mesh,
+    MeshUploadOptions options = {})
 {
-    return GpuMesh<RecordTypes...>::upload(device, mesh);
+    return GpuMesh<RecordTypes...>::upload(device, mesh, options);
 }
 
 } // namespace vng::opengl

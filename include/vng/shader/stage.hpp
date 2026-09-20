@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vng/dsl/dsl.hpp>
+#include <vng/shader/arguments.hpp>
 #include <vng/shader/diagnostic.hpp>
 #include <vng/shader/interface.hpp>
 #include <vng/shader/ir.hpp>
@@ -39,10 +40,35 @@ private:
     friend class detail::ShaderStageAccess;
 };
 
+template<StageKind Kind, Argument... Args>
+class TypedShaderStage final {
+public:
+    using signature = Arguments<Args...>;
+    static constexpr StageKind stage_kind = Kind;
+
+    [[nodiscard]] const ShaderStage& untyped() const & noexcept { return stage_; }
+    const ShaderStage& untyped() const && = delete;
+    [[nodiscard]] ShaderStage release_untyped() && noexcept { return std::move(stage_); }
+    [[nodiscard]] StageKind kind() const noexcept { return Kind; }
+    [[nodiscard]] const ModuleIR& ir() const noexcept { return stage_.ir(); }
+    [[nodiscard]] std::string dump_ir() const { return stage_.dump_ir(); }
+    [[nodiscard]] std::string dump_interface() const { return stage_.dump_interface(); }
+
+private:
+    explicit TypedShaderStage(ShaderStage stage) : stage_(std::move(stage)) {}
+    ShaderStage stage_;
+    friend class detail::ShaderStageAccess;
+};
+
 namespace detail {
 
 class ShaderStageAccess final {
 public:
+    template<StageKind Kind, Argument... Args>
+    [[nodiscard]] static TypedShaderStage<Kind, Args...> typed(ShaderStage stage)
+    {
+        return TypedShaderStage<Kind, Args...>{std::move(stage)};
+    }
     [[nodiscard]] static ShaderStage from_ir(ModuleIR ir)
     {
         return ShaderStage{std::move(ir)};
@@ -353,6 +379,74 @@ public:
     [[nodiscard]] InputView<Inputs> in() noexcept { return inputs(); }
     [[nodiscard]] CameraParameters camera() noexcept { return CameraParameters{*builder_}; }
 
+    // Read a matrix from a read-only resource. Indices must be UInt expressions;
+    // callers own the resource size and must keep every accessed index in range.
+    template<u32 Binding>
+        requires (Stage == StageKind::vertex || Stage == StageKind::fragment)
+    [[nodiscard]] dsl::Float4x4 matrix_buffer(
+        dsl::UInt index,
+        std::source_location location = std::source_location::current())
+    {
+        const std::array operands{index.id()};
+        return dsl::Float4x4{
+            *builder_,
+            builder_->operation(
+                OpCode::matrix_buffer_read,
+                builder_->template type<Mat4>(),
+                operands,
+                MatrixBufferPayload{Binding},
+                Effect::storage_read,
+                location)};
+    }
+
+    // UV coordinates are normalized. Sampling uses the resource's filtering
+    // and address modes; implicit derivatives restrict this to fragment stages.
+    template<u32 Binding>
+        requires (Stage == StageKind::fragment)
+    [[nodiscard]] dsl::Float4 sample_2d(
+        dsl::Float2 coordinates,
+        std::source_location location = std::source_location::current())
+    {
+        if (dsl::detail::has_foreign_builder(builder_, coordinates)) {
+            return dsl::Float4{*builder_, builder_->poison(builder_->template type<Vec4>())};
+        }
+        const std::array operands{coordinates.id()};
+        return dsl::Float4{
+            *builder_,
+            builder_->operation(
+                OpCode::texture_sample,
+                builder_->template type<Vec4>(),
+                operands,
+                TextureSamplePayload{Binding},
+                Effect::texture_read,
+                location)};
+    }
+
+    // Explicit LOD has no derivative requirement, so the same resource can
+    // displace vertices and shade fragments. LOD 0 selects the base mip level.
+    template<u32 Binding>
+        requires (Stage == StageKind::vertex || Stage == StageKind::fragment)
+    [[nodiscard]] dsl::Float4 sample_2d_lod(
+        dsl::Float2 coordinates,
+        dsl::detail::Operand<f32> lod,
+        std::source_location location = std::source_location::current())
+    {
+        if (dsl::detail::has_foreign_builder(builder_, coordinates, lod)) {
+            return dsl::Float4{*builder_, builder_->poison(builder_->template type<Vec4>())};
+        }
+        const auto level = dsl::detail::as_expression(*builder_, lod);
+        const std::array operands{coordinates.id(), level.id()};
+        return dsl::Float4{
+            *builder_,
+            builder_->operation(
+                OpCode::texture_sample_lod,
+                builder_->template type<Vec4>(),
+                operands,
+                TextureSamplePayload{Binding},
+                Effect::texture_read,
+                location)};
+    }
+
     template<class Semantic>
         requires RecordContains<Inputs, Semantic>
     [[nodiscard]] dsl::Expr<record_value_t<Inputs, Semantic>> input(
@@ -473,8 +567,61 @@ private:
 
 namespace detail {
 
-template<StageKind Stage, Interface Inputs, Interface Outputs, class Body>
-[[nodiscard]] Result<ShaderStage> build_stage(std::string debug_name, Body&& body)
+template<class Function> struct shader_callable;
+template<class R, class First, class... Rest>
+struct shader_callable<R (*)(First, Rest...)> {
+    static_assert((dsl::Expression<std::remove_cvref_t<Rest>> && ...),
+        "Shader lambda arguments after the stage context must be Expr<T> or DSL aliases such as Float");
+    using signature = Arguments<dsl::expression_value_t<std::remove_cvref_t<Rest>>...>;
+};
+template<class R, class... Args>
+struct shader_callable<R (*)(Args...) noexcept> : shader_callable<R (*)(Args...)> {};
+template<class C, class R, class... Args>
+struct shader_callable<R (C::*)(Args...) const> : shader_callable<R (*)(Args...)> {};
+template<class C, class R, class... Args>
+struct shader_callable<R (C::*)(Args...)> : shader_callable<R (*)(Args...)> {};
+template<class C, class R, class... Args>
+struct shader_callable<R (C::*)(Args...) const noexcept> : shader_callable<R (*)(Args...)> {};
+template<class C, class R, class... Args>
+struct shader_callable<R (C::*)(Args...) noexcept> : shader_callable<R (*)(Args...)> {};
+
+template<class Body, class Context>
+auto shader_argument_signature()
+{
+    using B = std::decay_t<Body>;
+    if constexpr (std::is_invocable_v<Body, Context&>) {
+        return Arguments<>{};
+    } else if constexpr (requires { &B::template operator()<Context>; }) {
+        using Function = decltype(&B::template operator()<Context>);
+        return typename shader_callable<Function>::signature{};
+    } else if constexpr (requires { &B::operator(); }) {
+        return typename shader_callable<decltype(&B::operator())>::signature{};
+    } else {
+        return typename shader_callable<B>::signature{};
+    }
+}
+
+template<Argument T>
+[[nodiscard]] dsl::Expr<T> argument_expression(FunctionBuilder& builder, u32 index)
+{
+    auto& parameters = builder.module().parameters;
+    const auto field = static_cast<u32>(parameters.size());
+    const auto type = builder.type<T>();
+    parameters.push_back(ParameterField{
+        .kind = ParameterKind::argument,
+        .type = type,
+        .location = std::nullopt,
+        .argument_index = index,
+        .argument_type = typeid(T),
+    });
+    return dsl::Expr<T>{builder, builder.operation(OpCode::parameter, type, {},
+        ParameterPayload{field}, Effect::parameter_read)};
+}
+
+template<StageKind Stage, Interface Inputs, Interface Outputs, class Body, Argument... Args>
+[[nodiscard]] Result<std::conditional_t<sizeof...(Args) == 0, ShaderStage,
+    TypedShaderStage<Stage, Args...>>>
+build_stage(std::string debug_name, Body&& body, Arguments<Args...>)
 {
     static_assert(Inputs::stage == Stage && Inputs::direction == InterfaceDirection::input,
                   "the input schema does not belong to this shader stage");
@@ -504,11 +651,18 @@ template<StageKind Stage, Interface Inputs, Interface Outputs, class Body>
     StageContext<Stage, Inputs, Outputs> context{builder};
     using ResultExpression = std::invoke_result_t<
         Body,
-        StageContext<Stage, Inputs, Outputs>&>;
+        StageContext<Stage, Inputs, Outputs>&, dsl::Expr<Args>...>;
     static_assert(std::same_as<std::remove_cvref_t<ResultExpression>, dsl::Expr<Outputs>>,
                   "a shader stage must return dsl::Expr<its complete Outputs schema>");
 
-    auto result = std::invoke(std::forward<Body>(body), context);
+    auto arguments = [&]<std::size_t... Indices>(std::index_sequence<Indices...>) {
+        // Braced initialization sequences argument declarations left to right.
+        return std::tuple<dsl::Expr<Args>...>{
+            argument_expression<Args>(builder, static_cast<u32>(Indices))...};
+    }(std::index_sequence_for<Args...>{});
+    auto result = std::apply([&](auto... values) {
+        return std::invoke(std::forward<Body>(body), context, values...);
+    }, arguments);
     if (result.builder() != &builder || !builder.owns(result.id())) {
         return std::unexpected(Diagnostic{
             .code = DiagnosticCode::mixed_builders,
@@ -541,33 +695,43 @@ template<StageKind Stage, Interface Inputs, Interface Outputs, class Body>
     if (auto validity = validate(module); !validity) {
         return std::unexpected(std::move(validity.error()));
     }
-    return ShaderStageAccess::from_ir(std::move(module));
+    auto stage = ShaderStageAccess::from_ir(std::move(module));
+    if constexpr (sizeof...(Args) == 0) return stage;
+    else return ShaderStageAccess::typed<Stage, Args...>(std::move(stage));
+}
+
+template<StageKind Stage, Interface Inputs, Interface Outputs, class Body>
+[[nodiscard]] auto build_stage(std::string debug_name, Body&& body)
+{
+    using Context = StageContext<Stage, Inputs, Outputs>;
+    return build_stage<Stage, Inputs, Outputs>(std::move(debug_name),
+        std::forward<Body>(body), shader_argument_signature<Body, Context>());
 }
 
 } // namespace detail
 
 template<Interface Inputs, Interface Outputs, class Body>
-[[nodiscard]] Result<ShaderStage> vertex(std::string debug_name, Body&& body)
+[[nodiscard]] auto vertex(std::string debug_name, Body&& body)
 {
     return detail::build_stage<StageKind::vertex, Inputs, Outputs>(
         std::move(debug_name), std::forward<Body>(body));
 }
 
 template<Interface Inputs, Interface Outputs, class Body>
-[[nodiscard]] Result<ShaderStage> vertex(Body&& body)
+[[nodiscard]] auto vertex(Body&& body)
 {
     return vertex<Inputs, Outputs>("vertex_main", std::forward<Body>(body));
 }
 
 template<Interface Inputs, Interface Outputs, class Body>
-[[nodiscard]] Result<ShaderStage> fragment(std::string debug_name, Body&& body)
+[[nodiscard]] auto fragment(std::string debug_name, Body&& body)
 {
     return detail::build_stage<StageKind::fragment, Inputs, Outputs>(
         std::move(debug_name), std::forward<Body>(body));
 }
 
 template<Interface Inputs, Interface Outputs, class Body>
-[[nodiscard]] Result<ShaderStage> fragment(Body&& body)
+[[nodiscard]] auto fragment(Body&& body)
 {
     return fragment<Inputs, Outputs>("fragment_main", std::forward<Body>(body));
 }
