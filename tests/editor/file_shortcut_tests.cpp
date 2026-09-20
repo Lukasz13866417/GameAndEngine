@@ -57,6 +57,48 @@ TEST_CASE("Global Ctrl S routes Save and Shift Ctrl S routes Save As before UI k
     }
 }
 
+TEST_CASE("Global Ctrl O requests Open scene while Shift and Alt chords stay with UI handling",
+          "[editor][input]") {
+    const auto open_key = [](EventKind kind, Modifiers modifiers, bool repeat = false) {
+        return Event{.kind = kind, .key = Key::o, .modifiers = modifiers, .repeat = repeat};
+    };
+    Frame frame{.logical_size = {900, 600}, .framebuffer = {1800, 1200}, .pointer = {250, 300}};
+    frame.events = {{.kind = EventKind::text, .text = "keep this"},
+                    open_key(EventKind::key_down, {.control = true}),
+                    open_key(EventKind::key_up, {.control = true}),
+                    {.kind = EventKind::pointer_move, .position = {252, 300}}};
+    const auto original = frame;
+    CHECK(take_file_shortcut(frame, true) == FileShortcut::open);
+    auto expected = original;
+    expected.events = {original.events[0], original.events[3]};
+    unchanged(expected, frame);
+    // Repeats and releases are swallowed without another request.
+    frame.events = {open_key(EventKind::key_down, {.control = true}, true),
+                    open_key(EventKind::key_up, {.control = true})};
+    CHECK(take_file_shortcut(frame, true) == FileShortcut::none);
+    CHECK(frame.events.empty());
+    // The last request in a batch wins across both shortcut keys.
+    frame.events = {open_key(EventKind::key_down, {.control = true}), save_key()};
+    CHECK(take_file_shortcut(frame, true) == FileShortcut::save);
+    CHECK(frame.events.empty());
+    frame.events = {save_key(), open_key(EventKind::key_down, {.control = true})};
+    CHECK(take_file_shortcut(frame, true) == FileShortcut::open);
+    CHECK(frame.events.empty());
+    for (const auto modifiers :
+         {Modifiers{}, Modifiers{.shift = true}, Modifiers{.shift = true, .control = true},
+          Modifiers{.control = true, .alt = true}, Modifiers{.control = true, .super = true}}) {
+        Frame untouched{.events = {open_key(EventKind::key_down, modifiers),
+                                   open_key(EventKind::key_up, modifiers)}};
+        const auto before = untouched;
+        CHECK(take_file_shortcut(untouched, true) == FileShortcut::none);
+        unchanged(before, untouched);
+    }
+    Frame disabled{.events = {open_key(EventKind::key_down, {.control = true})}};
+    const auto before = disabled;
+    CHECK(take_file_shortcut(disabled, false) == FileShortcut::none);
+    unchanged(before, disabled);
+}
+
 TEST_CASE("File shortcuts consume repeat and release edges without requesting more saves",
           "[editor][input]") {
     Frame frame{.events = {save_key(), save_key(EventKind::key_down, {.control = true}, true),

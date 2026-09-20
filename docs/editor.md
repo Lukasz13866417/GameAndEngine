@@ -57,7 +57,8 @@ metadata and **Logs → Interaction timing** measurements/export.
   not the build's partial demo copies. New assets such as `earth_savannah.vmesh`
   appear here without a rebuild; use **Refresh** if the dialog was already open.
   **Up** navigates to other folders. `.vscene` files are complete scenes: use
-  **Open scene** for those, or import their standalone `.vmesh` asset into the current scene.
+  **Open scene...** for those (the same browser, limited to `.vscene`), or import
+  their standalone `.vmesh` asset into the current scene.
   Import adds a reusable mesh blueprint and one selected instance, leaving the
   existing scene objects and animation camera untouched. The new mesh is framed
   in its own **Mesh: [name]** view; choose **Scene** to place its instance.
@@ -427,9 +428,14 @@ metadata and **Logs → Interaction timing** measurements/export.
   The inspection-camera pose and camera-edit toggle are not saved. Opening a
   scene initializes the inspection pose from its animation camera. Legacy files
   with only a `view` camera initialize both poses from that old camera.
-- **Open scene** in the top toolbar reads the bottom filename field and makes that scene the current Save target;
-  `--scene FILE` does the same at startup. Merely editing the filename field does
-  not redirect regular Save. **Export new .vmesh** uses that field with a `.vmesh`
+- **Open scene...** (Ctrl+O) in the top toolbar browses for a `.vscene` and makes
+  the chosen scene the current Save target; `--scene FILE` does the same at
+  startup. The browser starts beside the current scene with it preselected, or in
+  the source `examples/assets` library for an untitled scene; if the bottom
+  filename field names an existing file or folder, it starts there instead.
+  Opening replaces the previous file and unsaved state, and the dialog says so
+  while the scene is dirty; Escape or **Cancel** keeps everything. Merely editing
+  the filename field does not redirect regular Save. **Export new .vmesh** uses that field with a `.vmesh`
   extension, still refuses overwrites, and does not change the scene's Save target.
   Export uses the selected/viewed mesh blueprint, not always the original cube.
   When an effect is selected outside mesh view, the button becomes **Export new
@@ -730,9 +736,9 @@ page, so its tabs remain accessible. Selecting a timeline key opens Keyframe val
 opening a mesh opens Blueprint geometry. Ordinary instance selection stays on the
 current page, allowing uninterrupted Shift/Ctrl list selection.
 
-The first toolbar holds **Open scene**, **Save**, **Save As**, **Import...**,
+The first toolbar holds **Open scene...**, **Save**, **Save As**, **Import...**,
 **Undo/Redo**, **Logs**, **Settings**, reload/playback, pop-out and UI-scale actions.
-**Open scene** loads the path in the bottom file field. The second toolbar holds
+**Open scene...** browses for a `.vscene` project. The second toolbar holds
 **View**, **Camera settings**, **FPS**, **World bounds**, **Frame world bounds**,
 **Regions / TODO volumes**, **Region shape**, **Debug link**, **Face IDs**,
 **Instance list** and **Blueprint list**.

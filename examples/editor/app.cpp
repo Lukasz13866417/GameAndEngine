@@ -38,6 +38,7 @@
 #include "scene_file.hpp"
 #include "save_dialog.hpp"
 #include "import_dialog.hpp"
+#include "open_scene_dialog.hpp"
 #include "mesh_import_view.hpp"
 #include "animation.hpp"
 #include "preview_values.hpp"
@@ -275,7 +276,7 @@ int run(const Options& options) {
     // Each retained group moves into its row's overflow menu when necessary.
     ToolbarRow main_bar{top, screen.column(), "More..."};
     ToolbarRow scene_bar{scene_controls, screen.column(), "Tools..."};
-    auto load = main_bar.item(116).button("Open scene");
+    auto load = main_bar.item(166).button("Open scene...");
     auto save = main_bar.item(64).button("Save");
     auto save_as = main_bar.item(112).button("Save As...");
     auto show_import = main_bar.item(150).button("Import...");
@@ -324,6 +325,8 @@ int run(const Options& options) {
     if (options.settings) settings_panel.open(settings, state.document.timeline.tracks().size(), state.document.instances.size());
     auto import_host = screen.column();
     ImportDialog import_dialog{import_host};
+    auto open_host = screen.column();
+    OpenSceneDialog open_dialog{open_host};
     auto mesh_menu_host = viewport_popups.column();
     MeshTools mesh_tools{vertex_tools, mesh_menu_host};
     ViewportInteraction viewport_interaction{editing, region_controls, sidebar_sections[4], region_inspector, viewport_popups.column()};
@@ -364,7 +367,8 @@ int run(const Options& options) {
         import_dialog.open(import_directory);
     }
     const auto modal_visible = [&] {
-        return save_dialog.visible() || settings_panel.visible() || import_dialog.visible() || mesh_tools.menu_open() || regions.menu_open();
+        return save_dialog.visible() || settings_panel.visible() || import_dialog.visible() || open_dialog.visible() ||
+               mesh_tools.menu_open() || regions.menu_open();
     };
     std::string displayed_logs;
     bool logs_visible{};
@@ -587,6 +591,8 @@ int run(const Options& options) {
                               std::max(0.0F, (size.y - 900) * .5F), 760, std::min(900.F, size.y)});
         place(import_host, {std::max(0.0F, (size.x - 780) * .5F),
                             std::max(0.0F, (size.y - 560) * .5F), 780, 560});
+        place(open_host, {std::max(0.0F, (size.x - 780) * .5F),
+                          std::max(0.0F, (size.y - 560) * .5F), 780, 560});
         const auto& preview_input=viewport_window.opened() ? viewport_raw : input;
         preview_bounds = viewport_window.opened() ? ui::Rect{0,54,preview_input.logical_size.x,std::max(1.F,preview_input.logical_size.y-54)} : geometry.viewport;
         auto width = aspect > 0 ? std::min(preview_bounds.width, preview_bounds.height * aspect) : preview_bounds.width;
@@ -1251,6 +1257,7 @@ int run(const Options& options) {
         const bool camera_numeric_active = editing.active(EditGesture::camera) && !navigation.dragging() && !walk.moving();
         const bool settings_was_open = settings_panel.visible();
         const bool import_was_open = import_dialog.visible();
+        const bool open_was_open = open_dialog.visible();
         const bool dialog_was_open = modal_visible();
         const bool timeline_enabled = !dialog_was_open && !editing.awaiting_remote() && !playing &&
                                       !mode_pending && !viewport_interaction.busy();
@@ -2567,7 +2574,8 @@ int run(const Options& options) {
                                  " / update " + std::to_string(image_revision) + " / saved");
         };
         const bool save_action =
-            save.clicked() || save_mesh_draft.clicked() || save_as.clicked() || file_shortcut != FileShortcut::none;
+            save.clicked() || save_mesh_draft.clicked() || save_as.clicked() ||
+            file_shortcut == FileShortcut::save || file_shortcut == FileShortcut::save_as;
         if (dialog_was_open) {
             if (auto request = save_dialog.poll(raw.events)) {
                 auto result = editing.save_as(request->path, request->replace_existing);
@@ -2617,25 +2625,41 @@ int run(const Options& options) {
                                    : result.error().message);
             }
         }
+        // Open scene browses for a .vscene. A bottom-field path that exists points
+        // the browser there; otherwise it starts beside the current scene, or in
+        // the authoring asset library for an untitled scene.
         if (!dialog_was_open && !modal_visible() && !save_action && !export_asset.clicked() &&
-            load.clicked() && !editing.awaiting_remote()) {
-            auto loaded = editing.load(std::filesystem::path{path.getText()});
-            if (!loaded)
-                status.text(loaded.error().message);
-            else {
-                completed_frames.clear();
-                selected_instances.clear();
-                mesh_tools.reset();
-                timeline.reset();
-                revealed_instance.reset();
-                scene_panel.scroll(0); scene_list.scroll(0); region_list.scroll(0); blueprint_list.scroll(0);
-                for(auto section:sidebar_sections) section.scroll(0);
-                instance_flyout.body().scroll(0); blueprint_flyout.body().scroll(0);
-                minimum_frame_revision = minimum_overlay_revision = state.document.revision;
-                path.value(editing.path()->string());
-                status.text("Loaded scene: " + editing.path()->string());
-                refresh(true);
-                broadcast();
+            (load.clicked() || file_shortcut == FileShortcut::open) && !editing.awaiting_remote()) {
+            cancel_viewport();
+            timeline.cancel();
+            std::error_code ignored;
+            const std::filesystem::path typed{path.getText()};
+            open_dialog.open(!typed.empty() && std::filesystem::exists(typed, ignored) ? typed
+                             : editing.path() ? *editing.path() : import_directory);
+            if (editing.dirty())
+                open_dialog.error("The current scene has unsaved changes. Opening another scene discards them.");
+        }
+        if (open_was_open) {
+            if (const auto file = open_dialog.poll(raw.events)) {
+                auto loaded = editing.load(*file);
+                if (!loaded)
+                    open_dialog.error(loaded.error().message);
+                else {
+                    open_dialog.close();
+                    completed_frames.clear();
+                    selected_instances.clear();
+                    mesh_tools.reset();
+                    timeline.reset();
+                    revealed_instance.reset();
+                    scene_panel.scroll(0); scene_list.scroll(0); region_list.scroll(0); blueprint_list.scroll(0);
+                    for(auto section:sidebar_sections) section.scroll(0);
+                    instance_flyout.body().scroll(0); blueprint_flyout.body().scroll(0);
+                    minimum_frame_revision = minimum_overlay_revision = state.document.revision;
+                    path.value(editing.path()->string());
+                    status.text("Loaded scene: " + editing.path()->string());
+                    refresh(true);
+                    broadcast();
+                }
             }
         }
         // Input handlers coalesce the latest absolute view throughout the tick.
@@ -2704,7 +2728,7 @@ int run(const Options& options) {
         auto popup_list=viewport_popups.draw_list();
         if (!popup_list) return fail(popup_list.error().message);
         const bool viewport_uncovered=(!camera_open && !main_bar.opened() && !scene_bar.opened() && !timeline.menu_open()) || viewport_window.opened();
-        const bool blocking_dialog=save_dialog.visible() || settings_panel.visible() || import_dialog.visible();
+        const bool blocking_dialog=save_dialog.visible() || settings_panel.visible() || import_dialog.visible() || open_dialog.visible();
         const bool show_mesh_overlay = viewport_uncovered && !blocking_dialog && interaction.value() == InteractionMode::vertices &&
             mesh_tools.component_mode() &&
             !playing && !mode_pending && !logs_visible && !diagnostic.value() &&
