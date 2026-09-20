@@ -2485,8 +2485,8 @@ void Driver::workflow() {
             require(shown.width >= widget->bounds.width - 1 && shown.height >= widget->bounds.height - 1,
                     "Essential action is clipped by the actual UI layout");
         }
-        const auto first_y=find(button("Open scene"))->bounds.y;
-        for(const auto label:{"Open scene","Save","Save As...","Import...","Undo","Redo","Logs","Settings"}) {
+        const auto first_y=find(button("Open scene..."))->bounds.y;
+        for(const auto label:{"Open scene...","Save","Save As...","Import...","Undo","Redo","Logs","Settings"}) {
             const auto item=std::ranges::find_if(tree_.widgets,[&](const auto& widget) {
                 return widget.role==Role::button && widget.label==label;
             });
@@ -2512,6 +2512,24 @@ void Driver::workflow() {
         checkpoint(o, "01-baseline");
         require(!fps_text(o.draw_list),"Preview FPS should initially be hidden");
         return true;
+    });
+    click(button("Open scene..."));
+    add("Untitled scene browses the source asset library", [this](const Observation& o) {
+        require(o.modal, "Open scene did not open its browser for an untitled scene");
+        require(find(button("asteroid_fleet.vscene", "Open scene / .vscene projects")) &&
+                find(button("earth.vscene", "Open scene / .vscene projects")),
+                "Open scene did not start in examples/assets with its saved scenes listed");
+        require(!find(button("colored_cube.vmesh", "Open scene / .vscene projects")),
+                "Open scene listed a mesh asset as if it were a scene");
+        require(std::ranges::none_of(tree_.widgets, [](const auto& node) {
+            return node.visible && node.text.find("unsaved changes") != std::string::npos;
+        }), "A clean untitled scene warned about unsaved changes");
+        checkpoint(o, "01d-open-scene-untitled");
+        key(input::Key::escape);
+        return true;
+    });
+    wait("Cancelled Open scene leaves the untitled scene untouched", [](const Observation& o) {
+        return !o.modal && !o.dirty;
     });
     sidebar_resize_workflow();
     for (const auto shortcut : {input::Key::g, input::Key::r, input::Key::s}) {
@@ -3210,7 +3228,32 @@ void Driver::workflow() {
         return true;
     });
     drag("Unsaved edit before Load", false, -12);
-    click(button("Open scene"));
+    click(button("Open scene..."));
+    add("Open scene browses beside the current scene and preselects it", [this](const Observation& o) {
+        require(o.modal, "Open scene did not open a modal file browser");
+        require(find(button("> edited.vscene", "Open scene / .vscene projects")),
+                "Open scene did not list and preselect the current scene in its folder");
+        require(std::ranges::any_of(tree_.widgets, [](const auto& node) {
+            return node.visible && node.text.find("unsaved changes") != std::string::npos;
+        }), "Open scene did not warn that the unsaved edit will be discarded");
+        checkpoint(o, "06a-open-scene-dialog");
+        key(input::Key::escape);
+        return true;
+    });
+    wait("Escape closes Open scene without loading", [this](const Observation& o) {
+        if (o.modal) return false;
+        require(o.dirty, "Cancelling Open scene discarded the unsaved edit");
+        return true;
+    });
+    add("Ctrl+O reopens the scene browser", [this](const Observation&) {
+        key(input::Key::o, {.control = true});
+        return true;
+    });
+    wait("Scene browser opened by keyboard", [this](const Observation& o) {
+        return o.modal && find(button("> edited.vscene", "Open scene / .vscene projects")) != nullptr;
+    });
+    click(button("> edited.vscene", "Open scene / .vscene projects"));
+    click(button("Open", "Open scene / .vscene projects"));
     wait("Load restores the saved scene", [this](const Observation& o) {
         if (!ready(o) || o.dirty || position(o, imported_) != saved_position_) return false;
         require(o.state.document.mesh_assets.size() == 1, "Load lost the imported mesh blueprint");
@@ -3988,7 +4031,7 @@ void Driver::workflow() {
     click(button("Apply & save","EDITOR SETTINGS"));
     wait("Maximum UI scale keeps primary actions in row one and exposes scene overflow",[this](const Observation& o) {
         if(o.modal || std::abs(o.draw_list.logical_size.x*1.5F*project::editor_ui_density-static_cast<float>(o.extent.width))>=1) return false;
-        for(const auto label:{"Open scene","Import...","Logs","Settings","More...","Tools..."}) {
+        for(const auto label:{"Open scene...","Import...","Logs","Settings","More...","Tools..."}) {
             const auto* action=find(button(label));
             require(action && intersection(action->bounds,action->clip).width>=action->bounds.width-1,
                     "Missing or clipped toolbar action at 150%: "+std::string(label));

@@ -324,6 +324,8 @@ if(VNG_BUILD_TESTS)
                     tests/editor/blueprint_mesh_panel_tests.cpp
                     tests/editor/save_dialog_tests.cpp examples/editor/save_dialog.cpp
                     tests/editor/import_dialog_tests.cpp examples/editor/import_dialog.cpp
+                    tests/editor/open_scene_dialog_tests.cpp examples/editor/open_scene_dialog.cpp
+                    examples/editor/file_dialog.cpp
                     examples/editor/inspector_panel.cpp examples/editor/translation_tool.cpp
                     examples/editor/rotation_tool.cpp tests/editor/rotation_tool_tests.cpp examples/editor/scale_tool.cpp examples/editor/world_bounds_tool.cpp
                     tests/editor/scale_tool_tests.cpp tests/editor/blueprint_gizmo_tests.cpp tests/editor/world_bounds_tool_tests.cpp
@@ -890,7 +892,7 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
         if(VNG_BUILD_UI)
             add_library(vng_editor_app STATIC examples/editor/app.cpp
                 examples/editor/blueprint_mesh_panel.cpp examples/editor/surface_move_tool.cpp
-                examples/editor/import_dialog.cpp
+                examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp examples/editor/file_dialog.cpp
                 examples/editor/save_dialog.cpp examples/editor/inspector_panel.cpp examples/editor/translation_tool.cpp
                 examples/editor/rotation_tool.cpp examples/editor/scale_tool.cpp examples/editor/world_bounds_tool.cpp
                 examples/editor/timeline_panel.cpp examples/editor/mesh_tools.cpp examples/editor/mesh_overlay.cpp
