@@ -3331,8 +3331,38 @@ void Driver::workflow() {
     });
     add("Camera glyph is drawn for the new camera", [this](const Observation& o) {
         const auto lines = project::scene_annotation_lines(o.state, o.state.viewport.time);
-        require(lines.size() >= 11, "Camera frustum annotation is missing");
+        require(lines.size() == project::camera_glyph_line_count, "Camera glyph annotation is incomplete");
         checkpoint(o, "08-camera-added");
+        return true;
+    });
+    // Doubling the orbit distance leaves the new camera right in front of the view.
+    fill(field("Orbit distance"), "40");
+    add("Commit orbit distance to frame the camera", [this](const Observation&) { key(input::Key::enter); return true; });
+    click(button("Close camera settings"));
+    wait("Camera glyph is framed in the viewport", [this](const Observation& o) {
+        return ready(o) && o.state.viewport.editor_camera.distance == 40;
+    });
+    click(button("Scene"));
+    add("Deselect before clicking the camera glyph", [this](const Observation& o) {
+        if (!ready(o)) return false;
+        const Vec2 corner{o.viewport.x + 12, o.viewport.y + o.viewport.height - 12};
+        click_at(corner); // Empty space clears the selection.
+        return true;
+    });
+    wait("Selection cleared", [](const Observation& o) { return ready(o) && o.state.viewport.selected_object == 0; });
+    add("Click the camera glyph body in the viewport", [this](const Observation& o) {
+        if (!ready(o)) return false;
+        const auto* camera = project::find_instance(o.state, camera_);
+        require(camera, "Camera vanished before it could be clicked");
+        const auto glyph = project::camera_glyph(project::evaluate_instance(o.state, *camera, o.state.viewport.time));
+        const auto point = project_point(o, glyph.body_center());
+        require(o.viewport.contains(point), "Camera glyph is not inside the viewport");
+        click_at(point);
+        return true;
+    });
+    wait("Clicking the camera glyph selects the camera", [this](const Observation& o) {
+        if (!ready(o) || o.state.viewport.selected_object != camera_) return false;
+        checkpoint(o, "08c-camera-picked");
         return true;
     });
     add("Remember the editor view before inspecting", [this](const Observation& o) {
