@@ -15,7 +15,9 @@ TEST_CASE("Asteroid belt occludes the fleet and reveals it using the editable ca
     if(!window) { std::cerr<<window.error().message<<'\n';std::exit(77); }
     auto current=window->make_current(); REQUIRE(current);
     auto device=opengl::Device::create(*current); REQUIRE(device);
-    auto state=project::load_scene(VNG_ASTEROID_SCENE); REQUIRE(state);
+    // Author the shot from its generator; the shipped .vscene is a user's
+    // editable project and may no longer match the authored fixture.
+    auto state=example::asteroids::author_scene(VNG_ASTEROID_ASSETS); REQUIRE(state);
     state->viewport.pilot_camera=true;
     auto runtime=project::Runtime::create(*device,*state);
     INFO((runtime?"ready":runtime.error().message)); REQUIRE(runtime);

@@ -1,5 +1,6 @@
 #include "../../examples/editor/blueprint_mesh_renderer.hpp"
 #include "../../examples/editor/runtime.hpp"
+#include "../../examples/support/asteroid_scene.hpp"
 #include "../support/glfw_opengl.hpp"
 #include <vng/render/program.hpp>
 #include <vng/gfx/buffer.hpp>
@@ -146,8 +147,10 @@ TEST_CASE("Blueprint tickets produce real instanced draws and match individual s
 }
 
 TEST_CASE("Asteroid fleet submissions scale with blueprints rather than instance count", "[editor][opengl][batch][fleet]") {
-    const auto path=std::filesystem::path(__FILE__).parent_path()/"../../examples/assets/asteroid_fleet.vscene";
-    auto state=load_scene(path);REQUIRE(state);state->viewport.mode=ViewMode::scene;
+    // Author the fixture rather than loading the shipped scene: that file is
+    // also a user's editable project and may gain instances, blueprints or a sun.
+    const auto assets=std::filesystem::path(__FILE__).parent_path()/"../../examples/assets";
+    auto state=example::asteroids::author_scene(assets);REQUIRE(state);state->viewport.mode=ViewMode::scene;
     auto window=test::create_hidden_opengl_window(160,90,"fleet batching");if(!window)std::exit(77);
     auto access=window->make_current();REQUIRE(access);
     auto device=opengl::Device::create(*access);REQUIRE(device);

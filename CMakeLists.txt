@@ -849,14 +849,14 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
             add_test(NAME vng_earth_render_tests COMMAND vng_earth_render_tests)
             set_tests_properties(vng_earth_render_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "editor;examples;opengl")
             add_executable(vng_editor_runtime_tests tests/editor/runtime_tests.cpp tests/editor/mesh_batch_tests.cpp)
-            target_link_libraries(vng_editor_runtime_tests PRIVATE vng_editor_runtime vng_example_support vng_glad_dependency Catch2::Catch2WithMain)
+            target_link_libraries(vng_editor_runtime_tests PRIVATE vng_editor_runtime vng_asteroid_scene vng_example_support vng_glad_dependency Catch2::Catch2WithMain)
             vng_target_defaults(vng_editor_runtime_tests)
             add_test(NAME vng_editor_runtime_tests COMMAND vng_editor_runtime_tests)
             set_tests_properties(vng_editor_runtime_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "editor;opengl")
             add_executable(vng_asteroid_render_tests tests/examples/asteroid_render_tests.cpp)
-            target_link_libraries(vng_asteroid_render_tests PRIVATE vng_editor_runtime vng_example_support Catch2::Catch2WithMain)
+            target_link_libraries(vng_asteroid_render_tests PRIVATE vng_editor_runtime vng_asteroid_scene vng_example_support Catch2::Catch2WithMain)
             target_compile_definitions(vng_asteroid_render_tests PRIVATE
-                VNG_ASTEROID_SCENE="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/asteroid_fleet.vscene")
+                VNG_ASTEROID_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
             vng_target_defaults(vng_asteroid_render_tests)
             add_test(NAME vng_asteroid_render_tests COMMAND vng_asteroid_render_tests)
             set_tests_properties(vng_asteroid_render_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "editor;examples;opengl")
@@ -900,7 +900,7 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
                 add_test(NAME vng_editor_overlay_tests COMMAND vng_editor_overlay_tests)
                 set_tests_properties(vng_editor_overlay_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "editor;opengl")
                 add_executable(vng_editor_e2e_tests tests/editor/e2e_tests.cpp)
-                target_link_libraries(vng_editor_e2e_tests PRIVATE vng_editor_app vng_earth_scene)
+                target_link_libraries(vng_editor_e2e_tests PRIVATE vng_editor_app vng_earth_scene vng_asteroid_scene)
                 target_compile_definitions(vng_editor_e2e_tests PRIVATE
                     VNG_EDITOR_MESH_PATH="${VNG_EXAMPLE_ASSET_DIR}/colored_cube.vmesh"
                     VNG_EDITOR_SPACESHIP_PATH="${VNG_EXAMPLE_ASSET_DIR}/spaceship.vmesh"
