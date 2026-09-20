@@ -1519,12 +1519,17 @@ void Driver::fleet_timeline_workflow() {
         click_at(center(intersection(target->bounds,target->clip))); return true;
     });
     click(button("Frame world bounds"));
+    click(button("Scene")); // Keyframe editing left the sidebar on another tab.
     add("Reveal fleet instance list after framing", [this](const Observation&) {
         const auto* heading=find({Role::label,"SCENE INSTANCES",{}},false);
         require(heading,"No instance list heading");
-        for(const auto& bar:tree_.widgets) if(bar.role==Role::scrollbar && bar.parent==heading->parent) {
-            drag_scrollbar(bar,0); return true;
-        }
+        // The heading sits in a section of the scrolling Scene page, so the
+        // page's scrollbar is a sibling of that section, not of the heading.
+        for(const auto* page=node(heading->parent); page; page=node(page->parent))
+            for(const auto& bar:tree_.widgets) if(bar.role==Role::scrollbar && bar.parent==page->id) {
+                if(bar.maximum && *bar.maximum>0) drag_scrollbar(bar,0); // Already at the top when nothing scrolls.
+                return true;
+            }
         throw std::runtime_error("No sidebar scrollbar");
     });
     for (u32 id : {3U,18U}) add("Select fleet formation " + std::to_string(id), [this,id](const Observation& o) {
@@ -1540,6 +1545,7 @@ void Driver::fleet_timeline_workflow() {
         pointer(input::EventKind::pointer_up,point); events_.back().modifiers.shift=id==18;
         return true;
     });
+    click(button("Keyframe values")); // The keyframe inspector shares the sidebar with the scene list.
     wait("Fleet formation has its shared forward handle", [this](const Observation& o) {
         if(!ready(o) || !o.inspector_ready || !o.translation_gizmo || !o.gizmo_visible)return false;
         require(o.selected_instances.size()==16,"Shift selection did not select all fleet ships");
@@ -4142,15 +4148,17 @@ int main(int argc, char** argv) {
         try {
             project::Options options;
             options.windowed = true;
-            if (fleet) options.scene = VNG_EDITOR_FLEET_PATH;
-            if (earth) {
-                // The shipped scene is also a user's editable project. Never
-                // depend on (or overwrite) their saved drafts in a walkthrough.
-                auto fixture=take(example::earth::author_scene(fs::path(VNG_EDITOR_EARTH_PATH).parent_path()));
+            // The shipped scenes are also users' editable projects. Never
+            // depend on (or overwrite) their saved edits in a walkthrough:
+            // author a private fixture from the generator instead.
+            const auto author_fixture=[&](auto&& author,const char* name) {
+                auto fixture=take(author());
                 project::SceneFile file;
-                options.scene=directory/"earth-fixture.vscene";
+                options.scene=directory/name;
                 take(file.save_as(*options.scene,fixture));
-            }
+            };
+            if (fleet) author_fixture([]{return example::asteroids::author_scene(fs::path(VNG_EDITOR_FLEET_PATH).parent_path());},"fleet-fixture.vscene");
+            if (earth) author_fixture([]{return example::earth::author_scene(fs::path(VNG_EDITOR_EARTH_PATH).parent_path());},"earth-fixture.vscene");
             options.automation = &driver;
             options.preferences = directory / "settings.conf";
             const auto result = project::run(options);
