@@ -184,6 +184,14 @@ if (!bloom) return fail(bloom.error());`, true)
     section("Editor panels reuse the same rendering path", "Panels build/update widgets and issue authoring actions; the backend draws the resulting DrawList into the frame. Scissoring, batched geometry and atlas reuse belong here. Reducing unnecessary scene serialization is an editor update-boundary issue, not something this renderer should solve by learning about documents.", "src/ui_opengl/ui_renderer.cpp")
   ]);
 
+  describe("vng_earth_assets", [
+    section("An offline generator, not a renderer", "make_mesh(CloudSettings) returns a complete Earth document with position, normal, color and emission fields: +Y is north, Greenwich faces +Z and the shorelines are deliberately simplified illustrations. is_earth recognizes a generated asset by its generator metadata rather than by a display name, so renaming a blueprint never changes its behavior. make_savannah_variant recolors land only and keeps geometry, clouds and custom fields, which is how earth_savannah.vmesh was produced.", "examples/support/earth_assets.hpp"),
+    section("Cloud formations are editable data inside the mesh", ["Cloud settings (coverage, puff and spiral size, altitude, relief, edge scatter, visibility) are written into the document, and cloud_formations lists stable formation identities with names and longitude/latitude placement. move_cloud, rotate_cloud, add_cloud and remove_cloud return new documents that keep hand edits and neighboring formations; rebuild_clouds regenerates from settings and a legacy mesh needs one rebuild before it owns formations.", "The editor's blueprint controls wrap these calls in MeshDraftEdit requests. Drafts, undo and preview delivery stay in the editor project; this library only transforms documents."], "examples/support/earth_clouds.hpp", `struct CloudFormation {
+    vng::u32 id;
+    std::string name;
+    vng::Vec2 location;
+};`, true)
+  ]);
   describe("vng_editor_project", [
     section("EditingSession is the authoring authority", "EditingSession owns State, active gesture, undo/redo, clipboard and SceneFile persistence. state() is a const view of the authored model; typed operations make edits and produce EditNotice. viewport() exposes separate private viewing state. The session does not include UI widget handles, IPC endpoints or a Device.", "examples/editor/editing_session.hpp"),
     section("Blueprints, instances and drafts are explicit", "Document stores shared blueprints, scene instances, the authored camera and timeline. Mesh drafts are separate from applied blueprint geometry: editing a draft does not silently alter scene instances; Apply publishes it. Deleting an instance leaves its blueprint. A region blueprint supplies a starting shape, while each region instance owns its editable boundary.", "examples/editor/project.hpp"),

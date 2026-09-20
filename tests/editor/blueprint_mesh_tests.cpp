@@ -142,13 +142,45 @@ TEST_CASE("Earth declares named formation edits as ordinary blueprint controls",
     editor::Inspector ui{3,1,1};std::optional<MeshDraftEdit> request;
     auto parts=describe_blueprint_mesh(ui,mesh(*generated),[&](MeshDraftEdit r){request=std::move(r);},15);
     REQUIRE(parts);CHECK(parts->parts.size()==17);CHECK(parts->parts.at(14).label=="Atlantic spiral");
-    REQUIRE(ui.schema().controls.size()==1);CHECK(ui.schema().controls[0].fields.size()==2);
+    // A selected formation exposes its placement and heading edits plus the
+    // catalog actions. The whole-mesh cloud rebuild belongs to the unselected view.
+    const auto& controls=ui.schema().controls;
+    const auto control=[&](std::string_view key)->const editor::Control* {
+        const auto found=std::ranges::find(controls,key,&editor::Control::key);
+        return found==controls.end()?nullptr:&*found;
+    };
+    REQUIRE(controls.size()==5);
+    REQUIRE(control("earth_cloud_location"));CHECK(control("earth_cloud_location")->kind==editor::Kind::group);
+    CHECK(control("earth_cloud_location")->fields.size()==2);
+    REQUIRE(control("earth_cloud_heading"));CHECK(control("earth_cloud_heading")->fields.size()==1);
+    for(const auto key:{"add_cloud_bank","add_cloud_spiral","remove_cloud"}) {
+        REQUIRE(control(key));CHECK(control(key)->kind==editor::Kind::action);
+    }
+    CHECK_FALSE(control("earth_clouds"));
+    auto before=earth::cloud_formations(*generated);REQUIRE(before);
     REQUIRE(ui.dispatch({ui.schema().stamp,"earth_cloud_location",editor::Phase::apply,{{"longitude",22.F},{"latitude",8.F}}}));
     REQUIRE(request);auto moved=request->apply(mesh(*generated));REQUIRE(moved);
     auto formations=earth::cloud_formations(moved->document());REQUIRE(formations);
     CHECK(std::abs(formations->at(14).location.x-22.F)<1e-4F);
     CHECK(std::abs(formations->at(14).location.y-8.F)<1e-4F);
     CHECK(generated->vertex_fields==moved->document().vertex_fields); // Hidden cloud: metadata only.
+    request.reset();
+    REQUIRE(ui.dispatch({ui.schema().stamp,"earth_cloud_heading",editor::Phase::apply,{{"degrees",30.F}}}));
+    REQUIRE(request);auto turned=request->apply(mesh(*generated));REQUIRE(turned);
+    auto headed=earth::cloud_formations(turned->document());REQUIRE(headed);
+    REQUIRE(headed->size()==17);
+    CHECK(headed->at(14).location==before->at(14).location); // Turning keeps the surface placement.
+    request.reset();
+    REQUIRE(ui.dispatch({ui.schema().stamp,"remove_cloud",editor::Phase::activate,{}}));
+    REQUIRE(request);auto removed=request->apply(mesh(*generated));REQUIRE(removed);
+    auto remaining=earth::cloud_formations(removed->document());REQUIRE(remaining);
+    CHECK(remaining->size()==16);
+    CHECK(std::ranges::none_of(*remaining,[](const earth::CloudFormation& f){return f.id==15;}));
+    request.reset();
+    REQUIRE(ui.dispatch({ui.schema().stamp,"add_cloud_bank",editor::Phase::activate,{}}));
+    REQUIRE(request);auto added=request->apply(mesh(*generated));REQUIRE(added);
+    auto grown=earth::cloud_formations(added->document());REQUIRE(grown);
+    CHECK(grown->size()==18);
 }
 TEST_CASE("Blueprint draft patches are narrow atomic binary updates including first edit and undo", "[editor][blueprint-mesh][mesh-patch]") {
     auto original=source();

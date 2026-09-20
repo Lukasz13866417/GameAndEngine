@@ -235,13 +235,14 @@ if (*message) {
           "include/vng/editor/preview.hpp", `Result<bool> try_publish(FrameInfo info, std::span<const std::byte> rgba);`,
           ["Worker-side transport/mapping handles."], ["Pixel span during publication; application decides frame metadata and rendering."], ["walk-runtime", "walk-view-request", "walk-mailbox"], true),
         type("runtime", "editor_example::Runtime", "The scene's GPU realization, reusable by editor worker and cinematic demos.",
-          "create prepares resources. RenderRequest borrows State and supplies camera/extent/time explicitly. update_positions applies narrow vertex changes; render_frame renders without forcing readback. Live preview uses queue_readback/poll_readback with a bounded OpenGL staging queue; synchronous readback remains for screenshots/evidence. present is separate. Runtime owns programs/mesh realizations/effect and postprocess resources, but never becomes the authoritative authoring session.",
+          "create prepares resources. RenderRequest borrows State and supplies camera/extent/time explicitly; annotations asks for editor-preview decoration that independent Play never draws. update_positions applies narrow vertex changes; render_frame renders without forcing readback. Live preview uses queue_readback/poll_readback with a bounded OpenGL staging queue; synchronous readback remains for screenshots/evidence. present is separate. Runtime owns programs/mesh realizations/effect and postprocess resources, but never becomes the authoritative authoring session.",
           "examples/editor/runtime.hpp", `struct RenderRequest {
     const State& state;
     vng::gfx::Camera camera;
     vng::Extent2D extent;
     vng::f32 time;
     bool diagnostic{};
+    bool annotations{}; // Editor preview only; independent play remains undecorated.
 };`,
           ["Shared mesh program, blueprint resources, sun/HDR/bloom/presentation resources via Impl."], ["Device and immutable State inputs for each operation."], ["walk-blueprint-renderer", "walk-state", "walk-device"], true),
         type("blueprint-renderer", "editor_example::BlueprintMeshRenderer", "One mesh realization and batched tickets for one blueprint.",
