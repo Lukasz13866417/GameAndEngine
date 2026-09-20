@@ -2,12 +2,63 @@ include_guard(GLOBAL)
 
 include(FetchContent)
 
+function(vng_provide_text_dependencies)
+    if(TARGET vng_harfbuzz_dependency)
+        return()
+    endif()
+    find_package(Freetype 2.10 QUIET)
+    if(NOT TARGET Freetype::Freetype)
+        set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+        set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+        set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+        set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+        FetchContent_Declare(freetype
+            GIT_REPOSITORY https://github.com/freetype/freetype.git
+            GIT_TAG VER-2-13-3 GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(freetype)
+        if(NOT TARGET Freetype::Freetype)
+            add_library(Freetype::Freetype ALIAS freetype)
+        endif()
+    endif()
+
+    add_library(vng_harfbuzz_dependency INTERFACE)
+    find_package(harfbuzz CONFIG QUIET)
+    if(TARGET harfbuzz::harfbuzz)
+        target_link_libraries(vng_harfbuzz_dependency INTERFACE harfbuzz::harfbuzz)
+        return()
+    endif()
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(VNG_HARFBUZZ QUIET IMPORTED_TARGET harfbuzz>=2.6)
+        if(TARGET PkgConfig::VNG_HARFBUZZ)
+            target_link_libraries(vng_harfbuzz_dependency INTERFACE PkgConfig::VNG_HARFBUZZ)
+            return()
+        endif()
+    endif()
+    set(HB_HAVE_FREETYPE ON CACHE BOOL "" FORCE)
+    set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
+    set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(harfbuzz
+        GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+        GIT_TAG 11.2.1 GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(harfbuzz)
+    target_link_libraries(vng_harfbuzz_dependency INTERFACE harfbuzz)
+endfunction()
+
 function(vng_provide_glfw)
     if(TARGET vng_glfw_dependency)
         return()
     endif()
 
-    find_package(glfw3 3.4 CONFIG QUIET)
+    set(VNG_GLFW_SMOOTH_SCROLL FALSE CACHE INTERNAL "VNG's GLFW XI2 scroll adapter" FORCE)
+
+    # GLFW 3.4's X11 path quantizes wheels into core button events. On Linux
+    # use our pinned source + small XI2 patch so installed GLFW cannot silently
+    # bring back the lost high-resolution input. Other platforms still prefer
+    # installed packages; no public window/graphics dependency changes.
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_package(glfw3 3.4 CONFIG QUIET)
+    endif()
 
     if(NOT TARGET glfw AND NOT TARGET glfw3::glfw)
         set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -21,6 +72,14 @@ function(vng_provide_glfw)
             GIT_SHALLOW TRUE
         )
         FetchContent_MakeAvailable(glfw)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            include("${CMAKE_CURRENT_FUNCTION_LIST_DIR}/glfw/ApplyPatch.cmake")
+            vng_patch_glfw("${glfw_SOURCE_DIR}")
+            target_include_directories(glfw PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/glfw")
+            set(VNG_GLFW_SMOOTH_SCROLL TRUE CACHE INTERNAL "VNG's GLFW XI2 scroll adapter" FORCE)
+        endif()
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(WARNING "Using a parent-provided GLFW target: VNG's X11 fractional-scroll patch cannot be applied to it")
     endif()
 
     add_library(vng_glfw_dependency INTERFACE)
