@@ -1,0 +1,28 @@
+vscene 1.0
+
+# Shared world coordinates; the camera stays still, looking along -Z.
+title = "KESTREL / HELIOS — solar flyby";
+mesh = "spaceship.vmesh";
+extent = [1280, 800];
+hero_time = 7;
+
+camera = {
+    # Move a quarter of the way toward the sun, retaining the viewing direction.
+    position = [-10.5, 1.25, -35]; target = [-10.5, 1.25, -36];
+    vertical_fov_degrees = 44; near_plane = 0.1; far_plane = 1000;
+};
+
+sun = { position = [-42, 5, -140]; radius = 31; white_spots = false; };
+
+flight = {
+    # Arrive from below/behind the camera, sweep right, then bend around
+    # the sun's right flank. Rebase the shot with the camera to preserve timing,
+    # and shift its entrance/first handle left without shifting the later turn.
+    start = [-12.5, -7.75, -19];
+    controls = [[-30.7, -2.75, -53], [46.4, 4.25, -120]];
+    end = [33.5, 10.25, -240];
+    duration = 24; loop = false; bank_degrees = 22;
+};
+
+background = { stars = 550; seed = 32; };
+bloom = { threshold = 6.5; strength = 0.24; exposure = 0.9; };

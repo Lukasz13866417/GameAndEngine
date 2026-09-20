@@ -1,0 +1,41 @@
+vscene 1.0
+
+# Application-specific fields decoded by support/spaceflight_scene.cpp.
+# Neither the document parser nor the engine knows what a "flight" means.
+title = "KESTREL — outbound";
+mesh = "spaceship.vmesh";
+extent = [1280, 800];
+hero_time = 10.7;
+
+camera = {
+    position = [11, 7, -10];
+    target = [0, 0, 0];
+    vertical_fov_degrees = 34;
+    near_plane = 0.1;
+    far_plane = 1000;
+};
+
+flight = {
+    # Nose points along local -Z; the camera stays completely still.
+    # The first frames are empty space before the ship arrives from the left.
+    start = [0, 0, 40];
+    end = [0, 0, -20];
+    duration = 16;
+    loop = true;
+    bank_degrees = 4;
+};
+
+background = {
+    stars = 700;
+    seed = 32;
+};
+
+bloom = {
+    threshold = 1;
+    strength = 0.22;
+    exposure = 1.1;
+};
+
+editor = {
+    note = "Use --time 10.7 for a repeatable close-up; --time 0 shows the empty opening.";
+};

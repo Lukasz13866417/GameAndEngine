@@ -1,0 +1,41 @@
+vscene 1.0
+
+# These properties are application conventions, not built-in scene fields.
+title = "Flexible scene data";
+exposure = 1.2;
+
+objects = [
+    {
+        id = "reactor";
+        kind = "pulsing_mesh";
+        mesh = "meshes/reactor.vmesh";
+        emission = 6;
+        pulse = {
+            frequency = 1.5;
+            minimum = 0.2;
+        };
+        editor = {
+            group = "power";
+            "author.note" = "Keep this custom property when writing the document.";
+        };
+    },
+    {
+        id = "door";
+        kind = "sliding_door";
+        travel = [0, 2.5, 0];
+        opening_time = 0.8;
+        access = {
+            badges = ["engineer", "maintenance"];
+            alarm = false;
+        };
+    },
+];
+
+# The demo's typed settings deliberately do not decode these extension values.
+extensions = {
+    owner = "level editor";
+    "plugin/example" = {
+        tags = ["prototype", "glow"];
+        payload = [null, true, 17, { custom = "untouched"; }];
+    };
+};

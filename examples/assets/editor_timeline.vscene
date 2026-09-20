@@ -1,0 +1,51 @@
+vscene 1.0
+editor_project = 2;
+revision = 1;
+mesh_data = "vmesh 1.0\u000ainfo {\u000a    name = \"colored 3D cube\";\u000a    source/tool = \"hand-authored example\";\u000a}\u000avertices 24 {\u000a    fields {\u000a        position : f32x3;\u000a        color/0 : f32x4;\u000a    }\u000a    data {\u000a        [-0.75, -0.75, 0.75] [0.0799999982, 0.419999987, 0.899999976, 1];\u000a        [0.75, -0.75, 0.75] [0.0799999982, 0.419999987, 0.899999976, 1];\u000a        [0.75, 0.75, 0.75] [0.0799999982, 0.419999987, 0.899999976, 1];\u000a        [-0.75, 0.75, 0.75] [0.0799999982, 0.419999987, 0.899999976, 1];\u000a        [0.75, -0.75, -0.75] [0.0399999991, 0.159999996, 0.419999987, 1];\u000a        [-0.75, -0.75, -0.75] [0.0399999991, 0.159999996, 0.419999987, 1];\u000a        [-0.75, 0.75, -0.75] [0.0399999991, 0.159999996, 0.419999987, 1];\u000a        [0.75, 0.75, -0.75] [0.0399999991, 0.159999996, 0.419999987, 1];\u000a        [0.75, -0.75, 0.75] [0.0799999982, 0.720000029, 0.819999993, 1];\u000a        [0.75, -0.75, -0.75] [0.0799999982, 0.720000029, 0.819999993, 1];\u000a        [0.75, 0.75, -0.75] [0.0799999982, 0.720000029, 0.819999993, 1];\u000a        [0.75, 0.75, 0.75] [0.0799999982, 0.720000029, 0.819999993, 1];\u000a        [-0.75, -0.75, -0.75] [0.379999995, 0.180000007, 0.720000029, 1];\u000a        [-0.75, -0.75, 0.75] [0.379999995, 0.180000007, 0.720000029, 1];\u000a        [-0.75, 0.75, 0.75] [0.379999995, 0.180000007, 0.720000029, 1];\u000a        [-0.75, 0.75, -0.75] [0.379999995, 0.180000007, 0.720000029, 1];\u000a        [-0.75, 0.75, 0.75] [0.460000008, 0.879999995, 1, 1];\u000a        [0.75, 0.75, 0.75] [0.460000008, 0.879999995, 1, 1];\u000a        [0.75, 0.75, -0.75] [0.460000008, 0.879999995, 1, 1];\u000a        [-0.75, 0.75, -0.75] [0.460000008, 0.879999995, 1, 1];\u000a        [-0.75, -0.75, -0.75] [0.0299999993, 0.0900000036, 0.200000003, 1];\u000a        [0.75, -0.75, -0.75] [0.0299999993, 0.0900000036, 0.200000003, 1];\u000a        [0.75, -0.75, 0.75] [0.0299999993, 0.0900000036, 0.200000003, 1];\u000a        [-0.75, -0.75, 0.75] [0.0299999993, 0.0900000036, 0.200000003, 1];\u000a    }\u000a}\u000afaces 12 {\u000a    [0, 1, 2];\u000a    [0, 2, 3];\u000a    [4, 5, 6];\u000a    [4, 6, 7];\u000a    [8, 9, 10];\u000a    [8, 10, 11];\u000a    [12, 13, 14];\u000a    [12, 14, 15];\u000a    [16, 17, 18];\u000a    [16, 18, 19];\u000a    [20, 21, 22];\u000a    [20, 22, 23];\u000a}\u000aedges 24 {\u000a    [0, 1];\u000a    [1, 2];\u000a    [2, 3];\u000a    [3, 0];\u000a    [4, 5];\u000a    [5, 6];\u000a    [6, 7];\u000a    [7, 4];\u000a    [8, 9];\u000a    [9, 10];\u000a    [10, 11];\u000a    [11, 8];\u000a    [12, 13];\u000a    [13, 14];\u000a    [14, 15];\u000a    [15, 12];\u000a    [16, 17];\u000a    [17, 18];\u000a    [18, 19];\u000a    [19, 16];\u000a    [20, 21];\u000a    [21, 22];\u000a    [22, 23];\u000a    [23, 20];\u000a}\u000a";
+blueprints = { mesh = { brightness = 1; visible = true; wireframe = false; }; sun = { radius = 1.10000002; displacement = 1; bloom = 0.239999995; white_spots = false; visible = true; }; };
+next_blueprint_id = 3;
+mesh_assets = [
+];
+next_instance_id = 3;
+instances = [
+    { id = 1; blueprint = 1; name = "Mesh"; settings = { brightness = 1; visible = true; wireframe = false; }; transform = { position = [1.70000005,0,0]; rotation = [0,0,0]; scale = 0.699999988; }; },
+    { id = 2; blueprint = 2; name = "Sun"; settings = { radius = 1.10000002; displacement = 1; bloom = 0.239999995; white_spots = false; visible = true; }; transform = { position = [-1.60000002,0,0]; rotation = [0,0,0]; scale = 1; }; },
+];
+animation_camera = { yaw = 1.49999404; pitch = 7.49999714; distance = 2.43263268; camera_target = [-0.394576579,-0.483612537,0.0857319608]; };
+view = { mode = 0; inspected_mesh = 1; selected = 2; vertex = 0; weld = true; paused = true; time = 5; };
+timeline = {
+    duration = 10;
+    tracks = [
+        { object = 1; property = "brightness"; label = "Brightness"; layer = "Mesh"; keys = [
+            { time = 0; value = 1; incoming = "hold"; },
+            { time = 10; value = 1; incoming = "linear"; },
+        ]; },
+        { object = 1; property = "position"; label = "Position"; layer = "Mesh"; keys = [
+            { time = 0; value = [1.70000005,-0.800000012,0]; incoming = "hold"; },
+            { time = 6; value = [0.5,0.5,-1]; incoming = "linear"; },
+            { time = 10; value = [1.70000005,-0.800000012,0]; incoming = "linear"; },
+        ]; },
+        { object = 1; property = "visible"; label = "Visible"; layer = "Mesh"; keys = [
+            { time = 0; value = true; incoming = "hold"; },
+            { time = 8; value = false; incoming = "hold"; },
+            { time = 9; value = true; incoming = "hold"; },
+        ]; },
+        { object = 2; property = "bloom"; label = "Sun bloom"; layer = "Effects"; keys = [
+            { time = 0; value = 0.239999995; incoming = "hold"; },
+            { time = 5; value = 0.5; incoming = "linear"; },
+            { time = 10; value = 0.239999995; incoming = "linear"; },
+        ]; },
+        { object = 2; property = "radius"; label = "Sun radius"; layer = "Effects"; keys = [
+            { time = 0; value = 1.10000002; incoming = "hold"; },
+            { time = 5; value = 1.29999995; incoming = "linear"; },
+            { time = 10; value = 1.10000002; incoming = "linear"; },
+        ]; },
+    ];
+    keyframes = [
+        { time = 0; name = "Start"; },
+        { time = 5; name = "Sun pulse"; },
+        { time = 8; name = "Hide mesh"; },
+        { time = 9; name = "Return"; },
+        { time = 10; name = "Loop"; },
+    ];
+};
