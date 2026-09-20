@@ -40,9 +40,21 @@ struct SunSettings {
     bool white_spots{}, visible{true};
     friend bool operator==(const SunSettings&, const SunSettings&) = default;
 };
-// Reserved builtin identity does not steal ID 3 from existing imported assets.
-enum class BlueprintId : vng::u32 { mesh = 1, sun = 2, region = 0xfffffffeU };
-enum class BlueprintKind { mesh, sun, region };
+// A scene camera used by the actual simulation (independent Play and demos),
+// never the editor's private viewing camera. Its transform is the eye and
+// look direction, following the mesh -Z heading convention; roll is stored but
+// not rendered. focus is the orbit pivot distance, which also sizes the far
+// plane. Only one camera may be active at any timestamp; the first camera is
+// used when none is marked active.
+struct CameraSettings {
+    vng::f32 zoom{1}, focus{8};
+    bool active{}, visible{true};
+    friend bool operator==(const CameraSettings&, const CameraSettings&) = default;
+};
+// Reserved builtin identities do not steal ID 3 from existing imported assets.
+enum class BlueprintId : vng::u32 { mesh = 1, sun = 2, camera = 0xfffffffdU, region = 0xfffffffeU };
+inline constexpr vng::u32 first_reserved_blueprint = static_cast<vng::u32>(BlueprintId::camera);
+enum class BlueprintKind { mesh, sun, region, camera };
 struct Blueprint {
     BlueprintId id;
     std::string_view name;
@@ -66,7 +78,7 @@ struct SceneInstance {
     vng::u32 id{};
     BlueprintId blueprint{BlueprintId::mesh};
     std::string name;
-    std::variant<MeshSettings, SunSettings, RegionSettings> settings;
+    std::variant<MeshSettings, SunSettings, RegionSettings, CameraSettings> settings;
     InstanceTransform transform{};
     friend bool operator==(const SceneInstance&, const SceneInstance&) = default;
 };
@@ -187,6 +199,16 @@ struct MeshTarget {
 [[nodiscard]] const SunSettings* sun_settings(const State&, vng::u32);
 [[nodiscard]] RegionSettings* region_settings(State&, vng::u32);
 [[nodiscard]] const RegionSettings* region_settings(const State&, vng::u32);
+[[nodiscard]] CameraSettings* camera_settings(State&, vng::u32);
+[[nodiscard]] const CameraSettings* camera_settings(const State&, vng::u32);
+[[nodiscard]] bool is_camera_instance(const State&, vng::u32);
+[[nodiscard]] bool has_camera(const State&); // any scene camera instance
+// The orbit pose a camera instance renders with (roll ignored), and the
+// inverse placement. Both are pure value conversions without timeline access.
+[[nodiscard]] CameraPose camera_pose(const SceneInstance& evaluated);
+void place_camera(SceneInstance&, const CameraPose&);
+// At every keyed time at most one camera may be active.
+[[nodiscard]] vng::content::Result<void> validate_active_cameras(const State&);
 [[nodiscard]] Regions region_snapshot(const State&); // authored local boundaries
 [[nodiscard]] Regions region_world_snapshot(const State&); // sampled scene cages
 [[nodiscard]] std::optional<Region> region_world_snapshot(const State&, vng::u32); // one visible instance

@@ -10,6 +10,7 @@
 #include "../../examples/editor/blueprint_gizmos.hpp"
 #include "../../examples/editor/rotation_math.hpp"
 #include "../../examples/editor/animation.hpp"
+#include "../../examples/editor/annotation_geometry.hpp"
 #include "../../examples/editor/effect_presets.hpp"
 #include "../../examples/editor/keyframes.hpp"
 #include "../../examples/editor/settings.hpp"
@@ -205,7 +206,8 @@ private:
     std::vector<std::byte> drag_pixels_;
     u64 input_frame_{};
     bool selection_dirty_{};
-    project::CameraPose animation_camera_{};
+    project::CameraPose animation_camera_{}, visit_start_{};
+    u32 camera_{};
     project::CameraPose zoom_before_{};
     project::WorldBounds bounds_before_{}, bounds_after_{};
     u64 zoom_revision_{},zoom_sequence_{};
@@ -288,7 +290,7 @@ private:
         }
         const bool camera_control=locator.label=="Orbit" || locator.label=="Elevation" || locator.label=="Orbit distance" ||
             locator.label=="Zoom" || locator.label=="Scroll moves camera" || locator.label=="Walk camera" ||
-            locator.label=="Stop walking" || locator.label=="Edit animation camera";
+            locator.label=="Stop walking";
         const auto* owner=target;
         while(owner && owner->parent) owner=node(owner->parent);
         if(camera_control && (!owner || !owner->visible)) {
@@ -309,6 +311,7 @@ private:
                 else if(heading.text.starts_with("KEYFRAMES /")) tab="Scene";
                 else if(heading.text.starts_with("KEYFRAME /")) tab="Keyframe values";
                 else if(heading.text=="REGION / scene annotation") tab="Instance properties";
+                else if(heading.text.starts_with("CAMERA /")) tab="Instance properties";
                 else if(heading.text=="BLUEPRINT / local XYZ") {
                     if(const auto* container=node(page)) page=container->parent;
                     tab=find(button("Blueprint geometry"))?"Blueprint geometry":"Instance properties";
@@ -370,7 +373,7 @@ private:
             click_at(center(bounds));
             return true;
         });
-        if(locator.role==Role::checkbox && (locator.label=="Scroll moves camera" || locator.label=="Edit animation camera"))
+        if(locator.role==Role::checkbox && locator.label=="Scroll moves camera")
             click(button("Close camera settings"));
     }
     void fill(Locator locator, std::string value) {
@@ -606,6 +609,7 @@ private:
     }
     void select_viewport(std::string, std::function<u32()>);
     void choose_blueprint(std::string, std::function<project::BlueprintId()>, std::string screenshot = {});
+    void add_camera(std::string tag);
     void drag(std::string name, bool cancel, f32 distance);
     void rotation_workflow();
     void forward_workflow();
@@ -696,7 +700,7 @@ void Driver::earth_workflow() {
         const auto clouds=take(example::earth::cloud_formations(draft));
         if(std::abs(clouds[14].location.x+15)>.001F || std::abs(clouds[14].location.y-5)>.001F)return false;
         require(project::mesh_geometry(o.state,static_cast<project::BlueprintId>(3))->document()==*original,"Cloud move published a draft");
-        require(o.state.document.instances.size()==1,"Cloud selection created a scene instance");
+        require(o.state.document.instances.size()==2,"Cloud selection created a scene instance"); // Earth and its turntable camera
         visible_pixels(o);checkpoint(o,"earth-02a-moved-formation");return true;
     });
     click(button("Undo"));
@@ -1129,6 +1133,12 @@ void Driver::popout_workflow() {
     });
     wait("Detached undo restores scene",[](const Observation& o){return ready(o)&&o.state.document.instances.size()==2;});
     click(button("Play (independent)"));
+    add("Independent Play refuses a scene without a camera",[this](const Observation& o) {
+        require(!o.playing && o.status.find("Add a camera") != std::string::npos, "Play started without a scene camera");
+        return true;
+    });
+    add_camera("popout");
+    click(button("Play (independent)"));
     wait("Independent Play coexists with detached viewport",[this](const Observation& o) {
         if (!o.playing || !ready(o)) return false;
         require(o.viewport_detached,"Independent Play docked the viewport");
@@ -1171,7 +1181,7 @@ void Driver::popout_workflow() {
     click(button("Dock viewport"));
     wait("Docking retains scene and camera",[this](const Observation& o) {
         if (o.viewport_detached || !ready(o)) return false;
-        require(o.state.document.instances.size()==2,"Docking changed the scene");
+        require(o.state.document.instances.size()==3,"Docking changed the scene"); // mesh, sun, camera
         require(fps_text(o.draw_list),"FPS overlay was lost when docking the viewport");
         checkpoint(o,"popout-04-docked"); return true;
     });
@@ -1253,7 +1263,7 @@ void Driver::multiselect_workflow() {
     });
     wait("Delete removes only selected copies and retains blueprints",[this](const Observation& o) {
         if(!ready(o)) return false;
-        require(o.state.document.instances==group_before_ && project::blueprint_catalog(o.state).size()==3,"Batch delete damaged originals or blueprints");
+        require(o.state.document.instances==group_before_ && project::blueprint_catalog(o.state).size()==4,"Batch delete damaged originals or blueprints");
         key(input::Key::z,{.control=true});return true;
     });
     wait("Undo restores deleted group",[this](const Observation& o) {
@@ -1415,7 +1425,7 @@ void Driver::multiselect_workflow() {
 void Driver::fleet_timeline_workflow() {
     wait("Asteroid fleet scene is ready", [this](const Observation& o) {
         if (!ready(o)) return false;
-        require(o.state.document.instances.size() == example::asteroids::rock_count+example::asteroids::fleet_count+1, "Wrong fleet fixture");
+        require(o.state.document.instances.size() == example::asteroids::rock_count+example::asteroids::fleet_count+2, "Wrong fleet fixture");
         std::size_t oriented{}, unoriented{};
         for (const auto& source : o.state.document.instances) {
             const auto* mesh=project::mesh_geometry(o.state,source.blueprint);
@@ -1782,6 +1792,34 @@ void Driver::choose_blueprint(std::string label, std::function<project::Blueprin
         if (!choice) return false;
         if (!screenshot.empty()) checkpoint(o, screenshot);
         click_at(center(intersection(choice->bounds, choice->clip)));
+        return true;
+    });
+}
+
+// The blueprint list's "+" buttons carry no label; the camera row is found
+// through its "Edit Camera" sibling, exactly as a user scans the list.
+void Driver::add_camera(std::string tag) {
+    add("Add a camera from the blueprint list (" + tag + ")", [this](const Observation&) {
+        const auto* edit = actionable(button("Edit Camera"));
+        if (!edit) return false;
+        const auto plus = std::ranges::find_if(tree_.widgets, [&](const auto& widget) {
+            return widget.role == Role::button && widget.text == "+" && widget.parent == edit->parent;
+        });
+        require(plus != tree_.widgets.end(), "Camera blueprint row has no + button");
+        click_at(center(intersection(plus->bounds, plus->clip)));
+        return true;
+    });
+    wait("A new camera sits at the editor view and becomes the active camera (" + tag + ")", [this](const Observation& o) {
+        if (!ready(o)) return false;
+        const auto* camera = project::active_camera(o.state, o.state.viewport.time);
+        require(camera && project::is_camera_instance(o.state, camera->id), "Added camera is not the active scene camera");
+        require(o.state.viewport.selected_object == camera->id, "New camera is not the selected instance");
+        camera_ = camera->id;
+        const auto pose = project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time));
+        const auto& view = o.state.viewport.editor_camera;
+        require(std::abs(pose.yaw - view.yaw) < 1e-3F && std::abs(pose.pitch - view.pitch) < 1e-3F &&
+                std::abs(pose.distance - view.distance) < 1e-3F, "Camera was not placed at the editor view");
+        require(o.dirty, "Adding a camera did not mark the scene edited");
         return true;
     });
 }
@@ -3283,59 +3321,116 @@ void Driver::workflow() {
         return true;
     });
 
-    click({Role::checkbox, "Edit animation camera", {}});
-    wait("Animation camera pilot ready", [](const Observation& o) {
-        return ready(o) && o.state.viewport.pilot_camera;
-    });
+    click(button("Close camera settings"));
+    // Scene cameras are the simulation's view. Add one, inspect it read-only,
+    // enter it, roam, author the view back into it, then leave it again.
+    add_camera("scene");
     add("Reloading clears keyframe authoring permission", [](const Observation& o) {
-        require(!o.selected_keyframe && !o.gizmo_visible && !o.dirty,
-                "Reloading retained an editable keyframe");
+        require(!o.selected_keyframe && !o.gizmo_visible, "Reloading retained an editable keyframe");
         return true;
     });
+    add("Camera glyph is drawn for the new camera", [this](const Observation& o) {
+        const auto lines = project::scene_annotation_lines(o.state, o.state.viewport.time);
+        require(lines.size() >= 11, "Camera frustum annotation is missing");
+        checkpoint(o, "08-camera-added");
+        return true;
+    });
+    add("Remember the editor view before inspecting", [this](const Observation& o) {
+        visit_start_ = o.state.viewport.editor_camera;
+        drag_start_ = center(o.viewport);
+        pointer(input::EventKind::pointer_down, drag_start_, 2);
+        pointer(input::EventKind::pointer_move, {drag_start_.x + 60, drag_start_.y + 20}, 2);
+        pointer(input::EventKind::pointer_up, {drag_start_.x + 60, drag_start_.y + 20}, 2);
+        return true;
+    });
+    wait("Orbiting away from the camera is private navigation", [this](const Observation& o) {
+        if (!ready(o) || o.state.viewport.editor_camera == visit_start_) return false;
+        const auto* camera = project::find_instance(o.state, camera_);
+        require(camera && project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time)).yaw == visit_start_.yaw,
+                "Navigating moved the camera instance");
+        visit_start_ = o.state.viewport.editor_camera;
+        return true;
+    });
+    click(button("Inspect"));
+    wait("Inspect looks through the camera read-only", [this](const Observation& o) {
+        if (!ready(o)) return false;
+        const auto* camera = project::find_instance(o.state, camera_);
+        const auto pose = project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time));
+        if (o.state.viewport.editor_camera != pose) return false;
+        require(find(button("Back")) && !find(button("Save this camera")), "Inspect offered authoring controls");
+        checkpoint(o, "08a-inspect-camera");
+        drag_start_ = center(o.viewport);
+        pointer(input::EventKind::pointer_down, drag_start_, 2);
+        pointer(input::EventKind::pointer_move, {drag_start_.x + 60, drag_start_.y + 20}, 2);
+        pointer(input::EventKind::pointer_up, {drag_start_.x + 60, drag_start_.y + 20}, 2);
+        animation_camera_ = pose;
+        return true;
+    });
+    add("Navigation is blocked while inspecting", [this](const Observation& o) {
+        require(o.state.viewport.editor_camera == animation_camera_, "Inspecting camera was moved by navigation");
+        return true;
+    });
+    click(button("Back"));
+    wait("Back restores the editor view after inspecting", [this](const Observation& o) {
+        return ready(o) && o.state.viewport.editor_camera == visit_start_;
+    });
     click(button("0 s | Keyframe"));
-    enum class CameraAbort { escape, focus, minimize, overflow };
-    for (const auto abort : {CameraAbort::escape, CameraAbort::focus, CameraAbort::minimize, CameraAbort::overflow}) {
-        const auto reason = abort == CameraAbort::escape ? "Escape" : abort == CameraAbort::focus ? "focus loss" :
-                            abort == CameraAbort::minimize ? "minimization" : "input overflow";
-        add(std::string{"Start authored camera drag before "} + reason,
-            [this](const Observation& o) {
-                animation_camera_ = o.state.document.animation_camera;
-                drag_start_ = center(o.viewport);
-                pointer(input::EventKind::pointer_down, drag_start_, 2);
-                return true;
-            });
-        add("Move animation camera while held", [this](const Observation&) {
-            pointer(input::EventKind::pointer_move, {drag_start_.x + 35, drag_start_.y + 10}, 2);
-            return true;
-        });
-        add("Camera gesture updates locally and gates unrelated controls", [this, abort](const Observation& o) {
-            require(o.state.document.animation_camera != animation_camera_ && o.dirty,
-                    "Authored camera gesture did not preview locally");
-            const auto add_key = std::ranges::find_if(tree_.widgets, [](const auto& widget) {
-                return widget.role == Role::button && widget.text == "Add keyframe";
-            });
-            require(add_key != tree_.widgets.end() && !add_key->enabled,
-                    "Camera capture left timeline editing enabled");
-            switch (abort) {
-            case CameraAbort::escape: key(input::Key::escape); break;
-            case CameraAbort::focus: events_.push_back({.kind=input::EventKind::focus_lost}); break;
-            case CameraAbort::minimize: minimize_next_input_ = true; break;
-            case CameraAbort::overflow: overflow_next_input_ = true; break;
-            }
-            return true;
-        });
-        wait("Camera cancellation restores authored shot and saved identity", [this](const Observation& o) {
-            if (!ready(o)) return false;
-            require(o.state.document.animation_camera == animation_camera_, "Cancelled camera gesture committed its pose");
-            require(!o.dirty, "Cancelled camera gesture changed saved-content identity");
-            pointer(input::EventKind::pointer_up, pointer_, 2);
-            events_.push_back({.kind=input::EventKind::focus_gained});
-            return true;
-        });
-    }
-    click({Role::checkbox, "Edit animation camera", {}});
-    wait("Private camera restored after cancelled authoring", [](const Observation& o) {
-        return ready(o) && !o.state.viewport.pilot_camera;
+    click(button("Enter"));
+    wait("Enter starts from the camera pose with authoring controls", [this](const Observation& o) {
+        if (!ready(o) || o.state.viewport.editor_camera != animation_camera_) return false;
+        require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
+            return widget.role == Role::button && widget.text == "Save this camera" && widget.visible;
+        }), "Enter did not offer Save this camera");
+        drag_start_ = center(o.viewport);
+        pointer(input::EventKind::pointer_down, drag_start_, 2);
+        pointer(input::EventKind::pointer_move, {drag_start_.x + 45, drag_start_.y + 15}, 2);
+        pointer(input::EventKind::pointer_up, {drag_start_.x + 45, drag_start_.y + 15}, 2);
+        return true;
+    });
+    wait("Roaming inside an entered camera stays private until saved", [this](const Observation& o) {
+        if (!ready(o) || o.state.viewport.editor_camera == animation_camera_) return false;
+        const auto* camera = project::find_instance(o.state, camera_);
+        require(project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time)) == animation_camera_,
+                "Navigation authored the camera without Save");
+        return true;
+    });
+    click(button("Save this camera"));
+    wait("Save this camera authors the editor view into the camera", [this](const Observation& o) {
+        if (!ready(o)) return false;
+        const auto* camera = project::find_instance(o.state, camera_);
+        const auto pose = project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time));
+        if (std::abs(pose.yaw - o.state.viewport.editor_camera.yaw) > 1e-3F) return false;
+        require(o.dirty, "Saving a camera did not mark the scene edited");
+        require(std::abs(pose.distance - o.state.viewport.editor_camera.distance) < 1e-3F, "Saved camera lost its focus distance");
+        checkpoint(o, "08b-camera-saved");
+        return true;
+    });
+    click(button("Back"));
+    wait("Back after Enter restores the pre-visit editor view", [this](const Observation& o) {
+        return ready(o) && o.state.viewport.editor_camera == visit_start_;
+    });
+    add("Delete the camera instance", [this](const Observation& o) {
+        require(o.state.viewport.selected_object == camera_, "Camera is not the selected instance before Delete");
+        key(input::Key::del);
+        return true;
+    });
+    wait("Deleting the camera removes it and its glyph", [this](const Observation& o) {
+        if (!ready(o) || project::find_instance(o.state, camera_)) return false;
+        require(!project::has_camera(o.state), "Another camera appeared after deleting the only one");
+        require(project::scene_annotation_lines(o.state, o.state.viewport.time).empty(), "Camera glyph outlived its camera");
+        return true;
+    });
+    add("Reselect the imported ship after the camera tour", [this](const Observation& o) {
+        if (!ready(o)) return false;
+        const auto* ship = project::find_instance(o.state, imported_);
+        require(ship, "Imported ship is missing after the camera tour");
+        const auto* target = actionable(button("#" + std::to_string(imported_) + " " + ship->name));
+        if (!target) return false;
+        click_at(center(intersection(target->bounds, target->clip)));
+        return true;
+    });
+    wait("Imported ship selected again at the initial keyframe", [this](const Observation& o) {
+        return ready(o) && o.state.viewport.selected_object == imported_ && o.selected_keyframe == 0.F;
     });
 
     instance_modal_workflow();

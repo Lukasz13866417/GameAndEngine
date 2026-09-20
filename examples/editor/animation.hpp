@@ -41,8 +41,19 @@ struct SceneValues {
 // Placement queries must not copy an instance's editable boundary or settings.
 [[nodiscard]] InstanceTransform evaluate_transform(const State&, const SceneInstance&, vng::f32 time);
 [[nodiscard]] bool evaluate_visibility(const State&, const SceneInstance&, vng::f32 time);
+// The simulation camera: the active scene camera instance when the scene has
+// cameras, otherwise the legacy document shot kept for older scenes.
 [[nodiscard]] CameraPose evaluate_camera(const State&, vng::f32 time);
+// The camera instance marked active at this time, else the first camera; null
+// when the scene has none.
+[[nodiscard]] const SceneInstance* active_camera(const State&, vng::f32 time);
 [[nodiscard]] bool has_camera_animation(const State&);
+// Scene authoring helpers: create the scene's first camera at a pose (returns
+// the existing active camera untouched when one exists), and key one camera's
+// placement and lens at a timestamp.
+[[nodiscard]] vng::content::Result<vng::u32> ensure_camera(State&, const CameraPose&, std::string name = "Camera");
+[[nodiscard]] vng::content::Result<void> key_camera(State&, vng::u32 camera, vng::f32 time, const CameraPose&,
+    vng::timeline::Interpolation = vng::timeline::Interpolation::linear);
 // Private editor navigation is never sampled from authored camera tracks.
 [[nodiscard]] CameraPose preview_camera_pose(const State&, vng::f32 time);
 // Updates the entire shot at one timestamp, transactionally, without copying meshes.

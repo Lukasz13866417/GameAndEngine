@@ -19,8 +19,8 @@ identity and saved status. Tools read a const state and submit typed edits. Its
 `EditNotice` values feed preview delivery without introducing a transport or
 rendering dependency. See the [editing-session API](editing_session.md).
 Undo stores scoped values or structural document snapshots and a small inspection
-bookmark, not historical navigation requests. Current private camera/pilot
-choice/view mode survive Undo.
+bookmark, not historical navigation requests. The current private camera, any
+camera visit and the view mode survive Undo.
 Existing saved scenes still load. Their `view` section is workspace metadata;
 the private camera and transport sequence are excluded from scene-file output.
 
@@ -301,7 +301,9 @@ Dirty targets accumulate while an update is in flight, so an ACK cannot discard
 a later edit. Blueprint identity is independent of the currently inspected view.
 Structural edits (import, instance creation/deletion, load), reconnects and
 unknown changes still require snapshots.
-The authored animation camera has its own ordered patch and cannot overwrite
+Scene cameras are ordinary instances: their placement, lens and active flag
+travel as instance property patches like any other keyed value. The legacy
+saved shot of older scenes has its own ordered patch and cannot overwrite
 the independently moving private camera. Pose-only edits use a 52-byte
 packet; animated-camera edits replace just its five tracks in a bounded v4
 packet, coalesced behind the same acknowledgement slot. Neither path serializes
@@ -336,7 +338,7 @@ the document dirty, copy Undo snapshots, upload geometry, or regenerate inspecto
 schemas. Selection/playhead changes refresh only the relevant inspection context.
 The timeline panel is keyed by document revision and inspection context, not
 private camera/view sequence: navigating causes neither metadata reconstruction
-nor value resampling. Moving the **animation camera** intentionally is an authored
+nor value resampling. Saving the editor view into a **scene camera** is an authored
 edit and follows the document lane instead.
 Inspector event stamps include that context identity, so an old Apply cannot act
 on a different selection or newly sampled value at the same document revision.
@@ -474,8 +476,8 @@ Its tool-options description adds the shared mouse/arrow sensitivity to the acti
 tool's own controls. On camera changes the math tools rebase their screen-space
 reference at the current transform, preserving the original document baseline
 and undo entry. No tool calls a sibling or starts a second editing transaction.
-Concurrent navigation uses the private editor view; if the animation camera was
-being piloted, the application explicitly leaves pilot mode before navigating.
+Concurrent navigation uses the private editor view; while inspecting a scene
+camera, navigation is blocked instead of silently editing that camera.
 `MeshNavigationControls` hosts a private navigation preference for all mesh modes
 and emits explicit `CameraBakeOptions` requests only in whole-mesh mode.
 It supplies an optional displayed mesh center to `NavigationTool::drag_origin`;

@@ -104,6 +104,33 @@ editor::Result<void> apply_appearance(State& state, DocumentChanges& changes, u3
 }
 } // namespace
 
+editor::Result<void> apply_lens(State& state, DocumentChanges& changes, u32 id, const CameraSettings& before, const CameraSettings& next) {
+    return apply(state, changes, id, [&](auto& candidate) -> editor::Result<void> {
+        auto* value = std::get_if<CameraSettings>(&candidate.instance.settings);
+        if (!value) return invalid("Edited scene instance is not a camera");
+        if (auto changed = candidate.change("zoom", before.zoom, next.zoom, value->zoom); !changed) return changed;
+        if (auto changed = candidate.change("focus", before.focus, next.focus, value->focus); !changed) return changed;
+        return candidate.change("visible", before.visible, next.visible, value->visible);
+    });
+}
+editor::Result<void> apply_active_camera(State& state, DocumentChanges& changes, u32 id) {
+    if (!is_camera_instance(state, id)) return invalid("Only a scene camera can be made active");
+    std::vector<u32> cameras;
+    for (const auto& instance : state.document.instances)
+        if (std::holds_alternative<CameraSettings>(instance.settings)) cameras.push_back(instance.id);
+    for (const auto camera : cameras) {
+        const auto* instance = find_instance(state, camera);
+        const bool active = std::get<CameraSettings>(evaluate_instance(state, *instance, state.viewport.time).settings).active;
+        const bool wanted = camera == id;
+        if (active == wanted) continue;
+        if (auto changed = apply(state, changes, camera, [&](auto& candidate) -> editor::Result<void> {
+                auto& value = std::get<CameraSettings>(candidate.instance.settings);
+                return candidate.change("active", active, wanted, value.active);
+            }); !changed) return changed;
+    }
+    return {};
+}
+
 void ProjectControls::describe_editor(vng::editor::Inspector& ui) {
     const auto id = state_.viewport.selected_object;
     const auto* source = find_instance(state_, id);
@@ -165,6 +192,16 @@ void ProjectControls::describe_editor(vng::editor::Inspector& ui) {
             if (!instance) return vng::editor::Result<void>{invalid("Edited scene instance no longer exists")};
             const auto current = std::get<SunSettings>(evaluate_instance(state_, *instance, state_.viewport.time).settings);
             return apply_appearance(state_, changes_, id, current, *effect_blueprint_settings(state_,instance->blueprint));
+        });
+    } else if (const auto* lens = std::get_if<CameraSettings>(&initial.settings)) {
+        auto edit = ui.edit("lens", *lens, "Camera lens");
+        edit.slider("zoom", &CameraSettings::zoom, camera_min_zoom, std::max(10.F, lens->zoom), "Optical zoom");
+        edit.slider("focus", &CameraSettings::focus, camera_min_distance, std::max(100.F, lens->focus), "Focus distance");
+        edit.toggle("visible", &CameraSettings::visible, "Show frustum in preview");
+        edit.apply("Apply lens", [this, id, before = *lens](const CameraSettings& next) mutable {
+            auto result = apply_lens(state_, changes_, id, before, next);
+            if (result) before = next;
+            return result;
         });
     } else if (const auto* settings = std::get_if<MeshSettings>(&initial.settings)) {
         const auto model = *settings;

@@ -1,6 +1,9 @@
 #include "editing_session.hpp"
 #include "rotation_edits.hpp"
 #include "scale_edits.hpp"
+#include "position_edits.hpp"
+#include "effects.hpp"
+#include "animation.hpp"
 #include "../support/mesh_frame.hpp"
 #include <algorithm>
 #include <cmath>
@@ -292,6 +295,78 @@ content::Result<EditClipboard::Pasted> EditingSession::paste() {
     return pasted;
 }
 
+content::Result<bool> EditingSession::set_camera(u32 id, const CameraPose& pose) {
+    if (auto ready = available(); !ready) return std::unexpected(ready.error());
+    if (!can_edit_scene_pose()) {
+        content::Diagnostic error;
+        error.message = "Select a keyframe at the playhead, or insert one, to save a camera";
+        return std::unexpected(std::move(error));
+    }
+    const auto* camera = find_instance(state_, id);
+    if (!camera || !std::holds_alternative<CameraSettings>(camera->settings)) {
+        content::Diagnostic error;
+        error.message = "Only a scene camera can take the editor view";
+        return std::unexpected(std::move(error));
+    }
+    DocumentChanges changes;
+    for (const auto property : {"position", "rotation", "zoom", "focus"}) changes.properties.insert({id, property});
+    auto before = capture(changes);
+    if (!before) return std::unexpected(before.error());
+    auto placed = evaluate_instance(state_, *camera, state_.viewport.time);
+    const auto lens_before = std::get<CameraSettings>(placed.settings);
+    place_camera(placed, pose);
+    const auto& lens = std::get<CameraSettings>(placed.settings);
+    const auto fail = [&](std::string message) -> content::Result<bool> {
+        if (auto restored = restore(*before, false); !restored) return std::unexpected(restored.error());
+        content::Diagnostic error;
+        error.message = std::move(message);
+        return std::unexpected(std::move(error));
+    };
+    auto moved = apply_position_value(state_, id, placed.transform.position);
+    if (!moved) return fail(moved.error().message);
+    auto turned = apply_rotation_value(state_, id, placed.transform.rotation);
+    if (!turned) return fail(turned.error().message);
+    DocumentChanges lens_changes;
+    if (auto adjusted = apply_lens(state_, lens_changes, id, lens_before, lens); !adjusted) return fail(adjusted.error().message);
+    if (!*moved) changes.properties.erase({id, "position"});
+    if (!*turned) changes.properties.erase({id, "rotation"});
+    for (const auto property : {"zoom", "focus"})
+        if (!lens_changes.properties.contains({id, property})) changes.properties.erase({id, property});
+    if (changes.properties.empty()) return false;
+    before->scope = changes;
+    std::erase_if(std::get<DocumentPatch>(before->value).properties,
+        [&](const auto& p) { return !changes.properties.contains(p.target); });
+    remember(std::move(*before));
+    publish(changes);
+    return true;
+}
+content::Result<bool> EditingSession::set_active_camera(u32 id) {
+    if (auto ready = available(); !ready) return std::unexpected(ready.error());
+    if (!can_edit_scene_pose()) {
+        content::Diagnostic error;
+        error.message = "Select a keyframe at the playhead, or insert one, to choose the active camera";
+        return std::unexpected(std::move(error));
+    }
+    DocumentChanges changes;
+    for (const auto& instance : state_.document.instances)
+        if (std::holds_alternative<CameraSettings>(instance.settings)) changes.properties.insert({instance.id, "active"});
+    auto before = capture(changes);
+    if (!before) return std::unexpected(before.error());
+    DocumentChanges applied;
+    if (auto activated = apply_active_camera(state_, applied, id); !activated) {
+        if (auto restored = restore(*before, false); !restored) return std::unexpected(restored.error());
+        content::Diagnostic error;
+        error.message = activated.error().message;
+        return std::unexpected(std::move(error));
+    }
+    if (applied.properties.empty()) return false;
+    before->scope = applied;
+    std::erase_if(std::get<DocumentPatch>(before->value).properties,
+        [&](const auto& p) { return !applied.properties.contains(p.target); });
+    remember(std::move(*before));
+    publish(applied);
+    return true;
+}
 content::Result<bool> EditingSession::set_transform(u32 id, Vec3 rotation, f32 scale, std::optional<Vec3> axis_scale) {
     if (auto ready = available(); !ready) return std::unexpected(ready.error());
     if (!can_edit_scene_pose()) {

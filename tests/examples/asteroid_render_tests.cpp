@@ -24,7 +24,7 @@ TEST_CASE("Asteroid belt occludes the fleet and reveals it using the editable ca
     auto no_fleet=*state;
     for(auto& instance:no_fleet.document.instances)
         if(instance.id!=example::asteroids::hero && !example::asteroids::is_rock(instance))
-            std::get<project::MeshSettings>(instance.settings).visible=false;
+            if(auto* mesh=std::get_if<project::MeshSettings>(&instance.settings)) mesh->visible=false;
     auto clear_fleet=*state,clear_empty=no_fleet;
     for(auto* variant:{&clear_fleet,&clear_empty})
         for(auto& instance:variant->document.instances)

@@ -75,7 +75,7 @@ The other gesture pairs are:
 | `begin_rotation(object, selection, pivot)` | `rotate(primary_euler_degrees)` |
 | `begin_scale(object)` | `scale(uniform_scale)` |
 | `begin_vertices(blueprint, vertex_ids)` | `vertices(absolute_positions)` or `move_vertices(delta_from_start)` |
-| `begin_camera()` | `camera(pose)` |
+| `begin_camera()` | `camera(pose)` (legacy saved shot; scenes with camera instances use `set_camera` / `set_active_camera` instead) |
 | `begin_world_bounds()` | `world_bounds({minimum, maximum})` |
 
 Rotation defaults to a shared geometric selection center. `TransformPivot`
@@ -123,8 +123,11 @@ editing. Blueprint geometry, world bounds and private navigation are independent
 
 The playhead and paused state must stay fixed during a gesture. The session
 rejects updates if they change; cancellation remains available. The UI disables
-conflicting controls while captured. Current private camera, pilot choice and
-view mode remain independent of Undo/Redo.
+conflicting controls while captured. The current private camera, any camera
+visit (Inspect/Enter) and the view mode remain independent of Undo/Redo.
+`set_camera(id, pose)` writes an editor pose into a scene camera and
+`set_active_camera(id)` makes it the simulation's camera from the selected
+keyframe on, clearing the others there; both are single undoable edits.
 
 ## Discrete edits
 
@@ -220,4 +223,4 @@ sparse undo, draft creation/publication, animation tracks, viewport independence
 native callback rejection, compound-transform rollback, monotonic IDs and bounded
 history. Gesture, timeline, file and UI tests use the same session boundary.
 The real two-process walkthrough additionally covers import, gizmos, mesh drafts,
-animation-camera cancellation, keyframe/inspector refresh, Save and Load.
+scene-camera visits and saves, keyframe/inspector refresh, Save and Load.

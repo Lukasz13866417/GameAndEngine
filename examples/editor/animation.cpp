@@ -115,8 +115,14 @@ std::vector<AnimationProperty> animation_properties(const State& state) {
                 {{id, "bloom"}, "Bloom", name, sun.bloom, 0, 1},
                 {{id, "white_spots"}, "White spots", name, sun.white_spots, {}, {}},
                 {{id, "visible"}, "Visible", name, sun.visible, {}, {}}});
-        } else {
-            properties.push_back({{id, "visible"}, "Visible", name, std::get<RegionSettings>(instance.settings).visible, {}, {}});
+        } else if (const auto* lens = std::get_if<CameraSettings>(&instance.settings)) {
+            properties.insert(properties.end(), {
+                {{id, "zoom"}, "Optical zoom", name, lens->zoom, camera_min_zoom, camera_max_zoom},
+                {{id, "focus"}, "Focus distance", name, lens->focus, camera_min_distance, camera_max_distance},
+                {{id, "active"}, "Active camera", name, lens->active, {}, {}},
+                {{id, "visible"}, "Visible", name, lens->visible, {}, {}}});
+        } else if (const auto* region = std::get_if<RegionSettings>(&instance.settings)) {
+            properties.push_back({{id, "visible"}, "Visible", name, region->visible, {}, {}});
         }
     }
     const auto& camera = state.document.animation_camera;
@@ -160,7 +166,22 @@ SceneValues evaluate_scene(const State& state, f32 time) {
     return result;
 }
 
+const SceneInstance* active_camera(const State& state, f32 time) {
+    const SceneInstance* first{};
+    for (const auto& instance : state.document.instances) {
+        const auto* lens = std::get_if<CameraSettings>(&instance.settings);
+        if (!lens) continue;
+        if (!first) first = &instance;
+        auto active = lens->active;
+        sample(active, state.document.timeline, instance.id, "active", time);
+        if (active) return &instance;
+    }
+    return first;
+}
+
 CameraPose evaluate_camera(const State& state, f32 time) {
+    if (const auto* camera = active_camera(state, time))
+        return camera_pose(evaluate_instance(state, *camera, time));
     auto pose = state.document.animation_camera;
     sample(pose.yaw, state.document.timeline, camera_animation_object, "yaw", time);
     sample(pose.pitch, state.document.timeline, camera_animation_object, "pitch", time);
@@ -171,9 +192,50 @@ CameraPose evaluate_camera(const State& state, f32 time) {
 }
 
 bool has_camera_animation(const State& state) {
+    if (has_camera(state)) {
+        for (const auto& track : state.document.timeline.tracks())
+            if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<u32>(track.target.object)))
+                return true;
+        return false;
+    }
     for (const auto property : camera_track_properties)
         if (state.document.timeline.find({camera_animation_object, std::string(property)})) return true;
     return false;
+}
+
+content::Result<u32> ensure_camera(State& state, const CameraPose& pose, std::string name) {
+    if (const auto* existing = active_camera(state, 0)) return existing->id;
+    auto created = instantiate(state, BlueprintId::camera);
+    if (!created) return created;
+    auto* camera = find_instance(state, *created);
+    camera->name = std::move(name);
+    std::get<CameraSettings>(camera->settings).active = true;
+    place_camera(*camera, pose);
+    return *created;
+}
+
+content::Result<void> key_camera(State& state, u32 id, f32 time, const CameraPose& pose, timeline::Interpolation mode) {
+    const auto* camera = find_instance(state, id);
+    if (!camera || !std::holds_alternative<CameraSettings>(camera->settings)) {
+        content::Diagnostic error;
+        error.message = "Camera keys require a scene camera instance";
+        return std::unexpected(std::move(error));
+    }
+    auto placed = *camera;
+    place_camera(placed, pose);
+    const auto& lens = std::get<CameraSettings>(placed.settings);
+    std::vector<PropertyKey> keys;
+    for (const auto& [property, value] : std::array<std::pair<std::string_view, timeline::Value>, 4>{
+             {{"position", placed.transform.position}, {"rotation", placed.transform.rotation},
+              {"zoom", lens.zoom}, {"focus", lens.focus}}}) {
+        const timeline::Target target{id, std::string(property)};
+        auto incoming = mode;
+        if (const auto* track = state.document.timeline.find(target))
+            if (const auto key = std::ranges::find(track->keys, time, &timeline::Keyframe::time);
+                key != track->keys.end()) incoming = key->incoming;
+        keys.push_back({target, value, incoming, true});
+    }
+    return edit_property_keys(state, time, keys);
 }
 
 CameraPose preview_camera_pose(const State& state, f32 time) {
@@ -221,6 +283,10 @@ SceneInstance evaluate_instance(const State& state, const SceneInstance& source,
             sample(value.displacement, state.document.timeline, source.id, "displacement", time);
             sample(value.bloom, state.document.timeline, source.id, "bloom", time);
             sample(value.white_spots, state.document.timeline, source.id, "white_spots", time);
+        } else if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, CameraSettings>) {
+            sample(value.zoom, state.document.timeline, source.id, "zoom", time);
+            sample(value.focus, state.document.timeline, source.id, "focus", time);
+            sample(value.active, state.document.timeline, source.id, "active", time);
         }
     }, result.settings);
     return result;

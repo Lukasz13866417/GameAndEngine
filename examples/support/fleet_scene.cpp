@@ -115,10 +115,17 @@ content::Result<project::State> author_scene(const std::filesystem::path& assets
             vessel.name,project::MeshSettings{},
             {vessel.position,{0,vessel.yaw,vessel.roll},vessel.scale}});
     }
-    state.document.animation_camera = camera_at(0);
-    state.viewport.editor_camera = state.document.animation_camera;
+    state.viewport.editor_camera = camera_at(0);
     state.viewport.time = 0;
     state.viewport.selected_object = hero;
+    // The shot's camera is an ordinary scene camera instance; independent Play
+    // and the demos render through it.
+    auto shot_camera = project::ensure_camera(state, camera_at(0), "Tracking camera");
+    if (!shot_camera) return std::unexpected(shot_camera.error());
+    if (*shot_camera != camera) {
+        content::Diagnostic error; error.message = "Fleet camera identity changed";
+        return std::unexpected(std::move(error));
+    }
     try {
         // One-second baked samples: curved choreography with regular, editable
         // timestamps. No C++ callbacks survive in the saved scene.
@@ -126,16 +133,14 @@ content::Result<project::State> author_scene(const std::filesystem::path& assets
             const auto t = static_cast<f32>(second);
             const auto pose = camera_at(t);
             const auto mode = second ? timeline::Interpolation::linear : timeline::Interpolation::hold;
-            for (const auto& [property,value] : std::array<std::pair<std::string_view,timeline::Value>,4>{{
-                {"yaw",pose.yaw}, {"pitch",pose.pitch},{"distance",pose.distance},{"target",pose.target}}})
-                checked(project::key_property(state,{project::camera_animation_object,std::string(property)},t,value,mode));
+            checked(project::key_camera(state, camera, t, pose, mode));
             checked(project::key_property(state,{hero,"position"},t,curve(ship_path,t),mode));
             checked(project::key_property(state,{hero,"rotation"},t,orientation_at(t),mode));
         }
         // A slow common forward drift preserves formation but prevents the
         // reveal from feeling like static scenery. Every ship stays present.
         for (const auto& instance : state.document.instances) {
-            if (instance.id <= sun) continue;
+            if (instance.id <= sun || instance.id == camera) continue;
             checked(project::key_property(state,{instance.id,"position"},0,instance.transform.position,
                                            timeline::Interpolation::hold));
             checked(project::key_property(state,{instance.id,"position"},duration,

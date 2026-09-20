@@ -17,8 +17,9 @@ cmake --build build --target vng_editor_demo -j 4
 
 The initial project contains the existing procedural sun and colored cube.
 The embedded viewport displays a shared-memory image from a separate worker.
-**Play (independent)** shows that worker's own native window and presents directly to it.
-Both paths use the same engine rendering code.
+**Play (independent)** shows that worker's own native window and presents directly to it,
+rendering through the scene's active **Camera** instance; it refuses to start until the
+scene has one. Both paths use the same engine rendering code.
 
 See [state boundaries and interaction timing](editor_boundaries.md) for the
 separate document/view request lanes, smooth wheel zoom, actual-frame camera
@@ -60,7 +61,7 @@ metadata and **Logs → Interaction timing** measurements/export.
   **Open scene...** for those (the same browser, limited to `.vscene`), or import
   their standalone `.vmesh` asset into the current scene.
   Import adds a reusable mesh blueprint and one selected instance, leaving the
-  existing scene objects and animation camera untouched. The new mesh is framed
+  existing scene objects and cameras untouched. The new mesh is framed
   in its own **Mesh: [name]** view; choose **Scene** to place its instance.
   Vertex tools open in the right-hand **Blueprint geometry** panel. Import is undoable, and invalid files leave
   the scene unchanged. OBJ/FBX/glTF are not supported.
@@ -269,8 +270,8 @@ metadata and **Logs → Interaction timing** measurements/export.
   in place. **Stop walking** or **Escape** exits. Typing in a field, opening a
   dialog, or losing focus releases held movement keys. Speeds are scene units
   per second, not per frame. Settings has separate forward, sideways, vertical
-  speeds and a Shift multiplier. Walking the private camera never edits the scene;
-  with **Edit animation camera** enabled it follows the same keyframe/Undo rules.
+  speeds and a Shift multiplier. Walking the private camera never edits the scene,
+  even inside an entered scene camera; only **Save this camera** authors the view.
   **Settings → Maximum viewing distance** sets the far clipping plane in the
   embedded preview and independent Play, including diagnostics. It does not
   restrict camera travel or change the world bounds. Default: 10,000 units.
@@ -322,22 +323,26 @@ metadata and **Logs → Interaction timing** measurements/export.
   **Apply** unless the C++ control explicitly requests live edits. Non-finite
   or out-of-range values show an error instead of silently being clamped.
   Timeline times/durations, XYZ components and keyframe values are also text-editable.
-- **Edit animation camera** switches between two separate camera poses. Off
-  (the default): navigate a private editor view without changing the saved shot
-  or marking the scene unsaved. On: look through and edit the saved animation
-  camera; orbit/pan/zoom and the sliders change that shot, with Undo/Redo.
-  Switching back restores the previous editor view; merely switching never
-  overwrites either pose. This control is available in Scene view.
-  In-editor playback uses the currently chosen view, so enable this toggle to
-  follow the animated shot. Independent Play samples that same camera timeline.
-  The keyframe inspector's **Animation camera** object and **Camera** layer
-  expose orbit, elevation, orbit distance, look-at target, and optical zoom. **Blend** interpolates
-  the segment arriving at a key; clear it for a held shot followed by a cut.
-  Orbit/pan/zoom and camera controls edit the shot only at a keyframe while
-  paused, preserving any existing cut there. At zero, channels without tracks
-  edit the initial shot; at later keys they become animated channels. Editor
-  camera navigation remains available between keyframes.
-  Adding a keyframe includes the camera alongside the scene-instance properties.
+- **Scene cameras** are the simulation's view, separate from the private editor
+  camera you navigate with. **Blueprints > Camera +** adds a camera instance at
+  the current editor view; the first camera becomes the active one. A camera has
+  a position and rotation like any instance (its heading is the look direction),
+  plus a **Camera lens** with optical zoom and a focus distance that doubles as
+  its orbit pivot and far-plane scale. Several cameras can exist, but only one is
+  **active** at any timestamp; **Set active here** keys the switch at the selected
+  keyframe and clears the others there, so the simulation cuts between cameras.
+  Independent Play and the demos render through the active camera.
+  Cameras use the Move, Rotate, Free rotate and **Forward / back** gizmos and draw
+  a frustum glyph in the preview: bright for the active camera, orange when
+  selected. The **CAMERA** panel above the instance properties offers **Inspect**
+  (look through the camera read-only; playback and scrubbing follow it, navigation
+  is blocked), **Enter** (start from the camera and roam freely; nothing is authored
+  until **Save this camera** writes the editor view into the camera at the selected
+  keyframe) and **Back**, which restores the editor view from before the visit.
+  Camera placement, lens and activeness are ordinary keyframe properties: **Blend**
+  interpolates the segment arriving at a key; clear it for a held shot followed by
+  a cut. Scenes without cameras keep evaluating the older saved animation shot,
+  but adding a camera takes over.
 - Choose **Vertices** mode for the mesh. Clicking selects; dragging a vertex does
   not move it. **G/R/S** starts move/rotate/scale following the mouse without a
   held button. **X/Y/Z** toggles a world-axis constraint. **Enter or LMB** confirms;
@@ -368,9 +373,6 @@ metadata and **Logs → Interaction timing** measurements/export.
   Lowering a limit never resizes an existing object. Values up to 1,000,000 are
   supported; a mesh/region gesture's factor is relative to its starting shape,
   while instance limits bound the transform's absolute scale.
-  If **Edit animation camera** was enabled, navigating during another active
-  transform switches to the private editor camera and reports this in the status
-  bar. The animation camera is not modified inside an object's transaction.
   **5 — Whole mesh** needs no component selection and offers Rotate, Scale,
   and Free rotate (no Move). **Ctrl+Left/Right**, with either Ctrl key, cycles
   the available mesh gizmos. **R/S** also starts a mouse-following transform.
@@ -424,10 +426,10 @@ metadata and **Logs → Interaction timing** measurements/export.
   a filename dialog. **Save As / Ctrl+Shift+S** chooses another file and explicitly
   confirms replacement if it already exists. Cancel or failure retains the
   previous current file and unsaved state. The `.vscene` includes all scene settings,
-  animation camera, keyframes and embedded `.vmesh`, including edited geometry.
-  The inspection-camera pose and camera-edit toggle are not saved. Opening a
-  scene initializes the inspection pose from its animation camera. Legacy files
-  with only a `view` camera initialize both poses from that old camera.
+  cameras, keyframes and embedded `.vmesh`, including edited geometry. The private
+  inspection pose and any camera visit are not saved. Opening a scene initializes
+  the inspection pose from its saved shot. Older files without camera instances
+  still load; their saved animation shot keeps rendering until a camera is added.
 - **Open scene...** (Ctrl+O) in the top toolbar browses for a `.vscene` and makes
   the chosen scene the current Save target; `--scene FILE` does the same at
   startup. The browser starts beside the current scene with it preselected, or in
@@ -496,7 +498,8 @@ come from explicit zero keys where present, otherwise from the initial scene
 properties. This is a logical keyframe: loading an older sparse scene does not
 create hundreds of tracks, consume the track budget, or change its playback.
 
-Scene-instance properties and the animation camera are editable only while
+Scene-instance properties, including camera placement, lens and the active
+camera, are editable only while
 paused **at an explicitly selected keyframe timestamp**. Between keys and after the last key the
 pose is read-only: insert a keyframe to edit it. The inspector, transform gizmos,
 and editing-session operations enforce the same rule. Editor-camera navigation,

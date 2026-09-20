@@ -53,7 +53,8 @@ TEST_CASE("Original asteroid blueprints contain finite crater geometry and compa
 TEST_CASE("Asteroid shot stays an ordinary editable scene with shared rock blueprints", "[asteroid][scene]") {
     auto state=scene();
     CHECK(state.document.mesh_assets.size()==6);
-    CHECK(state.document.instances.size()==belt::rock_count+belt::fleet_count+1);
+    CHECK(state.document.instances.size()==belt::rock_count+belt::fleet_count+2); // pathfinder, fleet, rocks, camera
+    CHECK(project::active_camera(state,0)->id==belt::camera);
     CHECK_FALSE(project::find_instance(state,2));
     CHECK(state.document.timeline_duration==belt::duration);
     REQUIRE(project::validate_animation(state));
@@ -63,6 +64,7 @@ TEST_CASE("Asteroid shot stays an ordinary editable scene with shared rock bluep
     for(const auto& instance:state.document.instances) {
         CHECK(identities.insert(instance.id).second);
         ++uses[instance.blueprint];
+        if(instance.id==belt::camera) { CHECK(project::is_camera_instance(state,instance.id)); continue; }
         REQUIRE(project::mesh_settings(state,instance.id));
         CHECK(project::mesh_settings(state,instance.id)->visible);
         CHECK_FALSE(state.document.timeline.find({instance.id,"visible"}));
@@ -87,7 +89,7 @@ TEST_CASE("The entire lead ship and camera clear tumbling rocks between authored
     const auto state=scene();
     std::map<project::BlueprintId,float> bounds;
     for(const auto& instance:state.document.instances) {
-        if(bounds.contains(instance.blueprint)) continue;
+        if(bounds.contains(instance.blueprint) || instance.id==belt::camera) continue;
         const auto* geometry=project::instance_mesh(state,instance.id);
         for(u32 vertex=0;vertex<geometry->size();++vertex)
             bounds[instance.blueprint]=std::max(bounds[instance.blueprint],length(geometry->position(vertex)));
@@ -134,7 +136,7 @@ TEST_CASE("Lead ship turns gently and the fleet waits well beyond the belt", "[a
     // actual hull extents, not just the distance between instance origins.
     std::map<project::BlueprintId,float> bounds;
     for(const auto& instance:state.document.instances) {
-        if(bounds.contains(instance.blueprint)) continue;
+        if(bounds.contains(instance.blueprint) || instance.id==belt::camera) continue;
         const auto* mesh=project::instance_mesh(state,instance.id);
         for(u32 vertex=0;vertex<mesh->size();++vertex)
             bounds[instance.blueprint]=std::max(bounds[instance.blueprint],length(mesh->position(vertex)));
@@ -142,6 +144,7 @@ TEST_CASE("Lead ship turns gently and the fleet waits well beyond the belt", "[a
     float belt_exit=std::numeric_limits<float>::max();
     float fleet_front=std::numeric_limits<float>::lowest();
     for(const auto& instance:state.document.instances) {
+        if(instance.id==belt::camera) continue;
         const auto radius=bounds.at(instance.blueprint)*instance.transform.scale;
         if(belt::is_rock(instance))
             belt_exit=std::min(belt_exit,instance.transform.position.z-radius);
@@ -160,6 +163,7 @@ TEST_CASE("Expanded belt and armada fit their bounds and the pathfinder stops fa
     float largest_rock{},smallest_ship=100,largest_ship{},nearest_fleet=1000;
     Vec3 minimum{1000,1000,1000},maximum{-1000,-1000,-1000};
     for(const auto& instance:state.document.instances) {
+        if(instance.id==belt::camera) continue;
         const auto& transform=instance.transform;
         if(belt::is_rock(instance)) {
             ++rocks;

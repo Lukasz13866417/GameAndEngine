@@ -126,6 +126,10 @@ public:
 
     [[nodiscard]] vng::content::Result<bool> set_transform(vng::u32, vng::Vec3 rotation, vng::f32 scale,
         std::optional<vng::Vec3> axis_scale = {});
+    // Camera authoring at the selected keyframe: place a camera where a pose
+    // looks from, and choose the camera the simulation uses from here on.
+    [[nodiscard]] vng::content::Result<bool> set_camera(vng::u32, const CameraPose&);
+    [[nodiscard]] vng::content::Result<bool> set_active_camera(vng::u32);
     [[nodiscard]] vng::content::Result<void> begin_remote(vng::u64 generation);
     [[nodiscard]] bool awaiting_remote() const noexcept { return remote_.has_value(); }
     void abandon_remote() noexcept { remote_.reset(); }

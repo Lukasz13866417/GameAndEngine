@@ -1,7 +1,9 @@
 #pragma once
 #include "animation.hpp"
+#include "rotation_math.hpp"
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace editor_example {
 struct SceneLine {
@@ -53,6 +55,39 @@ inline void region_wall_grid(std::vector<SceneLine>& lines, const RegionGeometry
         }
     }
 }
+// Every visible scene camera draws a small frustum from its eye toward what it
+// sees, an up tick on the top edge, and a line along its look direction. The
+// active camera is bright, the selected one orange, the rest muted.
+inline void camera_annotation_lines(std::vector<SceneLine>& lines,const State& state,vng::f32 time,vng::u32 hidden_object=0) {
+    using namespace vng;
+    const auto* active=active_camera(state,time);
+    for(const auto& instance:state.document.instances) {
+        if(instance.id==hidden_object)continue;
+        if(!std::holds_alternative<CameraSettings>(instance.settings) || !evaluate_visibility(state,instance,time))continue;
+        const auto value=evaluate_instance(state,instance,time);
+        const auto& lens=std::get<CameraSettings>(value.settings);
+        const auto eye=value.transform.position;
+        const auto forward=rotation_math::direction(value.transform.rotation,{0,0,-1});
+        const auto up=rotation_math::direction(value.transform.rotation,{0,1,0});
+        const auto right=rotation_math::direction(value.transform.rotation,{1,0,0});
+        const auto depth=std::clamp(lens.focus*.3F,.5F,40.F);
+        const auto half_height=depth*std::tan(camera_vertical_fov*.5F*std::numbers::pi_v<f32>/180)/std::max(lens.zoom,camera_min_zoom);
+        const auto half_width=half_height*16/9;
+        const auto at=[&](f32 x,f32 y,f32 z) {
+            return Vec3{eye.x+forward.x*z+right.x*x+up.x*y,eye.y+forward.y*z+right.y*x+up.y*y,eye.z+forward.z*z+right.z*x+up.z*y};
+        };
+        const auto color=&instance==active ? Vec4{1,.85F,.25F,1}
+            : instance.id==state.viewport.selected_object ? Vec4{1,.52F,.08F,1} : Vec4{.55F,.6F,.75F,1};
+        const std::array corners{at(-half_width,-half_height,depth),at(half_width,-half_height,depth),
+                                 at(half_width,half_height,depth),at(-half_width,half_height,depth)};
+        for(const auto& corner:corners)lines.push_back({eye,corner,color});
+        for(std::size_t i=0;i<4;++i)lines.push_back({corners[i],corners[(i+1)%4],color});
+        // The up tick makes roll and the top edge unmistakable.
+        const auto peak=at(0,half_height*1.6F,depth);
+        lines.push_back({corners[2],peak,color});lines.push_back({peak,corners[3],color});
+        lines.push_back({at(0,0,depth),at(0,0,std::max(depth*2,lens.focus)),{color.x,color.y,color.z,.6F}});
+    }
+}
 inline std::vector<SceneLine> scene_annotation_lines(const State& state,vng::f32 time,vng::u32 hidden_object=0) {
     using namespace vng;
     std::vector<SceneLine> lines;
@@ -78,6 +113,7 @@ inline std::vector<SceneLine> scene_annotation_lines(const State& state,vng::f32
         for(const auto edge:boundary.edges())lines.push_back({boundary.points.at(edge[0]),boundary.points.at(edge[1]),color});
         if(settings->show_walls)region_wall_grid(lines,boundary,{color.x*.55F,color.y*.55F,color.z*.55F,1});
     }
+    camera_annotation_lines(lines,state,time,hidden_object);
     return lines;
 }
 }

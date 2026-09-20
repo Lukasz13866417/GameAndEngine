@@ -22,6 +22,13 @@ BlueprintManipulation blueprint_manipulation(const State& state, BlueprintId id)
             {GizmoMode::region_vertices, GizmoMode::region_edges, GizmoMode::region_faces});
         return result;
     }
+    if (id == BlueprintId::camera) {
+        // A camera has no size to scale; its look direction is the natural
+        // forward/back handle and the frustum glyph shows where it points.
+        result.gizmos = {GizmoMode::move, GizmoMode::rotate, GizmoMode::free_rotate, GizmoMode::forward};
+        result.forward = vng::Vec3{0, 0, -1};
+        return result;
+    }
     const auto* mesh = mesh_geometry(state, id);
     if (!mesh) return result;
     const auto& info = mesh->document().metadata;

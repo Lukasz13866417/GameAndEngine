@@ -70,6 +70,17 @@ RegionSettings read_region(content::Reader reader) {
 bool valid_settings(const SunSettings& sun) {
     return valid_effect_settings(sun);
 }
+bool valid_settings(const CameraSettings& lens) {
+    return range(lens.zoom, camera_min_zoom, camera_max_zoom) && range(lens.focus, camera_min_distance, camera_max_distance);
+}
+void write_settings(std::ostream& out, const CameraSettings& lens) {
+    out << "{ zoom = " << lens.zoom << "; focus = " << lens.focus << "; active = " << lens.active
+        << "; visible = " << lens.visible << "; }";
+}
+CameraSettings read_camera_settings(content::Reader reader) {
+    return {reader.get<f32>("zoom"), reader.get<f32>("focus"), reader.get_or<bool>("active", false),
+            reader.get_or<bool>("visible", true)};
+}
 bool valid_transform(const InstanceTransform& transform) {
     return valid_scene_position(transform.position) && range(transform.scale, min_instance_scale, max_instance_scale) &&
            range(transform.axis_scale.x, min_axis_scale, max_axis_scale) && range(transform.axis_scale.y, min_axis_scale, max_axis_scale) &&
@@ -118,6 +129,7 @@ CameraPose read_camera(content::Reader reader) {
 }
 content::Result<void> validate_state(const State& s) {
     if (auto valid = validate(region_snapshot(s)); !valid) return valid;
+    if (auto valid = validate_active_cameras(s); !valid) return valid;
     if (!valid_world_bounds(s.document.world_bounds)) return invalid("Invalid world bounds");
     const auto& environment = s.document.environment;
     if (environment.stars > 20000 || !range(environment.exposure, .01F, 10) ||
@@ -151,13 +163,13 @@ content::Result<void> validate_state(const State& s) {
         const auto id = static_cast<u32>(asset.id);
         if (id < 3 || id >= s.document.next_blueprint_id ||
             std::ranges::find(blueprint_ids, asset.id) != blueprint_ids.end() ||
-            asset.id==BlueprintId::region || asset.name.empty() || asset.name.size() > 256 || !valid_settings(asset.settings))
+            id >= first_reserved_blueprint || asset.name.empty() || asset.name.size() > 256 || !valid_settings(asset.settings))
             return invalid("Invalid imported mesh blueprint identity, name or settings");
         blueprint_ids.push_back(asset.id);
     }
     for(const auto& asset:s.document.effect_assets) {
         const auto id=static_cast<u32>(asset.id);
-        if(id<3 || id>=s.document.next_blueprint_id || asset.id==BlueprintId::region ||
+        if(id<3 || id>=s.document.next_blueprint_id || id>=first_reserved_blueprint ||
            std::ranges::find(blueprint_ids,asset.id)!=blueprint_ids.end() ||
            asset.name.empty() || asset.name.size()>256 || !valid_effect_settings(asset.settings))
             return invalid("Invalid imported effect blueprint identity, name or settings");
@@ -168,10 +180,12 @@ content::Result<void> validate_state(const State& s) {
         if (!instance.id || instance.id >= s.document.next_instance_id ||
             std::ranges::find(ids, instance.id) != ids.end() || instance.name.empty() ||
             instance.name.size() > 256 ||
-            (!is_mesh_blueprint(s, instance.blueprint) && !effect_blueprint_settings(s,instance.blueprint) && instance.blueprint != BlueprintId::region) ||
+            (!is_mesh_blueprint(s, instance.blueprint) && !effect_blueprint_settings(s,instance.blueprint) &&
+             instance.blueprint != BlueprintId::region && instance.blueprint != BlueprintId::camera) ||
             (is_mesh_blueprint(s, instance.blueprint) !=
                 std::holds_alternative<MeshSettings>(instance.settings)) ||
             (instance.blueprint==BlueprintId::region)!=std::holds_alternative<RegionSettings>(instance.settings) ||
+            (instance.blueprint==BlueprintId::camera)!=std::holds_alternative<CameraSettings>(instance.settings) ||
             bool(effect_blueprint_settings(s,instance.blueprint))!=std::holds_alternative<SunSettings>(instance.settings))
             return invalid("Invalid scene instance identity or blueprint");
         if (!std::visit([](const auto& value) { return valid_settings(value); }, instance.settings))
@@ -285,7 +299,8 @@ bool valid_camera_pose(const CameraPose& pose) {
 std::vector<Blueprint> blueprint_catalog(const State& state) {
     std::vector<Blueprint> result{{BlueprintId::mesh, "Mesh", BlueprintKind::mesh},
                                    {BlueprintId::sun, "Sun / effect", BlueprintKind::sun},
-                                   {BlueprintId::region, "Region / TODO volume", BlueprintKind::region}};
+                                   {BlueprintId::region, "Region / TODO volume", BlueprintKind::region},
+                                   {BlueprintId::camera, "Camera", BlueprintKind::camera}};
     for (const auto& asset : state.document.mesh_assets)
         result.push_back({asset.id, asset.name, BlueprintKind::mesh});
     for(const auto& asset:state.document.effect_assets)
@@ -487,6 +502,7 @@ const SceneInstance* view_instance(const State& state, BlueprintKind kind) {
         return kind == BlueprintKind::mesh
                    ? std::holds_alternative<MeshSettings>(instance.settings)
                    : kind == BlueprintKind::sun ? std::holds_alternative<SunSettings>(instance.settings)
+                   : kind == BlueprintKind::camera ? std::holds_alternative<CameraSettings>(instance.settings)
                    : std::holds_alternative<RegionSettings>(instance.settings);
     };
     if (const auto* selected = find_instance(state, state.viewport.selected_object);
@@ -511,7 +527,7 @@ std::string object_name(const State& state, u64 id) {
 content::Result<u32> instantiate(State& state, BlueprintId blueprint) {
     const bool mesh = is_mesh_blueprint(state, blueprint);
     const auto* effect=effect_blueprint_settings(state,blueprint);
-    if (!mesh && !effect && blueprint != BlueprintId::region)
+    if (!mesh && !effect && blueprint != BlueprintId::region && blueprint != BlueprintId::camera)
         return invalid("Unknown scene blueprint");
     if(blueprint==BlueprintId::region && std::ranges::count_if(state.document.instances,[](const auto& instance){
         return instance.blueprint==BlueprintId::region;
@@ -520,7 +536,7 @@ content::Result<u32> instantiate(State& state, BlueprintId blueprint) {
         state.document.next_instance_id == std::numeric_limits<u32>::max())
         return invalid("Scene instance limit reached");
     const auto id = state.document.next_instance_id;
-    std::string name = mesh ? "Mesh" : blueprint==BlueprintId::region ? "Region" : "Sun";
+    std::string name = mesh ? "Mesh" : blueprint==BlueprintId::region ? "Region" : blueprint==BlueprintId::camera ? "Camera" : "Sun";
     if (mesh && blueprint != BlueprintId::mesh)
         name = std::ranges::find(state.document.mesh_assets, blueprint, &MeshBlueprint::id)->name;
     if(effect && blueprint!=BlueprintId::sun)
@@ -542,6 +558,14 @@ content::Result<u32> instantiate(State& state, BlueprintId blueprint) {
     } else if(blueprint==BlueprintId::region) {
         RegionSettings settings;settings.boundary=make_region(RegionShape::box,{},2);
         instance.settings=std::move(settings);
+    } else if(blueprint==BlueprintId::camera) {
+        // A new camera starts where the editor is looking and becomes the
+        // scene's camera when it is the first one; later cameras wait to be
+        // made active explicitly, so the shot never changes by accident.
+        CameraSettings lens;
+        lens.active = !has_camera(state);
+        instance.settings = lens;
+        place_camera(instance, state.viewport.editor_camera);
     } else instance.settings = std::ranges::find(state.document.mesh_assets, blueprint, &MeshBlueprint::id)->settings;
     state.document.instances.push_back(std::move(instance));
     ++state.document.next_instance_id;
@@ -559,7 +583,7 @@ content::Result<u32> import_mesh(State& state, const std::filesystem::path& path
     if (!std::filesystem::is_regular_file(path, file_error))
         return invalid("Mesh import requires an existing regular .vmesh file");
     if (state.document.mesh_assets.size()+state.document.effect_assets.size() >= 254 || state.document.next_blueprint_id < 3 ||
-        state.document.next_blueprint_id >= static_cast<u32>(BlueprintId::region))
+        state.document.next_blueprint_id >= first_reserved_blueprint)
         return invalid("Mesh blueprint limit reached");
     auto loaded = editor::EditableMesh::load(path);
     if (!loaded) return std::unexpected(loaded.error());
@@ -608,7 +632,7 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o << std::setprecision(9) << std::boolalpha;
-    o << "vscene 1.0\neditor_project = 3;\nrevision = " << s.document.revision
+    o << "vscene 1.0\neditor_project = 4;\nrevision = " << s.document.revision
       << ";\nmesh_data = " << quote_string(*mesh) << ";\n";
     o << "blueprints = { mesh = ";
     write_settings(o, s.document.mesh_blueprint);
@@ -724,7 +748,7 @@ content::Result<State> decode(std::string_view source) {
         return std::unexpected(mesh.error());
     return doc->read([&](content::Reader& r) {
         const auto version = r.get<u32>("editor_project");
-        if (version != 1 && version != 2 && version != 3)
+        if (version < 1 || version > 4)
             r.fail("Unsupported editor project version");
         State s{.document = {.revision = r.get<u64>("revision"), .mesh = std::move(*mesh)}};
         for (const auto member : r.members()) if (member.name == "world_bounds")
@@ -810,6 +834,8 @@ content::Result<State> decode(std::string_view source) {
                     instance.settings = read_sun(entry.child("settings"));
                 else if(instance.blueprint==BlueprintId::region)
                     instance.settings=read_region(entry.child("settings"));
+                else if(instance.blueprint==BlueprintId::camera)
+                    instance.settings=read_camera_settings(entry.child("settings"));
                 else entry.fail("Unknown scene blueprint");
                 instance.transform = version >= 2 ? read_transform(entry.child("transform"))
                     : read_legacy_transform(entry.child("settings"), is_mesh_blueprint(s, instance.blueprint));

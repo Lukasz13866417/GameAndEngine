@@ -18,8 +18,9 @@ meant to be authored in the editor, so nothing here is choreographed.
 - The belt is far but plainly visible, spread across the view about 300 units
   out. The fleet waits on the same axis roughly 30% of that distance in front
   of the rocks, so every ship is nearer than every rock.
-- The camera's orbit pivot is the fleet. The editor's far plane is four times
-  the pivot distance, so the whole belt stays in view when orbiting.
+- The shot's camera is the **Departure camera** scene instance, keyed once at
+  the start; its focus distance is the fleet, and the far plane is four times
+  that focus, so the whole belt stays in view when orbiting.
 
 ## Run and edit
 
