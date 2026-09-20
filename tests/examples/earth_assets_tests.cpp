@@ -191,8 +191,8 @@ TEST_CASE("Earth blueprint has normal instance ownership animation and import se
     project::EditingSession editing{*scene};
     auto second=editing.instantiate(earth::blueprint_id);REQUIRE(second);
     CHECK(project::find_instance(editing.state(),*second)->blueprint==earth::blueprint_id);
-    REQUIRE(editing.undo());CHECK(editing.state().document.instances.size()==1);
-    REQUIRE(editing.redo());CHECK(editing.state().document.instances.size()==2);
+    REQUIRE(editing.undo());CHECK(editing.state().document.instances.size()==2); // Earth and its camera
+    REQUIRE(editing.redo());CHECK(editing.state().document.instances.size()==3);
     REQUIRE(project::begin_mesh_draft(*scene,earth::blueprint_id));
     CHECK(project::mesh_edit_geometry(*scene,earth::blueprint_id)!=project::mesh_geometry(*scene,earth::blueprint_id));
     // A close-up mesh must still fit both applied geometry and an editable draft

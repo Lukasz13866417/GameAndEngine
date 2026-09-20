@@ -67,7 +67,7 @@ TEST_CASE("Fleet scene explicitly separates reusable blueprints and independentl
         CHECK(!instance.name.empty());
         CHECK(instance.id<state.document.next_instance_id);
         ++occurrences[instance.blueprint];
-        if(instance.id!=fleet::sun) {
+        if(instance.id!=fleet::sun && instance.id!=fleet::camera) {
             REQUIRE(project::instance_mesh(state,instance.id));
             CHECK(project::mesh_settings(state,instance.id)->visible);
         }
@@ -99,8 +99,10 @@ TEST_CASE("Fleet choreography is ordinary editable timestamp tracks, not hidden 
     const auto state=authored();
     REQUIRE(project::validate_animation(state));
     REQUIRE(project::has_camera_animation(state));
-    for(const auto property : {"yaw","pitch","distance","target"}) {
-        const auto* track=state.document.timeline.find({project::camera_animation_object,property});
+    REQUIRE(project::is_camera_instance(state,fleet::camera));
+    CHECK(project::active_camera(state,0)->id==fleet::camera);
+    for(const auto property : {"position","rotation","focus","zoom"}) {
+        const auto* track=state.document.timeline.find({fleet::camera,property});
         REQUIRE(track);
         REQUIRE(track->keys.size()>=8);
         CHECK(track->keys.front().time==0.F);
@@ -170,7 +172,7 @@ TEST_CASE("The opening hides complete fleet silhouettes behind the sun and later
     const auto eye=project::camera(project::evaluate_camera(state,0),project::ViewMode::scene).position();
     std::size_t checked_vertices{},exposed_vertices{};
     for(const auto& base : state.document.instances) {
-        if(base.id==fleet::hero||base.id==fleet::sun) continue;
+        if(base.id==fleet::hero||base.id==fleet::sun||base.id==fleet::camera) continue;
         INFO(base.name);
         const auto instance=project::evaluate_instance(state,base,0);
         const auto* mesh=project::instance_mesh(state,base.id);
@@ -188,11 +190,11 @@ TEST_CASE("The opening hides complete fleet silhouettes behind the sun and later
                                            project::ViewMode::scene).position();
     std::size_t revealed{};
     for(const auto& base : state.document.instances) {
-        if(base.id==fleet::hero||base.id==fleet::sun) continue;
+        if(base.id==fleet::hero||base.id==fleet::sun||base.id==fleet::camera) continue;
         const auto instance=project::evaluate_instance(state,base,fleet::reveal_time);
         revealed+=!occulted(revealed_eye,instance.transform.position,star.transform.position,radius) ? 1U : 0U;
     }
-    CHECK(revealed>=state.document.instances.size()-4);
+    CHECK(revealed>=state.document.instances.size()-5); // hero, sun and camera are not fleet hulls
 }
 
 TEST_CASE("Fleet scene preserves all blueprints, instances and tunable animation on save/load",

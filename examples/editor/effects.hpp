@@ -11,6 +11,13 @@ namespace editor_example {
 // existing animation tracks get a key at the paused playhead; other values
 // update instance defaults. Mesh blueprint inspection exposes no instance controls;
 // isolated Sun effect inspection exposes appearance but no scene transform.
+// Keyed like every other instance property: an animated value gets a key at
+// the paused playhead, an unkeyed one updates the instance default.
+[[nodiscard]] vng::editor::Result<void> apply_lens(State&, DocumentChanges&, vng::u32 id,
+    const CameraSettings& before, const CameraSettings& next);
+// Make one camera the scene's camera from the playhead on, clearing every
+// other camera that would otherwise be active there.
+[[nodiscard]] vng::editor::Result<void> apply_active_camera(State&, DocumentChanges&, vng::u32 id);
 class ProjectControls {
 public:
     explicit ProjectControls(State& state) : state_(state) {}

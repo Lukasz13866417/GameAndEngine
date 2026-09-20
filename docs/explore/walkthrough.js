@@ -171,7 +171,7 @@ auto committed = session.commit();
     Document document;
     ViewportState viewport{};
 };`, ["Document and ViewportState as sibling members."], ["No GPU realization."], ["walk-document", "walk-viewport-state", "walk-runtime"], true),
-        type("document", "editor_example::Document", "Authored blueprints, instances, animation camera, timeline and mesh drafts.",
+        type("document", "editor_example::Document", "Authored blueprints, instances (including scene cameras), timeline and mesh drafts.",
           "Mesh assets own applied geometry. mesh_drafts contains private working geometry that scene instances do not resolve through; Apply publishes a draft. Deleting instances does not delete blueprints. revision orders authored changes, not selection/orbiting. State assembly is owned by EditingSession in the UI and separately reconstructed in the worker.",
           "examples/editor/project.hpp", `// Some actual members; see project.hpp for the complete declaration.
 std::vector<MeshBlueprint> mesh_assets{};
@@ -184,12 +184,12 @@ std::vector<SceneInstance> instances;`,
     vng::u32 id{};
     BlueprintId blueprint{BlueprintId::mesh};
     std::string name;
-    std::variant<MeshSettings, SunSettings, RegionSettings> settings;
+    std::variant<MeshSettings, SunSettings, RegionSettings, CameraSettings> settings;
     InstanceTransform transform{};
     friend bool operator==(const SceneInstance&, const SceneInstance&) = default;
 };`, ["Instance name/settings/transform and numeric IDs."], ["Blueprint geometry is resolved through the Document catalog."], ["walk-document", "walk-blueprint-renderer"], true),
         type("viewport-state", "editor_example::ViewportState", "Private viewing intent with its own sequence, not authored scene content.",
-          "It records inspected mesh, active object/vertex, playhead, pause state and editor camera. pilot_camera selects editing the authored animation camera; ordinary navigation remains private. The active inspection target is not the entire UI multi-selection set. Newer absolute requests may replace older ones without losing an authored operation.",
+          "It records inspected mesh, active object/vertex, playhead, pause state and editor camera. Looking through a scene camera (Inspect/Enter) is private UI state; only Save this camera authors it. Ordinary navigation remains private. The active inspection target is not the entire UI multi-selection set. Newer absolute requests may replace older ones without losing an authored operation.",
           "examples/editor/project.hpp", `// These are separate counters with different meanings:
 auto authored_revision = session.state().document.revision;
 auto view_sequence = session.viewport().sequence;`,

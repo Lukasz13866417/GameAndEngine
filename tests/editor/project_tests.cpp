@@ -357,7 +357,7 @@ TEST_CASE("Editor project serialization round trips authored scene and complete 
     CHECK((*editor_example::mesh_settings(*round_trip, 1)) == (*editor_example::mesh_settings(original, 1)));
     CHECK((*editor_example::sun_settings(*round_trip, 2)) == (*editor_example::sun_settings(original, 2)));
     CHECK(round_trip->document.instances == original.document.instances);
-    CHECK(text.find("editor_project = 3;") != std::string::npos);
+    CHECK(text.find("editor_project = 4;") != std::string::npos);
     CHECK(round_trip->document.revision == original.document.revision);
     CHECK(round_trip->viewport.mode == original.viewport.mode);
     CHECK(round_trip->viewport.selected_object == original.viewport.selected_object);
@@ -389,7 +389,7 @@ TEST_CASE("Deleting scene instances retains blueprints without resurrecting anim
     CHECK_FALSE(value.document.timeline.find({1, "position"}));
     CHECK(value.document.timeline.find({2, "radius"}));
     CHECK(value.document.mesh.document() == geometry);
-    CHECK(project::blueprint_catalog(value).size() == 3);
+    CHECK(project::blueprint_catalog(value).size() == 4);
     CHECK_FALSE(editing.erase_instances(std::array<u32,1>{1}));
     REQUIRE(editing.undo());
     REQUIRE(project::find_instance(value, 1));
@@ -550,7 +550,7 @@ TEST_CASE("Legacy scene layouts migrate positions and scales out of appearance s
         CHECK(project::instance_mesh(*loaded, *spawned) == project::instance_mesh(*loaded, 6));
     }
     const auto modern = encoded(*loaded);
-        CHECK(modern.find("editor_project = 3;") != std::string::npos);
+        CHECK(modern.find("editor_project = 4;") != std::string::npos);
     auto again = project::decode(modern);
     REQUIRE(again);
     CHECK(again->document.instances == loaded->document.instances);
@@ -655,7 +655,7 @@ TEST_CASE("Mesh import adds independent retained blueprints without replacing th
     CHECK(value.viewport.selected_vertex == 0);
     CHECK(value.viewport.inspected_mesh == blueprint);
     CHECK(project::editable_mesh(value)->document() == original_mesh->document());
-    CHECK(project::blueprint_catalog(value).size() == 4);
+    CHECK(project::blueprint_catalog(value).size() == 5);
     CHECK(project::is_mesh_instance(value, *created));
     REQUIRE(project::view_instance(value, project::BlueprintKind::mesh));
     CHECK(project::view_instance(value, project::BlueprintKind::mesh)->id == *created);
@@ -668,7 +668,7 @@ TEST_CASE("Mesh import adds independent retained blueprints without replacing th
     REQUIRE(project::erase_instance(value, *created));
     REQUIRE(project::erase_instance(value, *duplicate));
     CHECK(project::mesh_geometry(value, blueprint));
-    CHECK(project::blueprint_catalog(value).size() == 4);
+    CHECK(project::blueprint_catalog(value).size() == 5);
     const auto serialized = encoded(value);
     const auto decoded = project::decode(serialized);
     REQUIRE(decoded);
@@ -940,7 +940,7 @@ TEST_CASE("Editor project decoding rejects missing wrong-type out-of-range and o
           "[editor][project]") {
     const auto source = encoded(state());
     CHECK_FALSE(project::decode("not a scene"));
-    CHECK_FALSE(project::decode(replace_value(source, "editor_project", "4")));
+    CHECK_FALSE(project::decode(replace_value(source, "editor_project", "5")));
     CHECK_FALSE(project::decode(replace_value(source, "revision", "0")));
     CHECK_FALSE(project::decode(replace_value(source, "revision", "-1")));
     CHECK_FALSE(project::decode(replace_value(source, "mode", "3")));

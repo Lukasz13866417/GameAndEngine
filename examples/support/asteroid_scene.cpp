@@ -74,6 +74,10 @@ content::Result<project::State> author_scene(const std::filesystem::path& assets
     if(!loaded) return std::unexpected(loaded.error());
     auto state=std::move(*loaded);
     checked(project::erase_instance(state,fleet::sun));
+    // The fleet's tracking camera is the last fleet identity; drop it and
+    // give back its ID so the belt keeps its stable rock identities.
+    checked(project::erase_instance(state,fleet::camera));
+    state.document.next_instance_id=fleet::camera;
     state.document.timeline={};
     state.document.keyframe_names.clear();
     state.document.timeline_duration=duration;
@@ -158,16 +162,18 @@ content::Result<project::State> author_scene(const std::filesystem::path& assets
                 {add(position,add(shot_origin,{0,0,-85})),{0,-24.F+3.F*wing,slot%2 ? 3.F : -3.F},scales[slot]}});
         }
     }
+    auto tracking=project::ensure_camera(state,camera_at(0),"Tracking camera");
+    if(!tracking) return std::unexpected(tracking.error());
     try {
         for(int second=0;second<=static_cast<int>(duration);++second) {
             const auto time=static_cast<f32>(second);
             const auto pose=camera_at(time);
-            checked(project::key_camera(state,time,pose));
+            checked(project::key_camera(state,*tracking,time,pose));
             checked(project::key_property(state,{hero,"position"},time,add(curve(flight,time),shot_origin)));
             checked(project::key_property(state,{hero,"rotation"},time,facing(time)));
         }
         for(const auto& instance:state.document.instances) {
-            if(instance.id==hero) continue;
+            if(instance.id==hero || instance.id==*tracking) continue;
             if(!is_rock(instance)) {
                 checked(project::key_property(state,{instance.id,"position"},0,instance.transform.position));
                 checked(project::key_property(state,{instance.id,"position"},duration,
@@ -184,8 +190,7 @@ content::Result<project::State> author_scene(const std::filesystem::path& assets
             {10,"03 / Drifting fragments"},{18,"04 / Deep in the belt"},{26,"05 / Through the far side"},
             {34,"06 / Open space"},{reveal_time,"07 / Distant armada"},
             {stop_time,"08 / All stop - observe the fleet"},{duration,"09 / Hold position"}};
-        state.document.animation_camera=camera_at(0);
-        state.viewport.editor_camera=state.document.animation_camera;
+        state.viewport.editor_camera=camera_at(0);
         state.viewport.time=0;
         checked(project::validate_animation(state));
     } catch(const std::exception& error) {

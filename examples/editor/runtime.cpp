@@ -732,7 +732,7 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
     if (auto v = result(frame->end()); !v)
         return std::unexpected(v.error());
     const bool decorate=annotations && state.viewport.mode==ViewMode::scene &&
-        (state.viewport.show_regions||state.viewport.show_world_bounds);
+        (state.viewport.show_regions||state.viewport.show_world_bounds||has_camera(state));
     if(decorate) {
         if(!p.annotations) {
             auto renderer=SceneAnnotationRenderer::create(device);

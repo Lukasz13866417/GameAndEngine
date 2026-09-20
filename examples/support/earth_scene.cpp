@@ -17,7 +17,6 @@ vng::content::Result<editor_example::State> author_scene(const std::filesystem::
     state.document.next_instance_id=2;
     state.document.world_bounds={{-30,-30,-30},{30,30,30}};
     state.document.environment={.stars=1800,.star_seed=1386,.exposure=.9F,.bloom_threshold=3,.bloom_strength=.08F};
-    state.document.animation_camera={45,8,3.7F,{},1};
     state.document.timeline_duration=90;
     state.document.keyframe_names={{0,"Atlantic / homeworld"},{45,"The Americas"},{90,"Pacific / hold"}};
     for(const auto time:{0.F,45.F,90.F}) {
@@ -27,7 +26,9 @@ vng::content::Result<editor_example::State> author_scene(const std::filesystem::
     state.viewport.mode=project::ViewMode::scene;
     state.viewport.selected_object=instance_id;
     state.viewport.inspected_mesh=blueprint_id;
-    state.viewport.editor_camera=state.document.animation_camera;
+    auto camera=project::ensure_camera(state,{45,8,3.7F,{},1},"Turntable camera");
+    if(!camera)return std::unexpected(camera.error());
+    state.viewport.editor_camera=project::evaluate_camera(state,0);
     return state;
 }
 }

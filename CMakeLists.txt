@@ -120,7 +120,7 @@ if(VNG_BUILD_EDITOR)
     target_sources(vng_editor_project PRIVATE examples/editor/blueprint_mesh_controls.cpp)
     target_sources(vng_editor_project PRIVATE examples/editor/editing_session.cpp examples/editor/session_operations.cpp
         examples/editor/regions.cpp examples/editor/region_geometry.cpp examples/editor/region_edits.cpp
-        examples/editor/region_instances.cpp)
+        examples/editor/region_instances.cpp examples/editor/camera_instances.cpp)
     target_include_directories(vng_editor_project PUBLIC examples)
     vng_target_defaults(vng_editor_project)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -261,7 +261,7 @@ if(VNG_BUILD_TESTS)
             tests/editor/viewport_shortcut_tests.cpp tests/editor/file_shortcut_tests.cpp
             tests/editor/scene_file_tests.cpp tests/editor/animation_tests.cpp tests/editor/playback_tests.cpp
             tests/editor/keyframe_tests.cpp tests/editor/preview_viewport_tests.cpp
-            tests/editor/settings_tests.cpp)
+            tests/editor/settings_tests.cpp tests/editor/camera_instance_tests.cpp)
         target_sources(vng_editor_tests PRIVATE tests/editor/mesh_import_view_tests.cpp)
         target_sources(vng_editor_tests PRIVATE tests/editor/effect_preset_tests.cpp)
         target_sources(vng_editor_tests PRIVATE tests/editor/blueprint_mesh_tests.cpp)

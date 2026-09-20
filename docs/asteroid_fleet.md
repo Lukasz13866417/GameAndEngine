@@ -35,9 +35,9 @@ cmake --build build --target vng_asteroid_fleet_demo vng_editor_demo vng_editor_
 ```
 
 In the demo, Space pauses, R restarts, and Esc closes. Run without `--once` to
-watch the approach and reveal. In the editor, enable **Edit animation camera**
-and **Play (in editor)** to follow the authored shot. The independent Play
-window uses the same renderer and camera tracks.
+watch the approach and reveal. In the editor, select the **Tracking camera**,
+click **Inspect** and **Play (in editor)** to follow the authored shot. The
+independent Play window uses the same renderer and renders through that camera.
 
 Ship/camera paths and rock rotation are ordinary timeline keys. Named
 milestones mark entry, threading the gap, breaking through, and holding position.

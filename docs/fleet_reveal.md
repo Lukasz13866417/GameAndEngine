@@ -34,11 +34,12 @@ ordinary saved editor document. To render an edited copy, pass its filename:
 ./build/vng_editor_demo --scene examples/assets/fleet_reveal.vscene
 ```
 
-Enable **Edit animation camera**, then **Play (in editor)** to follow the authored
-shot. With that toggle off, playback still animates the scene but leaves your
-private inspection camera alone. **Play (independent)** uses the worker's native
-window and follows the same camera timeline. Native camera navigation temporarily
-overrides that shot; restart independent Play to resume following it.
+Select the **Tracking camera** instance and click **Inspect**, then **Play (in
+editor)** to follow the authored shot. Without a camera visit, playback still
+animates the scene but leaves your private inspection camera alone. **Play
+(independent)** uses the worker's native window and renders through that same
+scene camera. Native camera navigation temporarily overrides the shot; restart
+independent Play to resume following it.
 
 Pause and choose a timestamp before authoring changes:
 
@@ -47,11 +48,10 @@ Pause and choose a timestamp before authoring changes:
   properties get a key at the playhead; unanimated properties edit the instance's
   base values. Applying a ship's transform does not change its blueprint or
   other ships using that blueprint.
-- **Camera:** choose **Animation camera** in the keyframe inspector's object
-  filter, or **Camera** in the timeline layer filter. Orbit/yaw, elevation/pitch,
-  distance, and look-at target are ordinary editable tracks. With **Edit
-  animation camera** enabled, navigation and the camera controls update the
-  current shot's keys too.
+- **Camera:** the **Tracking camera** is a scene camera instance. Its position,
+  rotation (the look direction), focus distance and zoom are ordinary editable
+  tracks. **Enter** it, navigate, then **Save this camera** to key the editor view
+  at the selected keyframe; **Inspect** follows the shot read-only.
 - **Timing:** select a marker or named keyframe to edit its timestamp, name,
   values, and incoming interpolation. **Blend** means interpolate from the
   previous key to this key. Turn it off for a held value that jumps at the key;

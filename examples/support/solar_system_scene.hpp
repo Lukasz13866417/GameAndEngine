@@ -11,6 +11,7 @@ inline constexpr vng::f32 duration=40;
 inline constexpr vng::u32 hero=1, sun=2, first_ship=3, formation_count=16, earth=19,
     first_wing=20, wing_count=24, first_rock=44, rock_count=600;
 inline constexpr vng::u32 ship_count=formation_count+wing_count;
+inline constexpr vng::u32 camera=first_rock+rock_count; // the last instance
 inline constexpr auto earth_blueprint=static_cast<editor_example::BlueprintId>(6);
 inline constexpr auto first_rock_blueprint=static_cast<editor_example::BlueprintId>(7);
 // Layout along the view axis from the eye: Earth beside the camera, the fleet

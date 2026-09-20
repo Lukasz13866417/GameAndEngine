@@ -83,8 +83,8 @@ TEST_CASE("Region wall grids clip concave polygons and use per-instance visibili
 }
 TEST_CASE("Legacy region IDs migrate into the instance registry without colliding with meshes", "[editor][region][migration]") {
     auto state=scene();auto bytes=encode(state);REQUIRE(bytes);
-    const auto version=bytes->find("editor_project = 3;");REQUIRE(version!=std::string::npos);
-    bytes->replace(version,std::string("editor_project = 3;").size(),"editor_project = 2;");
+    const auto version=bytes->find("editor_project = 4;");REQUIRE(version!=std::string::npos);
+    bytes->replace(version,std::string("editor_project = 4;").size(),"editor_project = 2;");
     auto r=make_region(RegionShape::box,{7,4,-3},2);r.id=1;r.name="Legacy region";
     std::ostringstream legacy;legacy<<"\nregions = ";write_regions(legacy,{2,{r}});legacy<<";\n";
     auto decoded=decode(*bytes+legacy.str());REQUIRE(decoded);

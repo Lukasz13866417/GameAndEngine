@@ -46,7 +46,9 @@ bool is_ship(const project::SceneInstance& instance) {
 
 TEST_CASE("Solar system scene holds every actor and only the starting keyframe","[solar_system][scene]") {
     const auto state=scene();
-    CHECK(state.document.instances.size()==3+shot::ship_count+shot::rock_count);
+    CHECK(state.document.instances.size()==4+shot::ship_count+shot::rock_count); // hero, sun, Earth, camera, ships, rocks
+    REQUIRE(project::active_camera(state,0));
+    CHECK(project::active_camera(state,0)->id==shot::camera);
     CHECK(state.document.mesh_assets.size()==7); // three capital ships, Earth, three rock variants
     std::set<u32> identities;
     u32 ships{},rocks{};
@@ -69,7 +71,7 @@ TEST_CASE("Solar system scene holds every actor and only the starting keyframe",
         CHECK(track.keys.front().time==0);
     }
     CHECK(state.document.timeline_duration==shot::duration);
-    CHECK(state.viewport.editor_camera==state.document.animation_camera);
+    CHECK(state.viewport.editor_camera==project::evaluate_camera(state,0));
 }
 
 TEST_CASE("Camera starts beside Earth, looking away from the sun with Earth at the side","[solar_system][scene]") {

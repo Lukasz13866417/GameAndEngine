@@ -57,6 +57,9 @@ content::Result<project::State> author_scene(const std::filesystem::path& assets
     auto loaded=fleet::author_scene(assets);
     if(!loaded) return std::unexpected(loaded.error());
     auto state=std::move(*loaded);
+    // The fleet's tracking camera is its last identity; this shot keys its own.
+    checked(project::erase_instance(state,fleet::camera));
+    state.document.next_instance_id=fleet::camera;
     if(state.document.next_instance_id!=earth || state.document.next_blueprint_id!=static_cast<u32>(earth_blueprint)) {
         content::Diagnostic error; error.message="Fleet scene identities changed; update the solar system layout";
         return std::unexpected(std::move(error));
@@ -174,12 +177,14 @@ content::Result<project::State> author_scene(const std::filesystem::path& assets
         // Only the starting keyframe: the orbit pivot is the fleet so the
         // distance-derived far plane keeps the belt behind it in view.
         const auto pose=pose_from(fleet_anchor);
-        checked(project::key_camera(state,0,pose));
+        auto shot_camera=project::ensure_camera(state,pose,"Departure camera");
+        if(!shot_camera) throw std::runtime_error(shot_camera.error().message);
+        if(*shot_camera!=camera) throw std::runtime_error("Solar system camera identity changed");
+        checked(project::key_camera(state,*shot_camera,0,pose));
         const auto* kestrel=project::find_instance(state,hero);
         checked(project::key_property(state,{hero,"position"},0,kestrel->transform.position));
         checked(project::key_property(state,{hero,"rotation"},0,kestrel->transform.rotation));
         state.document.keyframe_names={{0,"01 / Leaving home"}};
-        state.document.animation_camera=pose;
         state.viewport.mode=project::ViewMode::scene;
         state.viewport.editor_camera=pose;
         state.viewport.time=0;

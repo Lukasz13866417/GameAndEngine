@@ -54,6 +54,10 @@ std::optional<PropertyReference<S>> property_reference(S& state, const timeline:
             if (key == "displacement") return &settings.displacement;
             if (key == "bloom") return &settings.bloom;
             if (key == "white_spots") return &settings.white_spots;
+        } else if constexpr (std::same_as<std::decay_t<decltype(settings)>, CameraSettings>) {
+            if (key == "zoom") return &settings.zoom;
+            if (key == "focus") return &settings.focus;
+            if (key == "active") return &settings.active;
         }
         return {};
     }, instance->settings);

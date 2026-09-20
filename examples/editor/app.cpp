@@ -39,6 +39,7 @@
 #include "save_dialog.hpp"
 #include "import_dialog.hpp"
 #include "open_scene_dialog.hpp"
+#include "camera_panel.hpp"
 #include "mesh_import_view.hpp"
 #include "animation.hpp"
 #include "preview_values.hpp"
@@ -245,6 +246,12 @@ int run(const Options& options) {
     auto nudges = vertex_tools.row().padding(0).gap(5);
     auto minus = nudges.button("X - 0.1").width(130);
     auto plus = nudges.button("X + 0.1").width(130);
+    // Camera actions stay usable without a selected keyframe, unlike the
+    // keyframe-gated properties page they sit above.
+    auto camera_host = screen.column().padding(10).gap(6);
+    CameraPanel camera_panel{camera_host};
+    std::optional<CameraVisit> camera_visit;
+    const auto inspecting = [&] { return camera_visit && !camera_visit->editable; };
     InspectorPanel inspector{properties_panel};
     auto inspector_tabs = screen.row().padding(0).gap(6);
     auto show_scene = inspector_tabs.button("Scene");
@@ -337,7 +344,6 @@ int run(const Options& options) {
     camera_menu.label("CAMERA SETTINGS").height(28);
     auto close_camera = camera_menu.button("Close camera settings").height(32);
     bool camera_open{};
-    auto pilot_camera = camera_menu.checkbox("Edit animation camera").value(view_state.pilot_camera);
     NumberControl yaw{camera_menu, "Orbit", -180, 180, preview_camera_pose(state,view_state.time).yaw};
     NumberControl pitch{camera_menu, "Elevation", -camera_max_pitch, camera_max_pitch, preview_camera_pose(state,view_state.time).pitch};
     NumberControl orbit_distance{camera_menu, "Orbit distance", camera_min_distance, camera_max_distance, preview_camera_pose(state,view_state.time).distance};
@@ -434,7 +440,6 @@ int run(const Options& options) {
         gizmo_mode.show(state,selected_instances.items());
         viewport_interaction.selected(view_state.selected_object, gizmo_mode.value());
         std::vector<u64> selected_rows(selected_instances.items().begin(), selected_instances.items().end());
-        if (view_state.pilot_camera) selected_rows.push_back(camera_animation_object);
         timeline.selected_objects(selected_rows);
         instance_list.selection(selected_instances);
         region_instances.selection(selected_instances);
@@ -499,7 +504,6 @@ int run(const Options& options) {
         refresh_vertex();
         pause.text(view_state.paused ? "Play (in editor)" : "Pause (in editor)");
         weld.value(view_state.weld);
-        pilot_camera.value(view_state.pilot_camera);
         const auto pose = preview_camera_pose(state, view_state.time);
         if (reset_camera) {
             yaw.reset(pose.yaw);
@@ -571,7 +575,10 @@ int run(const Options& options) {
         show_scene.width(tab_width * .18F);
         show_keyframe.width(tab_width * .38F);
         show_base.width(tab_width * .44F);
-        place(properties_panel, geometry.inspector);
+        const auto camera_height = camera_panel.shown() ? 226.F : 0.F;
+        place(camera_host, {geometry.inspector.x, geometry.inspector.y, geometry.inspector.width, camera_height});
+        place(properties_panel, {geometry.inspector.x, geometry.inspector.y + camera_height, geometry.inspector.width,
+                                 std::max(40.F, geometry.inspector.height - camera_height)});
         place(region_inspector, geometry.inspector);
         for (auto* field : {&x, &y, &z})
             field->width(std::max(60.0F, (xyz.bounds().width - 8) / 3));
@@ -801,19 +808,27 @@ int run(const Options& options) {
         }
         show_timeline();
     };
+    // Navigation always moves the private editor view. Authoring a camera is
+    // explicit: Enter a camera, look around, then Save this camera.
     auto camera_edited = [&](const CameraPose& before, const CameraPose& after) {
         if (before == after) return;
-        if (view_state.pilot_camera) {
-            if (!editing.active(EditGesture::camera)) {
-                if (auto begun = editing.begin_camera(); !begun) {
-                    status.text(begun.error().message); return;
-                }
-            }
-            if (auto moved = editing.camera(after); !moved) {
-                status.text(moved.error().message); return;
-            }
-        } else view_state.editor_camera = after;
+        view_state.editor_camera = after;
         camera_changed();
+    };
+    auto end_camera_visit = [&](bool restore) {
+        if (!camera_visit) return;
+        if (restore) view_state.editor_camera = camera_visit->previous;
+        camera_visit.reset();
+        camera_changed();
+    };
+    auto visit_camera = [&](const SceneInstance& camera, bool editable) {
+        const auto previous = camera_visit ? camera_visit->previous : view_state.editor_camera;
+        camera_visit = CameraVisit{camera.id, editable, previous};
+        view_state.editor_camera = camera_pose(evaluate_instance(state, camera, view_state.time));
+        walk.active(false);
+        camera_changed();
+        status.text(editable ? "Looking through " + camera.name + " / navigate freely, then Save this camera to author the view"
+                             : "Inspecting " + camera.name + " / read-only view; Back returns to the editor view");
     };
     auto playback_changed = [&] {
         viewport_changed();
@@ -875,18 +890,6 @@ int run(const Options& options) {
         select_object(object, mode);
         interaction.value(InteractionMode::objects);
         if (was_isolated) view_changed();
-    };
-    auto edit_animation_camera = [&](bool enabled) {
-        view_state.pilot_camera = enabled; pilot_camera.value(enabled);
-        refresh_selection();
-        navigation.cancel(); translation.cancel();
-        camera_changed();
-        const auto pose = preview_camera_pose(state, view_state.time);
-        yaw.reset(pose.yaw); pitch.reset(pose.pitch); orbit_distance.reset(pose.distance);
-        optical_zoom.slider_range(camera_min_zoom, std::max(10.F, pose.zoom)).reset(pose.zoom);
-        minimum_frame_revision = state.document.revision;
-        status.text(enabled ? "Animation camera / editable only at keyframes while paused"
-                            : "Editor camera / navigation does not change the saved animation shot");
     };
     auto open_mesh = [&](BlueprintId blueprint) {
         if (auto inspected = inspect_mesh(state, view_state, blueprint); !inspected) {
@@ -960,6 +963,10 @@ int run(const Options& options) {
         if (*cancelled) { show_timeline(); refresh_vertex(); }
     };
     auto launch = [&](u64 generation) {
+        if (!has_camera(state)) {
+            status.text("Add a camera first (Blueprints > Camera +): independent Play renders through the scene's active camera");
+            return;
+        }
         consume_edits();
         // Explicit Play initializes from the current document even with live
         // debugging disconnected. It does not enable the debug data stream.
@@ -1228,7 +1235,7 @@ int run(const Options& options) {
                                  std::to_string(image_revision) +
                                  " / view " + std::to_string(presented_info.view_sequence) +
                                  (playing ? " / independent view"
-                                  : view_state.pilot_camera ? " / animation camera" : " / editor camera") +
+                                  : inspecting() ? " / inspecting camera" : camera_visit ? " / through camera" : " / editor camera") +
                                  (editing.dirty() ? " / unsaved" : ""));
                 if (!debug_link.value())
                     frame_label.text(
@@ -1258,6 +1265,15 @@ int run(const Options& options) {
         const bool settings_was_open = settings_panel.visible();
         const bool import_was_open = import_dialog.visible();
         const bool open_was_open = open_dialog.visible();
+        if (camera_visit) {
+            const auto* visited = find_instance(state, camera_visit->camera);
+            if (!visited || !is_camera_instance(state, camera_visit->camera) || view_state.mode != ViewMode::scene)
+                end_camera_visit(true);
+            else if (!camera_visit->editable) {
+                const auto pose = camera_pose(evaluate_instance(state, *visited, view_state.time));
+                if (pose != view_state.editor_camera) { view_state.editor_camera = pose; camera_changed(); }
+            }
+        }
         const bool dialog_was_open = modal_visible();
         const bool timeline_enabled = !dialog_was_open && !editing.awaiting_remote() && !playing &&
                                       !mode_pending && !viewport_interaction.busy();
@@ -1301,7 +1317,7 @@ int run(const Options& options) {
                       current_schema->second.stamp.revision == state.document.revision &&
                       current_schema->second.stamp.object == view_state.selected_object &&
                       current_schema->second.stamp.context >= minimum_inspector_sequence)));
-            const bool camera_editable = !view_state.pilot_camera || editing.can_edit_scene_pose();
+            const bool camera_editable = !inspecting();
             yaw.enabled(camera_editable); pitch.enabled(camera_editable); orbit_distance.enabled(camera_editable); optical_zoom.enabled(camera_editable);
             move_camera_scroll.enabled(camera_editable && !viewport_gesture);
             gizmo_mode.enabled(editing.can_edit_scene_pose() && !playing && !mode_pending && !viewport_gesture &&
@@ -1316,7 +1332,6 @@ int run(const Options& options) {
         region_list.enabled(!viewport_gesture);
         blueprint_list.enabled(!viewport_gesture);
         interaction.enabled(!viewport_gesture);
-        pilot_camera.enabled(!playing && !mode_pending && !viewport_gesture && view_state.mode == ViewMode::scene);
         view.enabled(!editing.awaiting_remote() && !viewport_gesture);
         pause.enabled(debug_link.value() && !playing && !editing.awaiting_remote() && !viewport_gesture);
         play.enabled(!mode_pending && !editing.awaiting_remote() && !viewport_gesture && !session->busy() &&
@@ -1619,7 +1634,7 @@ int run(const Options& options) {
                     else {
                         view_state.mode=ViewMode::sun;
                         view_state.paused=true;
-                        view_state.pilot_camera=false;
+                        end_camera_visit(false);
                         view_state.selected_vertex=0;
                         // Isolated views use 0.52 of the orbit distance. Leave
                         // space beyond the body for prominences and the corona.
@@ -1827,8 +1842,9 @@ int run(const Options& options) {
                     if (found == state.document.instances.end())
                         status.text("Add an instance (+) to inspect this effect's controls");
                     else {
-                        view_state.mode = *edit_blueprint==BlueprintId::region?ViewMode::scene:ViewMode::sun;
-                        view_state.pilot_camera = false;
+                        view_state.mode = (*edit_blueprint==BlueprintId::region || *edit_blueprint==BlueprintId::camera)
+                            ? ViewMode::scene : ViewMode::sun;
+                        if (*edit_blueprint != BlueprintId::camera) end_camera_visit(false);
                         select_object(found->id);
                         view_state.selected_vertex = 0;
                         interaction.value(InteractionMode::objects);
@@ -1849,8 +1865,38 @@ int run(const Options& options) {
                     status.text("Added " + object_name(state, *created) + " / blueprint retained for reuse");
                 }
             }
-            if (auto value = pilot_camera.changedValue()) {
-                edit_animation_camera(*value);
+            {
+                const auto* selected_camera = is_camera_instance(state, view_state.selected_object)
+                    ? find_instance(state, view_state.selected_object) : nullptr;
+                const auto* active_now = active_camera(state, view_state.time);
+                const bool can_author = editing.can_edit_scene_pose() && !playing && !mode_pending && !editing.awaiting_remote();
+                camera_panel.sync(view_state.mode == ViewMode::scene ? selected_camera : nullptr, camera_visit,
+                                  selected_camera && active_now == selected_camera, can_author,
+                                  sidebar_tab == SidebarTab::properties && !viewport_interaction.custom_inspector());
+                camera_host.enabled(!dialog_was_open && !mode_pending && !editing.busy());
+                if (camera_panel.enter_clicked() && selected_camera) visit_camera(*selected_camera, true);
+                if (camera_panel.inspect_clicked() && selected_camera) visit_camera(*selected_camera, false);
+                if (camera_panel.back_clicked()) { end_camera_visit(true); status.text("Editor view restored"); }
+                if (camera_panel.save_clicked() && camera_visit && camera_visit->editable) {
+                    const auto name = object_name(state, camera_visit->camera);
+                    auto saved = editing.set_camera(camera_visit->camera, view_state.editor_camera);
+                    if (!saved) status.text(saved.error().message);
+                    else {
+                        status.text(*saved ? "Saved the editor view into " + name + " at this keyframe"
+                                           : name + " already matches the editor view");
+                        if (*saved) { show_timeline(); refresh_selection(); }
+                    }
+                }
+                if (camera_panel.activate_clicked() && selected_camera) {
+                    const auto name = selected_camera->name;
+                    auto activated = editing.set_active_camera(selected_camera->id);
+                    if (!activated) status.text(activated.error().message);
+                    else {
+                        status.text(*activated ? name + " is the active camera from this keyframe on"
+                                               : name + " is already the active camera here");
+                        if (*activated) { show_timeline(); refresh_selection(); }
+                    }
+                }
             }
             if (auto mode = interaction.changedValue()) {
                 interaction_changed();
@@ -1860,7 +1906,7 @@ int run(const Options& options) {
                 else {
                     view_state.mode = value->mode;
                     view_state.selected_vertex = 0;
-                    view_state.pilot_camera = false;
+                    end_camera_visit(false);
                     view_state.editor_camera.target = {};
                     interaction.value(InteractionMode::objects);
                     if (value->mode == ViewMode::sun) {
@@ -1899,7 +1945,7 @@ int run(const Options& options) {
             }
         }
         if (!dialog_was_open && !modal_visible() && !editing.awaiting_remote() && !camera_cancelled &&
-            (!view_state.pilot_camera || editing.can_edit_scene_pose()) && (!viewport_gesture || camera_numeric_active) &&
+            !inspecting() && (!viewport_gesture || camera_numeric_active) &&
             (yaw.changedValue() || pitch.changedValue() || orbit_distance.changedValue() || optical_zoom.changedValue())) {
             const auto before = preview_camera_pose(state, view_state.time);
             auto after = before;
@@ -1944,8 +1990,10 @@ int run(const Options& options) {
             if (auto action = timeline.poll(input->unhandled(), raw.events)) {
                 if (action->kind == TimelineAction::Kind::select_object) {
                     if (action->object == camera_animation_object) {
-                        edit_animation_camera(true);
-                        timeline.focus_object(camera_animation_object);
+                        // The legacy shot row stands in for the scene camera.
+                        if (const auto* camera = active_camera(state, view_state.time))
+                            select_scene_instance(camera->id, action->selection_mode);
+                        else timeline.focus_object(camera_animation_object);
                     } else select_scene_instance(static_cast<u32>(action->object), action->selection_mode);
                 } else {
                     regions.deselect();
@@ -2020,8 +2068,8 @@ int run(const Options& options) {
                 } else finish_bounds(false);
             }
             if (bounds_panel.frame_requested()) {
-                // Framing an editor aid must never author an animation-camera key.
-                view_state.pilot_camera = false; pilot_camera.value(false);
+                // Framing an editor aid is private navigation; leave any camera visit.
+                end_camera_visit(false);
                 const auto& bounds = state.document.world_bounds;
                 auto& pose = view_state.editor_camera;
                 float radius{};
@@ -2051,7 +2099,7 @@ int run(const Options& options) {
              timeline.menu_contains(viewport_raw.pointer));
         const bool viewport_enabled = viewport_ready && !toolbar_blocks_viewport && !list_blocks_viewport;
         const auto previous_camera = preview_camera_pose(state, view_state.time);
-        if (walk_button.clicked() && viewport_enabled && (!view_state.pilot_camera || editing.can_edit_scene_pose())) {
+        if (walk_button.clicked() && viewport_enabled && !inspecting()) {
             finish_camera(false);
             walk.active(!walk.active());
             status.text(walk.active() ? "Walk: WASD / Q down / E up / Shift fast / middle drag turns / Escape exits" : "Walk mode off");
@@ -2071,7 +2119,7 @@ int run(const Options& options) {
             (mesh_tools.mode()==MeshSelectMode::whole || !mesh_tools.selected().empty());
         navigation.orbit_enabled(walk.active() || !(free_object_rotation || free_mesh_rotation || regions.free_rotation_selected()));
         const bool navigated = viewport_interaction.update(ViewportTool::navigation, [&](bool available) {
-            const bool enabled=available && viewport_enabled && (!view_state.pilot_camera || editing.can_edit_scene_pose()) &&
+            const bool enabled=available && viewport_enabled && !inspecting() &&
                 !camera_cancelled && !camera_numeric_active;
             const bool pointer_moved=navigation.update(navigated_camera, view_state.mode, view_state.smooth_zoom,
                               {viewport.x, viewport.y}, {viewport.width, viewport.height},
@@ -2089,12 +2137,6 @@ int run(const Options& options) {
         walk_button.text(walk.active() ? "Stop walking" : "Walk camera");
         if (navigation.cancelled()) finish_camera(true);
         else if (navigated) {
-            // A transform owns the document transaction. Navigation during it
-            // uses the private editor view, never silently edits a second pose.
-            if(viewport_interaction.transforming() && view_state.pilot_camera) {
-                view_state.pilot_camera=false;pilot_camera.value(false);
-                status.text("Editor camera / active transform preserved; animation camera unchanged");
-            }
             camera_edited(previous_camera, navigated_camera);
         }
         viewport_interaction.gizmo_input.route(viewport_interaction.transforming(),
@@ -2646,6 +2688,7 @@ int run(const Options& options) {
                     open_dialog.error(loaded.error().message);
                 else {
                     open_dialog.close();
+                    camera_visit.reset();
                     completed_frames.clear();
                     selected_instances.clear();
                     mesh_tools.reset();
