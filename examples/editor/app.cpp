@@ -221,7 +221,10 @@ int run(const Options& options) {
                      .width(preview_bounds.width)
                      .height(preview_bounds.height);
     auto caption = viewport_screen.column().position({264, 80}).width(752).height(54).padding(4).gap(2);
-    auto frame_label = caption.label("Starting isolated OpenGL preview...").height(22);
+    // Which camera the mouse moves is the first thing the header answers.
+    auto caption_row = caption.row().height(22).padding(0).gap(10);
+    auto camera_label = caption_row.label("EDITOR CAMERA / private view").width(430).height(22);
+    auto frame_label = caption_row.label("Starting isolated OpenGL preview...").width(380).height(22);
     auto analysis_label = caption.label("Color buffer arrives through shared memory.").height(22);
     MeshNavigationControls mesh_navigation{viewport_popups.root()};
     auto properties_panel = screen.column().position({1032, 80}).width(312).height(580).padding(10).gap(8).scrollbar(ui::ScrollBar::automatic);
@@ -584,6 +587,7 @@ int run(const Options& options) {
             field->width(std::max(60.0F, (xyz.bounds().width - 8) / 3));
         place(keyframe_inspector, geometry.inspector);
         place(caption, viewport_window.opened() ? ui::Rect{0,0,viewport_raw.logical_size.x,54} : geometry.caption);
+        frame_label.width(std::max(120.F, (viewport_window.opened() ? viewport_raw.logical_size.x : geometry.caption.width) - 458));
         place(timeline_host, geometry.timeline);
         timeline.compact(geometry.timeline.height<160);
         place(files, geometry.files);
@@ -1274,6 +1278,10 @@ int run(const Options& options) {
                 if (pose != view_state.editor_camera) { view_state.editor_camera = pose; camera_changed(); }
             }
         }
+        camera_label.text(playing ? "SIM CAMERA / independent Play"
+            : !camera_visit ? (view_state.mode == ViewMode::scene ? "EDITOR CAMERA / private view" : "EDITOR CAMERA / blueprint view")
+            : camera_visit->editable ? "SIM CAMERA (entered) / " + object_name(state, camera_visit->camera)
+            : "SIM CAMERA (inspecting) / " + object_name(state, camera_visit->camera));
         const bool dialog_was_open = modal_visible();
         const bool timeline_enabled = !dialog_was_open && !editing.awaiting_remote() && !playing &&
                                       !mode_pending && !viewport_interaction.busy();
