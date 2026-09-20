@@ -2,6 +2,8 @@
 #include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/annotation_geometry.hpp"
 #include "../../examples/editor/blueprint_gizmos.hpp"
+#include "../../examples/editor/camera_glyph.hpp"
+#include "../../examples/editor/selection.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <cmath>
@@ -164,6 +166,22 @@ TEST_CASE("Saving the editor view authors a camera at the selected keyframe", "[
     CHECK_FALSE(session.set_camera(1, view));
 }
 
+TEST_CASE("A camera is picked by clicking its drawn body", "[editor][camera][selection]") {
+    auto state = scene();
+    const auto camera = add_camera(state, {0, 0, 10, {}, 1}); // Eye at z=10 looking down -Z.
+    // Stand at the origin looking +Z, so the camera body sits in the middle of the view.
+    state.viewport.editor_camera = {180, 0, 10, {0, 0, 10}, 1};
+    const Extent2D extent{800, 600};
+    CHECK(pick_object(state, {.5F, .5F}, extent) == camera);
+    CHECK_FALSE(pick_object(state, {.02F, .02F}, extent));
+    camera_settings(state, camera)->visible = false;
+    CHECK_FALSE(pick_object(state, {.5F, .5F}, extent)); // Hidden glyph, nothing to click.
+    camera_settings(state, camera)->visible = true;
+    state.viewport.selected_object = camera;
+    state.viewport.gizmo_only = true;
+    CHECK_FALSE(pick_object(state, {.5F, .5F}, extent)); // Gizmo-only hides the active surface.
+}
+
 TEST_CASE("Cameras move, turn and slide along their look direction, and draw a frustum glyph", "[editor][camera]") {
     auto state = scene();
     const auto camera = add_camera(state, {0, 0, 10, {}, 1});
@@ -177,7 +195,7 @@ TEST_CASE("Cameras move, turn and slide along their look direction, and draw a f
     CHECK(axes.front().label == "Forward / back");
     CHECK(axes.front().direction.z == Catch::Approx(-1)); // Yaw zero looks down -Z.
     auto lines = scene_annotation_lines(state, 0);
-    CHECK(lines.size() == 11); // Four edges, four rim sides, two up-tick sides and the look line.
+    CHECK(lines.size() == camera_glyph_line_count); // Body, lens, reels, frustum, up tick and look line.
     const auto eye = find_instance(state, camera)->transform.position;
     CHECK(std::ranges::count_if(lines, [&](const SceneLine& line) { return line.from == eye; }) == 4);
     state.viewport.mode = ViewMode::mesh;

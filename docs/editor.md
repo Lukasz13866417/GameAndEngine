@@ -333,8 +333,9 @@ metadata and **Logs → Interaction timing** measurements/export.
   keyframe and clears the others there, so the simulation cuts between cameras.
   Independent Play and the demos render through the active camera.
   Cameras use the Move, Rotate, Free rotate and **Forward / back** gizmos and draw
-  a frustum glyph in the preview: bright for the active camera, orange when
-  selected. The **CAMERA** panel above the instance properties offers **Inspect**
+  a camera glyph in the preview (body, lens, film reels and the view frustum):
+  bright for the active camera, orange when selected. Clicking the body selects
+  the camera like any other instance. The **CAMERA** panel above the instance properties offers **Inspect**
   (look through the camera read-only; playback and scrubbing follow it, navigation
   is blocked), **Enter** (start from the camera and roam freely; nothing is authored
   until **Save this camera** writes the editor view into the camera at the selected

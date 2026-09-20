@@ -2,6 +2,7 @@
 #include "animation.hpp"
 #include "position_edits.hpp"
 #include "blueprint_gizmos.hpp"
+#include "camera_glyph.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -112,6 +113,17 @@ std::optional<vng::u32> pick_object(const State& state, vng::Vec2 pixel, vng::Ex
             hit && *hit < nearest) {
             nearest = *hit;
             selected = instance.id;
+        }
+    }
+    for (const auto& source : state.document.instances) {
+        if(state.viewport.hides_surface(source.id))continue;
+        if (!std::holds_alternative<CameraSettings>(source.settings) || !instance_in_view(state, source) ||
+            !evaluate_visibility(state, source, state.viewport.time)) continue;
+        // A camera has no surface; its drawn body is the click target.
+        const auto glyph = camera_glyph(evaluate_instance(state, source, state.viewport.time));
+        if (const auto hit = sphere(ray, glyph.body_center(), glyph.pick_radius()); hit && *hit < nearest) {
+            nearest = *hit;
+            selected = source.id;
         }
     }
     for (const auto& instance : state.document.instances) {
