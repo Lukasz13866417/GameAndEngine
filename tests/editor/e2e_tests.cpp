@@ -3358,6 +3358,9 @@ void Driver::workflow() {
         const auto pose = project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time));
         if (o.state.viewport.editor_camera != pose) return false;
         require(find(button("Back")) && !find(button("Save this camera")), "Inspect offered authoring controls");
+        require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
+            return widget.visible && widget.text.starts_with("SIM CAMERA (inspecting)");
+        }), "Header does not say the sim camera is being inspected");
         checkpoint(o, "08a-inspect-camera");
         drag_start_ = center(o.viewport);
         pointer(input::EventKind::pointer_down, drag_start_, 2);
@@ -3381,6 +3384,9 @@ void Driver::workflow() {
         require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
             return widget.role == Role::button && widget.text == "Save this camera" && widget.visible;
         }), "Enter did not offer Save this camera");
+        require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
+            return widget.visible && widget.text.starts_with("SIM CAMERA (entered)");
+        }), "Header does not say the sim camera is being moved");
         drag_start_ = center(o.viewport);
         pointer(input::EventKind::pointer_down, drag_start_, 2);
         pointer(input::EventKind::pointer_move, {drag_start_.x + 45, drag_start_.y + 15}, 2);
@@ -3407,7 +3413,11 @@ void Driver::workflow() {
     });
     click(button("Back"));
     wait("Back after Enter restores the pre-visit editor view", [this](const Observation& o) {
-        return ready(o) && o.state.viewport.editor_camera == visit_start_;
+        if (!ready(o) || o.state.viewport.editor_camera != visit_start_) return false;
+        require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
+            return widget.visible && widget.text.starts_with("EDITOR CAMERA");
+        }), "Header does not say the editor camera is back");
+        return true;
     });
     add("Delete the camera instance", [this](const Observation& o) {
         require(o.state.viewport.selected_object == camera_, "Camera is not the selected instance before Delete");

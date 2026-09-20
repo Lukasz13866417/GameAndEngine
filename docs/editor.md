@@ -339,6 +339,9 @@ metadata and **Logs → Interaction timing** measurements/export.
   is blocked), **Enter** (start from the camera and roam freely; nothing is authored
   until **Save this camera** writes the editor view into the camera at the selected
   keyframe) and **Back**, which restores the editor view from before the visit.
+  The preview header always says which camera the mouse moves: **EDITOR CAMERA**
+  for the private view, **SIM CAMERA (inspecting)** or **SIM CAMERA (entered)**
+  with the camera's name during a visit, and **SIM CAMERA / independent Play**.
   Camera placement, lens and activeness are ordinary keyframe properties: **Blend**
   interpolates the segment arriving at a key; clear it for a held shot followed by
   a cut. Scenes without cameras keep evaluating the older saved animation shot,
