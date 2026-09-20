@@ -53,6 +53,10 @@ presentation concerns to `support/`.
   the pathfinder brakes to a stop rather than joining it. Three generated rock
   blueprints are embedded in `assets/asteroid_fleet.vscene`. Both fleet demos
   share playback glue and the editor's Runtime. See [asteroid fleet](../docs/asteroid_fleet.md).
+- `solar_system.cpp` plays `assets/solar_system.vscene`: Earth beside the camera,
+  the sun off-frame behind it, the fleet waiting in front of a distant belt, and
+  the Kestrel just behind the camera. Only the starting keyframe exists, so the
+  shot is meant to be authored in the editor. See [leaving home](../docs/solar_system.md).
 - `earth.cpp` plays `assets/earth.vscene`, an editable turntable of an original
   stylized Earth mesh blueprint. Import `assets/earth.vmesh` into any scene;
   smooth normals, raised clouds and opt-in illustrated DSL lighting use the

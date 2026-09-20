@@ -63,6 +63,12 @@ See [fleet reveal](docs/fleet_reveal.md) for build/run commands and diagnostics.
 cratered asteroid belt to reveal the fleet. Open `examples/assets/asteroid_fleet.vscene`
 in the editor. See [asteroid fleet](docs/asteroid_fleet.md).
 
+`vng_solar_system_demo` combines Earth, the sun, the belt and the fleet into one
+establishing shot with only its starting keyframe: the camera hangs beside Earth
+looking out at the distant belt, with the fleet waiting in front of it. Open
+`examples/assets/solar_system.vscene` in the editor to author the departure.
+See [leaving home](docs/solar_system.md).
+
 See [typed shader arguments](docs/typed_shader_arguments.md) for runtime values,
 constant-only expression syntax, semantic parameter records, and backend lowering.
 
