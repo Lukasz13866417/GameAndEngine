@@ -17,9 +17,10 @@ struct CameraVisit {
     friend bool operator==(const CameraVisit&, const CameraVisit&) = default;
 };
 
-// UI-only camera actions in the instance properties page. The host owns the
-// visit state, the editing session and status messages; poll clicked() after
-// Screen::update() like any other retained control.
+// UI-only camera actions drawn in the viewport next to the selected camera's
+// glyph, like a gizmo. The host owns the visit state, the editing session and
+// status messages; poll clicked() after Screen::update() like any other
+// retained control.
 class CameraPanel final {
 public:
     explicit CameraPanel(vng::ui::Container host) : host_(std::move(host)) {
@@ -50,12 +51,16 @@ public:
         back_.enabled(visiting);
         save_.visible(editing).enabled(editing && can_author);
         activate_.visible(camera != nullptr).enabled(camera && can_author && !active_now);
-        hint_.text(editing ? "Free view. Save writes it into this camera."
-                   : visiting ? "Read-only view. Back restores the editor view."
-                   : active_now ? "The simulation's camera at this time."
-                   : "Not active here. Set active keys it from here on.");
+        hint_.text(editing ? "Free view; Save writes it here."
+                   : visiting ? "Read-only; Back restores the view."
+                   : active_now ? "Simulation camera at this time."
+                   : "Not active; Set active keys it.");
     }
     [[nodiscard]] bool shown() const noexcept { return shown_; }
+    // Viewport overlay placement; the host decides where the glyph is on screen.
+    void place(vng::ui::Rect at) { host_.position({at.x, at.y}).width(at.width).height(at.height); }
+    void enabled(bool value) { host_.enabled(value); }
+    [[nodiscard]] bool contains(vng::Vec2 point) const { return shown_ && host_.bounds().contains(point); }
     [[nodiscard]] bool enter_clicked() { return enter_.clicked(); }
     [[nodiscard]] bool inspect_clicked() { return inspect_.clicked(); }
     [[nodiscard]] bool back_clicked() { return back_.clicked(); }
