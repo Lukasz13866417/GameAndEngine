@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Understand what you are editing, what stays shared, and how a change reaches the preview. Open just the topics you need.">
+  <title>Editor · Vibe Engine</title><link rel="stylesheet" href="style.css">
+  <script src="data.js" defer></script><script src="codebase.js" defer></script><script src="codebase-details.js" defer></script><script src="walkthrough.js" defer></script><script src="pages.js" defer></script><script src="app.js" defer></script>
+</head>
+<body data-page="editor">
+  <a class="skip-link" href="#main">Skip to editor topics</a>
+  <header class="masthead"><a class="brand" href="index.html"><span class="brand-icon" aria-hidden="true">v.</span> Vibe Engine <span class="brand-note">field guide</span></a><a class="repo-link" href="../../README.md">Project README ↗</a></header>
+  <div class="layout">
+    <aside class="sidebar" aria-label="Guide navigation">
+      <p class="eyebrow">Five ways in</p>
+      <nav id="navigation" aria-label="Guide pages"><a href="index.html"><span class="nav-number">01</span>Start here</a><a href="editor.html" aria-current="page"><span class="nav-number">02</span>Editor</a><a href="codebase.html"><span class="nav-number">03</span>Codebase</a><a href="walkthrough.html"><span class="nav-number">04</span>Code walkthrough</a><a href="demo.html"><span class="nav-number">05</span>Demo walkthrough</a></nav>
+      <div class="sidebar-note"><strong>Built from current source</strong><p>Small explanations first. Real code when you need it.</p><p>Works offline.</p></div><a class="maintainer-link" href="README.md">About this guide</a>
+    </aside>
+    <main id="main" tabindex="-1">
+      <section class="intro" aria-labelledby="page-title"><p class="eyebrow">02 / Editor</p><h1 id="page-title">Make and inspect<br>one scene<span class="accent">.</span></h1><p class="lede">Understand what you are editing, what stays shared, and how a change reaches the preview. Open just the topics you need.</p><div class="reading-paths"><a href="#blueprints">Blueprint or instance?</a><a href="#timeline">Animation & keyframes</a><a href="#mesh-drafts">Apply versus Save</a><a href="codebase.html#code-ownership">Who owns the code?</a></div></section>
+      <section class="explorer" aria-label="Editor topic tree">
+        <div class="toolbar"><div class="search-box"><label for="search">Find an editor topic</label><div class="search-input"><input id="search" type="search" placeholder="Try region, keyframe, camera…" autocomplete="off" aria-controls="tree" aria-describedby="search-status"><button id="clear-search" type="button" hidden aria-label="Clear search">×</button><kbd aria-hidden="true">/</kbd></div></div><button id="collapse" class="quiet-button" type="button">Collapse all</button><button id="reset" class="quiet-button" type="button">Reset this page</button></div>
+        <div class="map-note"><strong>Go one level deeper</strong><p>These branches group editor concepts. For exact runtime owners and build dependencies, use the separate <a href="codebase.html">Codebase page</a>.</p></div>
+        <p id="search-status" class="search-status" role="status" aria-live="polite"></p><div id="tree"></div><div id="empty" class="empty" hidden><h2>No matching topics on this page</h2><p>Try a shorter name, or choose another guide page.</p></div>
+        <noscript><p class="empty">Enable JavaScript to expand the map, or read the <a href="../editor.md">editor guide</a>. The <a href="index.html">overview</a> works without JavaScript.</p></noscript>
+      </section>
+      <footer><a href="index.html">← Start here</a><a href="codebase.html">Codebase →</a></footer>
+    </main>
+  </div>
+</body>
+</html>

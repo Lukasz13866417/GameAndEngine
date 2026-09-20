@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Find the component and source file behind a feature. Start with responsibilities; expand dependencies and implementation details only when needed.">
+  <title>Codebase · Vibe Engine</title><link rel="stylesheet" href="style.css">
+  <script src="data.js" defer></script><script src="codebase.js" defer></script><script src="codebase-details.js" defer></script><script src="walkthrough.js" defer></script><script src="pages.js" defer></script><script src="app.js" defer></script>
+</head>
+<body data-page="codebase">
+  <a class="skip-link" href="#main">Skip to codebase topics</a>
+  <header class="masthead"><a class="brand" href="index.html"><span class="brand-icon" aria-hidden="true">v.</span> Vibe Engine <span class="brand-note">field guide</span></a><a class="repo-link" href="../../README.md">Project README ↗</a></header>
+  <div class="layout">
+    <aside class="sidebar" aria-label="Guide navigation">
+      <p class="eyebrow">Five ways in</p>
+      <nav id="navigation" aria-label="Guide pages"><a href="index.html"><span class="nav-number">01</span>Start here</a><a href="editor.html"><span class="nav-number">02</span>Editor</a><a href="codebase.html" aria-current="page"><span class="nav-number">03</span>Codebase</a><a href="walkthrough.html"><span class="nav-number">04</span>Code walkthrough</a><a href="demo.html"><span class="nav-number">05</span>Demo walkthrough</a></nav>
+      <div class="sidebar-note"><strong>Built from current source</strong><p>Small explanations first. Real code when you need it.</p><p>Works offline.</p></div><a class="maintainer-link" href="README.md">About this guide</a>
+    </aside>
+    <main id="main" tabindex="-1">
+      <section class="intro" aria-labelledby="page-title"><p class="eyebrow">03 / Codebase</p><h1 id="page-title">Find the owner.<br>Follow the dependency<span class="accent">.</span></h1><p class="lede">Find the component and source file behind a feature. Start with responsibilities; expand dependencies and implementation details only when needed.</p><div class="reading-paths"><a href="#code-repository">Where files live</a><a href="#code-components">Component catalog</a><a href="#code-ownership">Runtime owners</a><a href="#engine">Engine concepts</a></div></section>
+      <section class="explorer" aria-label="Codebase topic tree">
+        <div class="toolbar"><div class="search-box"><label for="search">Find a component, API or source path</label><div class="search-input"><input id="search" type="search" placeholder="Try EditingSession, vng_rig, commands.hpp…" autocomplete="off" aria-controls="tree" aria-describedby="search-status"><button id="clear-search" type="button" hidden aria-label="Clear search">×</button><kbd aria-hidden="true">/</kbd></div></div><button id="collapse" class="quiet-button" type="button">Collapse all</button><button id="reset" class="quiet-button" type="button">Reset this page</button></div>
+        <div class="map-note"><strong>Two different relationships</strong><p>Dependency cards show direct CMake links and their reverse users. The ownership tree shows lifetimes. A component can depend on something it does not own.</p></div>
+        <p id="search-status" class="search-status" role="status" aria-live="polite"></p><div id="tree"></div><div id="empty" class="empty" hidden><h2>No matching topics on this page</h2><p>Try a shorter name, or choose another guide page.</p></div>
+        <noscript><p class="empty">Enable JavaScript to expand the map, or read the <a href="../codebase.md">codebase source tour</a>. The <a href="index.html">overview</a> works without JavaScript.</p></noscript>
+      </section>
+      <footer><a href="editor.html">← Editor</a><a href="walkthrough.html">Code walkthrough →</a></footer>
+    </main>
+  </div>
+</body>
+</html>

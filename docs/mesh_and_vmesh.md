@@ -235,7 +235,7 @@ the rendering hot path.
 
 The ordinary application path gives the typed mesh to a concrete renderer that
 owns its persistent resources and policy. For example, the file-mesh demo's
-`FileMeshRenderer : Renderer<FileMeshDraw>` compiles its program runtime and
+`FileMeshRenderer : opengl::Renderer<FileMeshDraw>` compiles its program runtime and
 uploads the mesh in its fallible factory:
 
 ```cpp

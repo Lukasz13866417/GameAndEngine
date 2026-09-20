@@ -136,7 +136,7 @@ above. `vng_triangle_demo` instead uses the deliberately narrow
 `make_simple_mesh_renderer` convenience, with upload, pipeline compilation, and
 inferred vertex input owned by its concrete OpenGL renderer. The primary
 custom-renderer example is `vng_file_mesh_demo`, where
-`FileMeshRenderer : Renderer<FileMeshDraw>` (in the adjacent focused renderer
+`FileMeshRenderer : opengl::Renderer<FileMeshDraw>` (in the adjacent focused renderer
 files) owns its shader definitions and controls frame commands itself. The
 same explicit shader ownership is shown outside a renderer by
 `vng_file_mesh_direct_demo`. In every case the vertex lambda is invoked once,
@@ -262,7 +262,7 @@ That next layer is now implemented:
 ```text
 .vmesh text -> vmesh::Document -> vmesh::Schema<Record...>
             -> gfx::Mesh<Record...> -> opengl::GpuMesh<Record...>
-            + bound opengl::GraphicsPipeline -> cached VAO + indexed draw
+            + selected opengl::Program -> cached VAO + indexed draw
 ```
 
 The source file only knows stable field names and logical values. The schema

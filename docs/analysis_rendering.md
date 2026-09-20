@@ -41,7 +41,7 @@ adds no diagnostic shader work or per-fragment cost.
 ## Application-facing use
 
 The normal frame remains the short, target-scoped path. The file-mesh example
-defines `FileMeshRenderer : Renderer<FileMeshDraw>`. Its factory compiles an
+defines `FileMeshRenderer : opengl::Renderer<FileMeshDraw>`. Its factory compiles an
 internally defined shader pair into an `OpenGLProgramRuntime`, uploads the
 mesh, and retains both CPU topology and GPU storage. Application code never
 supplies a diagnostic or production shader to this renderer. Its ordinary
@@ -49,7 +49,7 @@ render method remains in full control of commands:
 
 ```cpp
 auto commands = frame.commands();
-commands.bind(shader_runtime_.normal_pipeline());
+commands.run(shader_runtime_.production());
 commands.view(view);
 
 for (const FileMeshDraw& draw : draws) {
@@ -96,7 +96,7 @@ Optional provenance and a human-readable label attach to the render item:
 
 ```cpp
 auto evidence = shader_runtime_.capture(
-    device, cpu_mesh, gpu_mesh, *view,
+    frame, cpu_mesh, gpu_mesh, *view,
     vng::analysis::CaptureRequest::standard(), analysis_options);
 ```
 
@@ -105,6 +105,15 @@ runtime boundary for tools that need to attach entity/material provenance.
 That data normally comes from a graphical instance or asset database; it does
 not belong in `.vmesh`. `AnalysisOptions::clear_depth` is normally empty. The
 runtime chooses `1` for ordinary depth and `0` for reverse depth.
+
+The runtime stores shader products, not a raster preset. Frame overloads take
+a snapshot of the current `commands.graphics_state()` at each invocation, so
+set the desired draw settings before capture just as before drawing. Culling,
+winding and depth decisions in evidence and diagnostic variants come from
+that snapshot. Each counterfactual changes only the setting under test.
+Low-level device-only overloads require an explicit `opengl::CaptureState` containing
+the raster snapshot and target encoding. Output encoding belongs to the target,
+never to the program.
 
 ## Selective shader observations
 
@@ -199,7 +208,7 @@ Diagnostic rendering snapshots the OpenGL state it changes and restores it on
 success or failure. Its private framebuffer, viewport, program/VAO,
 depth/cull/scissor/rasterizer state, framebuffer-sRGB state, and affected color
 masks and blend state do not leak into the following normal frame. Augmented
-pipelines retain the full emitted fragment interface, so this includes every
+programs retain the full emitted fragment interface, so this includes every
 ordinary sparse MRT output as well as the injected diagnostic attachment;
 unrelated draw-buffer slots are never normalized as collateral state.
 
@@ -215,3 +224,6 @@ preserve HDR and need not equal an sRGB swapchain byte-for-byte. Blended
 transparency and integer MSAA resolve do not have one honest surface owner and
 are not claimed yet. Asynchronous readback, multi-item scene captures, and
 derived world position or motion can be added without changing shader authoring.
+Capture explicitly rejects blending, non-filled polygon modes, and depth tests
+without depth writes rather than silently claiming evidence for a different
+draw state.

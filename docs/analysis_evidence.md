@@ -152,7 +152,7 @@ analysis core neither chooses a hash algorithm nor interprets their contents:
 the renderer may store a stable serialization or a collision-resistant digest.
 The four components identify the ordered workload, view, renderer definition,
 and logical target contract. The renderer component includes neutral shader IR
-and persistent/base pipeline state, but excludes a raster variable deliberately
+and the invocation's effective graphics state, but excludes a raster variable deliberately
 overridden by a diagnostic variant. The target component describes extent,
 formats, and the readback contract rather than a transient native image handle.
 This identity is optional for standalone evidence and mandatory when evidence

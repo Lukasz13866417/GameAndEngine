@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A plain-language introduction to Vibe Engine, its editor and codebase.">
+  <title>Start here · Vibe Engine</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="data.js" defer></script><script src="codebase.js" defer></script><script src="codebase-details.js" defer></script><script src="walkthrough.js" defer></script><script src="pages.js" defer></script><script src="app.js" defer></script>
+</head>
+<body data-page="start">
+  <a class="skip-link" href="#main">Skip to the overview</a>
+  <header class="masthead"><a class="brand" href="index.html"><span class="brand-icon" aria-hidden="true">v.</span> Vibe Engine <span class="brand-note">field guide</span></a><a class="repo-link" href="../../README.md">Project README ↗</a></header>
+  <div class="layout">
+    <aside class="sidebar" aria-label="Guide navigation">
+      <p class="eyebrow">Five ways in</p>
+      <nav id="navigation" aria-label="Guide pages">
+        <a href="index.html" aria-current="page"><span class="nav-number">01</span>Start here</a>
+        <a href="editor.html"><span class="nav-number">02</span>Editor</a>
+        <a href="codebase.html"><span class="nav-number">03</span>Codebase</a>
+        <a href="walkthrough.html"><span class="nav-number">04</span>Code walkthrough</a>
+        <a href="demo.html"><span class="nav-number">05</span>Demo walkthrough</a>
+      </nav>
+      <div class="sidebar-note"><strong>No setup needed to read</strong><p>These pages work offline.</p><p>C++23 · OpenGL 4.6 · Linux</p></div>
+      <a class="maintainer-link" href="README.md">About this guide</a>
+    </aside>
+    <main id="main" tabindex="-1" class="overview">
+      <section class="intro" id="start" aria-labelledby="page-title">
+        <p class="eyebrow">01 / Start here</p>
+        <h1 id="page-title">A scene, an editor,<br>and an engine<span class="accent">.</span></h1>
+        <p class="lede">Vibe Engine is a C++ engine and an editor being developed together. You describe a scene, the engine draws it, and the editor lets you shape and animate it.</p>
+        <p id="big-picture">Think of a spaceship: its <strong>mesh</strong> describes the shape, an <strong>instance</strong> places a copy in the scene, and a <strong>renderer</strong> decides how to draw it. The editor changes that same scene data; it is not a separate imitation of the game’s look.</p>
+      </section>
+      <section class="overview-section" id="editor-overview" aria-labelledby="editor-title">
+        <p class="eyebrow">Working with a scene</p>
+        <h2 id="editor-title">The editor, at a glance</h2>
+        <div class="overview-grid">
+          <article><h3>Viewport & cameras</h3><p>The viewport is where you see the scene and use manipulation handles, or <em>gizmos</em>. Your private viewing camera is separate from the camera used by the animation.</p></article>
+          <article><h3>Blueprints & instances</h3><p>A blueprint is a reusable definition. Each instance has its own position, rotation, scale and settings. Deleting one ship does not delete its blueprint.</p></article>
+          <article><h3>Meshes & regions</h3><p>Edit a mesh blueprint in its own view. <strong>Apply</strong> publishes its draft to scene instances; saving alone does not. Regions are per-instance TODO volumes whose boundary points are edited in the scene.</p></article>
+          <article><h3>Timeline & keyframes</h3><p>Keys describe values at timestamps in seconds. Choose how values interpolate. Insert a key to edit a pose between existing keys; the new key starts from the scene you currently see.</p></article>
+          <article><h3>Panels & authoring controls</h3><p>The sidebar has Scene, Keyframe values and Instance properties tabs. Controls edit the selected thing; Undo/Redo treats a gesture as one action. Top bars hold file, view and tool controls.</p></article>
+          <article><h3>Preview & Play</h3><p>A worker process renders the scene while the UI stays separate. Pop-out keeps editing available. Independent Play uses a worker-owned window and can run without debug-image delivery.</p></article>
+        </div>
+        <a class="section-next" href="editor.html">Explore the editor →</a>
+      </section>
+      <section class="overview-section" id="engine-overview" aria-labelledby="engine-title">
+        <p class="eyebrow">Working in C++</p>
+        <h2 id="engine-title">The codebase, in broad pieces</h2>
+        <div class="overview-grid">
+          <article><h3>Data & files</h3><p>CPU meshes, vertex records, cameras and file readers describe what exists without a graphics context. Semantic tags such as Position say what a field means, separately from its byte encoding.</p></article>
+          <article><h3>Shaders</h3><p>C++ shader expressions record a typed program once. The engine turns that representation into GLSL, then OpenGL compiles it. Explicit arguments carry changing values for each draw.</p></article>
+          <article><h3>Rendering & backends</h3><p>A renderer accepts small draw <em>tickets</em>, owns its drawing policy and sets state such as depth testing. Neutral contracts describe intent; OpenGL and GLFW supply concrete graphics and window behavior.</p></article>
+          <article><h3>Resources & providers</h3><p>Owners keep buffers, programs and images alive. Providers hold recipes for creating or reloading them. The recipe and the resulting resource are different responsibilities.</p></article>
+          <article><h3>Higher-level features</h3><p>Text, widgets, bloom, rigging, timeline sampling and geometry queries are reusable pieces. They depend on the lower-level contracts they need; there is no single giant engine object.</p></article>
+          <article><h3>Applications & tests</h3><p><code>examples/</code> contains demos and the editor. <code>include/vng/</code> exposes APIs; <code>src/</code> implements them. Tests cover CPU behavior, GPU rendering and real editor interactions.</p></article>
+        </div>
+        <div class="overview-example">
+          <h3>A small example: file names become meanings</h3>
+          <pre><code>auto schema = vmesh::schema&lt;Vertex&gt;();
+schema.map("position", Position{});
+schema.map("color/0", Color{});</code></pre>
+          <p>The file has named fields; C++ uses semantic tags. The schema connects them. The <a href="demo.html">demo walkthrough</a> follows this exact idea through to a rendered cube.</p>
+        </div>
+        <a class="section-next" href="codebase.html">Find components, owners and dependencies →</a>
+      </section>
+      <section class="overview-section" id="philosophy" aria-labelledby="boundaries-title">
+        <h2 id="boundaries-title">Three boundaries worth remembering</h2>
+        <ol class="plain-principles">
+          <li><strong>A blueprint is not an instance.</strong> Shared geometry and individual placement are different data.</li>
+          <li><strong>The document is not the viewport.</strong> Looking around should not edit your scene or create undo entries.</li>
+          <li><strong>A dependency is not an owner.</strong> “Needs this to work” is different from “keeps this alive.” The Codebase page shows both explicitly.</li>
+        </ol>
+      </section>
+      <section class="overview-section" id="vocabulary" aria-labelledby="words-title">
+        <h2 id="words-title">A few words you’ll meet</h2>
+        <dl class="glossary">
+          <dt>CPU / GPU</dt><dd>The processor running application code / the processor drawing images.</dd>
+          <dt>DSL / IR</dt><dd>A small language for describing shaders / the recorded intermediate representation of those calculations.</dd>
+          <dt>Backend</dt><dd>The concrete implementation for a graphics or window API, currently OpenGL and GLFW.</dd>
+          <dt>Frame</dt><dd>A scoped drawing operation with a target image, image size and drawing context.</dd>
+        </dl>
+      </section>
+      <div class="next-pages"><a href="editor.html">Use the editor →</a><a href="codebase.html">Understand the codebase →</a><a href="demo.html">Follow a real demo →</a></div>
+      <footer>Read the overview first; open deeper detail when you need it. <a href="README.md">About these docs →</a></footer>
+    </main>
+  </div>
+</body>
+</html>

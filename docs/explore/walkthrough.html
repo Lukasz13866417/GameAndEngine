@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Follow actual C++ classes and APIs: Record, Expr, Renderer, Device, EditingSession, DocumentPatch and Runtime.">
+  <title>Code walkthrough · Vibe Engine</title><link rel="stylesheet" href="style.css">
+  <script src="data.js" defer></script><script src="codebase.js" defer></script><script src="codebase-details.js" defer></script><script src="walkthrough.js" defer></script><script src="pages.js" defer></script><script src="app.js" defer></script>
+</head>
+<body data-page="walkthrough">
+  <a class="skip-link" href="#main">Skip to the class walkthrough</a>
+  <header class="masthead"><a class="brand" href="index.html"><span class="brand-icon" aria-hidden="true">v.</span> Vibe Engine <span class="brand-note">field guide</span></a><a class="repo-link" href="../../README.md">Project README ↗</a></header>
+  <div class="layout">
+    <aside class="sidebar" aria-label="Guide navigation">
+      <p class="eyebrow">Five ways in</p>
+      <nav id="navigation" aria-label="Guide pages"><a href="index.html"><span class="nav-number">01</span>Start here</a><a href="editor.html"><span class="nav-number">02</span>Editor</a><a href="codebase.html"><span class="nav-number">03</span>Codebase</a><a href="walkthrough.html" aria-current="page"><span class="nav-number">04</span>Code walkthrough</a><a href="demo.html"><span class="nav-number">05</span>Demo walkthrough</a></nav>
+      <div class="sidebar-note"><strong>Actual C++ types</strong><p>Purpose, API and lifetime. One abstraction at a time.</p><p>Works offline.</p></div><a class="maintainer-link" href="README.md">About this guide</a>
+    </aside>
+    <main id="main" tabindex="-1">
+      <section class="intro" aria-labelledby="page-title"><p class="eyebrow">04 / Code walkthrough</p><h1 id="page-title">Meet the classes.<br>Follow a real call<span class="accent">.</span></h1><p class="lede">From CPU vertices to a draw, then from an editor gesture to a worker frame. Expand the actual C++ names to see their purpose, public API and lifetime.</p><div class="reading-paths"><a href="#walk-cpu">Records &amp; meshes</a><a href="#walk-shader">Shader building</a><a href="#walk-draw">Backend &amp; draw</a><a href="#walk-authoring">Editor authoring</a><a href="#walk-preview">Worker &amp; result</a></div></section>
+      <section class="explorer" aria-label="C++ class walkthrough tree">
+        <div class="toolbar"><div class="search-box"><label for="search">Find a class, method or source path</label><div class="search-input"><input id="search" type="search" placeholder="Try Expr, Frame, DocumentPatch…" autocomplete="off" aria-controls="tree" aria-describedby="search-status"><button id="clear-search" type="button" hidden aria-label="Clear search">×</button><kbd aria-hidden="true">/</kbd></div></div><button id="collapse" class="quiet-button" type="button">Collapse all</button><button id="reset" class="quiet-button" type="button">Reset this page</button></div>
+        <div class="map-note"><strong>Reading order, not ownership</strong><p>These branches follow the code path. Each class states what it owns and borrows. For build dependencies, use the separate <a href="codebase.html#code-components">component catalog</a>.</p></div>
+        <p id="search-status" class="search-status" role="status" aria-live="polite"></p><div id="tree"></div><div id="empty" class="empty" hidden><h2>No matching topics on this page</h2><p>Try a shorter name, or choose another guide page.</p></div>
+        <noscript><p class="empty">Enable JavaScript to expand the map, or read the <a href="../codebase.md">codebase source tour</a>. The <a href="index.html">overview</a> works without JavaScript.</p></noscript>
+      </section>
+      <footer><a href="codebase.html">← Component catalog</a><a href="demo.html">Demo walkthrough →</a></footer>
+    </main>
+  </div>
+</body>
+</html>

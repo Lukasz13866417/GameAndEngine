@@ -7,9 +7,10 @@ The engine keeps three layers so neither backend leaks into the other:
    and resize behavior.
 2. `opengl::ContextDesc` describes the requested OpenGL context: version,
    debugging, forward compatibility, default-surface samples and sRGB
-   capability, and swap interval.
-3. `glfw_opengl` is the small integration layer that translates those two
-   descriptions into GLFW calls and supplies an OpenGL context-access token.
+   capability. It contains no VSync policy.
+3. `glfw_opengl` is the small integration layer that combines the two backends,
+   owns presentation, and supplies an OpenGL context-access token. Its optional
+   third creation argument, `window::PresentationDesc`, is backend-neutral.
 
 `vng_window_glfw` itself does not include or link OpenGL. Likewise,
 `vng_opengl` does not include or link GLFW. Applications that select this pair
@@ -33,8 +34,8 @@ auto created = vng::glfw_opengl::create_window(
         .samples = 4,
         .default_framebuffer_encoding =
             vng::render::ColorEncoding::srgb,
-        .swap_interval = 1,
-    });
+    },
+    {.vsync = vng::window::VSync::on}); // Optional; on is the default.
 
 if (!created) {
     // created.error() is a window::Diagnostic
@@ -65,6 +66,50 @@ enough even when the application owns multiple GLFW windows.
 `present()` intentionally avoids the GLFW-specific term “swap buffers.” It is
 the single presentation boundary and can later move onto an acquired `Frame`
 without changing `window::WindowDesc` or the platform-window interface.
+
+## VSync
+
+Presentation policy lives in `<vng/window/presentation.hpp>`, with no dependency
+on GLFW or OpenGL. Change it at runtime on the object that presents:
+
+```cpp
+using vng::window::VSync;
+if (auto changed = window.set_vsync(VSync::off); !changed) {
+    // changed.error(): window::Diagnostic
+}
+auto requested = window.vsync();
+```
+
+`window::Presentable<T>` checks `present()`, `set_vsync(VSync)`, and `vsync()`.
+Generic code can accept a `Presentable` without knowing the backend. Native
+`window::GlfwWindow` deliberately does not satisfy it: a window with no graphics
+context cannot present. There is no second manager, virtual dispatch, or global
+VSync state; the integration window owns its policy and translates it locally.
+A future swapchain backend can implement the same surface with its own present
+modes, without adding OpenGL context methods to the concept.
+
+The GLFW/OpenGL implementation maps `on` to interval 1 and `off` to interval 0.
+`set_vsync()` requires that window's context current on its owning thread; it
+never switches contexts implicitly. Invalid values, wrong thread/context,
+moved-from windows and native failures return diagnostics without changing
+the saved request. Moves preserve it; `make_current()` reapplies it and reports
+errors. Creation stores the request; the first `make_current()` applies it.
+
+`vsync()` reports requested policy, **not measured display behavior**. Drivers
+and compositors may override presentation timing; GLFW exposes no reliable
+effective-interval query ([GLFW context reference](https://www.glfw.org/docs/3.4/group__context.html)).
+VSync is not a simulation tick or software FPS limiter, and `off` is not a
+guarantee of uncapped visible frames. Adaptive VSync and arbitrary swap intervals
+are deliberately outside this small portable contract.
+
+The editor's **Settings → VSync (editor and independent Play)** applies to both
+presenting windows and persists independently of scenes. Hidden worker previews
+always request `off` and use their separate preview FPS cap. Entering independent
+Play applies the preference; leaving it restores `off`. Changes during Play
+apply without reload or mesh uploads. UI automation forces its own window off
+to avoid refresh-rate-dependent tests; worker presentation is still exercised.
+
+## Default framebuffer encoding
 
 `ContextDesc::default_framebuffer_encoding` is a creation request and defaults
 to `ColorEncoding::srgb`. The GLFW integration translates it to

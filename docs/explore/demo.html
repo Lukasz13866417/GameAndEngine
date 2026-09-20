@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Follow the actual file mesh demo from a .vmesh cube through C++ shader code and a renderer to pixels.">
+  <title>Demo walkthrough · Vibe Engine</title><link rel="stylesheet" href="style.css">
+  <script src="data.js" defer></script><script src="codebase.js" defer></script><script src="codebase-details.js" defer></script><script src="walkthrough.js" defer></script><script src="pages.js" defer></script><script src="app.js" defer></script>
+</head>
+<body data-page="demo">
+  <a class="skip-link" href="#main">Skip to the walkthrough</a>
+  <header class="masthead"><a class="brand" href="index.html"><span class="brand-icon" aria-hidden="true">v.</span> Vibe Engine <span class="brand-note">field guide</span></a><a class="repo-link" href="../../README.md">Project README ↗</a></header>
+  <div class="layout">
+    <aside class="sidebar" aria-label="Guide navigation">
+      <p class="eyebrow">Five ways in</p>
+      <nav id="navigation" aria-label="Guide pages"><a href="index.html"><span class="nav-number">01</span>Start here</a><a href="editor.html"><span class="nav-number">02</span>Editor</a><a href="codebase.html"><span class="nav-number">03</span>Codebase</a><a href="walkthrough.html"><span class="nav-number">04</span>Code walkthrough</a><a href="demo.html" aria-current="page"><span class="nav-number">05</span>Demo walkthrough</a></nav>
+      <div class="sidebar-note"><strong>One real program</strong><p>Follow vng_file_mesh_demo without reading the whole engine.</p><p>Works offline.</p></div><a class="maintainer-link" href="README.md">About this guide</a>
+    </aside>
+    <main id="main" tabindex="-1" class="walkthrough">
+      <section class="intro" id="follow-the-data" aria-labelledby="page-title">
+        <p class="eyebrow">05 / Demo walkthrough</p><h1 id="page-title">A mesh file,<br>all the way to pixels<span class="accent">.</span></h1>
+        <p class="lede">Follow the actual colored-cube demo: load a shape, create a renderer, define its shaders and draw a frame. Each step points to the code that does it.</p>
+        <p>The entry point is <a href="../../examples/file_mesh.cpp">examples/file_mesh.cpp</a>. Its <a href="../../examples/file_mesh_renderer.hpp">FileMeshRenderer</a> owns shader creation and GPU resources. Setup lives in helpers so the example stays readable.</p>
+        <div class="reading-paths"><a href="#draw-a-frame">Run it</a><a href="#demo-load">Load</a><a href="#demo-resources">Create</a><a href="#demo-shaders">Shade</a><a href="#demo-submit">Draw</a><a href="#diagnostics">Inspect</a></div>
+      </section>
+      <section class="walkthrough-step" id="draw-a-frame" aria-labelledby="run-title">
+        <p class="eyebrow">Before reading the code</p><h2 id="run-title">Run the example</h2>
+        <p>From the repository root, with a configured <code>build/</code> directory and OpenGL/GLFW examples enabled:</p>
+        <pre><code>cmake --build build --target vng_file_mesh_demo -j4
+./build/vng_file_mesh_demo</code></pre>
+        <p>It loads <a href="../../examples/assets/colored_cube.vmesh">colored_cube.vmesh</a>: a genuinely 3D cube with 24 vertices, 12 triangle faces and different face colors. The camera looks at it from above and to one side. Close the window to exit.</p>
+        <p class="callout"><code>--once</code> deliberately draws one frame and exits. Leave it out if you want to inspect the window. Building/running needs the engine’s Linux/OpenGL setup; reading these pages does not.</p>
+      </section>
+      <section class="walkthrough-step" id="demo-load" aria-labelledby="load-title">
+        <p class="eyebrow">1 / File → CPU mesh</p><h2 id="load-title">Give the fields meanings</h2>
+        <p>The file calls its fields <code>position</code> and <code>color/0</code>. C++ identifies them with semantic types. Position means three floats; Color means four, even when the record stores that color in four normalized bytes.</p>
+        <pre data-source="../../examples/file_mesh_types.hpp"><code>struct Position : vng::gfx::Semantic&lt;vng::Vec3&gt; {};
+struct Color : vng::gfx::Semantic&lt;vng::Vec4&gt; {};</code></pre>
+        <pre data-source="../../examples/file_mesh.cpp"><code>namespace vmesh = vng::content::vmesh;
+auto vertex_schema = vmesh::schema&lt;Vertex&gt;();
+vertex_schema.map("position", Position{});
+vertex_schema.map("color/0", Color{});</code></pre>
+        <p><code>vmesh::load(options-&gt;mesh_path, vertex_schema)</code> returns the typed CPU mesh or a diagnostic. The schema converts file values to the record’s encoding. No GPU context is needed to parse it.</p>
+        <p class="source-note">Read: <a href="../../examples/file_mesh_types.hpp">file_mesh_types.hpp</a> and <a href="../../examples/file_mesh.cpp">file_mesh.cpp</a> · Deeper: <a href="codebase.html#semantics">semantics & records</a></p>
+      </section>
+      <section class="walkthrough-step" id="demo-resources" aria-labelledby="create-title">
+        <p class="eyebrow">2 / Explicit lifetime & setup</p><h2 id="create-title">Let the renderer own its resources</h2>
+        <p><code>GlfwOpenGLSession::create(...)</code> creates this example’s native window/context and device. Then the application hands its mesh to the concrete renderer:</p>
+        <pre data-source="../../examples/file_mesh.cpp"><code>auto renderer = FileMeshRenderer::create(
+    app-&gt;device(),
+    std::move(*cpu_mesh));</code></pre>
+        <p>The factory builds shader IR, compiles the normal/diagnostic shader products, uploads the mesh and prepares vertex input. The ready renderer owns that work. Its <code>Renderer&lt;FileMeshDraw&gt;</code> base only identifies the ticket type—it does not hide another renderer or force a fixed technique.</p>
+        <p>The renderer is created after the session and destroyed before it, keeping the OpenGL context alive while GPU resources are released.</p>
+        <p class="source-note">Read: <a href="../../examples/file_mesh_renderer.cpp">FileMeshRenderer::create</a>, <a href="../../examples/support/glfw_opengl_session.hpp">GlfwOpenGLSession</a> · Deeper: <a href="codebase.html#renderer">renderers & tickets</a></p>
+      </section>
+      <section class="walkthrough-step" id="demo-shaders" aria-labelledby="shader-title">
+        <p class="eyebrow">3 / C++ expressions → shader program</p><h2 id="shader-title">Describe the two shader stages</h2>
+        <p>The renderer’s vertex stage projects each position using the supplied camera and passes Color to the fragment stage. The fragment stage receives a symbolic <code>Float brightness</code> argument:</p>
+        <pre data-source="../../examples/file_mesh_renderer.cpp"><code>auto fragment = vng::shader::fragment&lt;FragmentIn, FragmentOut&gt;(
+    "file_mesh_fragment",
+    [](auto&amp; stage, vng::dsl::Float brightness) {
+        const auto source = stage.input(Color{});
+        const auto color = vng::dsl::vec4(source.xyz() * brightness, source.w());
+        stage.observe(SurfaceColor{}, color);
+        return stage.output(
+            field&lt;vng::shader::Color&lt;0&gt;&gt;(color));
+    });</code></pre>
+        <p>This lambda runs once during construction, recording operations rather than shading a CPU pixel. Linking checks the vertex/fragment contracts. GLSL emission and OpenGL compilation produce the runnable program. Ordinary CPU brightness values are supplied later; changing them does not rebuild the shader.</p>
+        <p><code>observe</code> labels a value for optional analysis. It is not another ordinary output attachment in the normal draw.</p>
+        <p class="source-note">Read: <a href="../../examples/file_mesh_renderer.cpp">create_shader_program</a> · Deeper: <a href="codebase.html#shader-dsl">DSL, IR & GLSL</a></p>
+      </section>
+      <section class="walkthrough-step" id="demo-submit" aria-labelledby="draw-title">
+        <p class="eyebrow">4 / Ticket → frame</p><h2 id="draw-title">Supply choices for this draw</h2>
+        <p>The application creates <code>std::array draws{FileMeshDraw{}}</code>. A ticket carries instance count, brightness, depth-test/write choices and culling. The camera builds a RenderView for the current image extent; the frame specifies the target size, clear color/depth and output encoding.</p>
+        <pre data-source="../../examples/file_mesh.cpp"><code>if (auto drawn = renderer-&gt;render(*frame, *view, draws); !drawn) {
+    return example::fail(drawn.error());
+}
+if (auto ended = frame-&gt;end(); !ended) {
+    return example::fail(ended.error());
+}
+if (auto presented = loop.present(); !presented) {
+    return example::fail(presented.error());
+}</code></pre>
+        <p>Inside <code>render</code>, the renderer borrows frame commands, sets the ticket’s raster state, calls <code>run(program, brightness)</code>, supplies the view, then calls <code>draw(gpu_mesh, instance_count)</code>. <strong>run selects the program; draw submits geometry.</strong> Present happens afterward.</p>
+        <p class="callout">This simple example loops over tickets. A renderer call is not automatically one native draw. The editor’s separate BlueprintMeshRenderer batches compatible tickets into instanced draws.</p>
+        <p class="source-note">Read: <a href="../../examples/file_mesh_renderer.cpp">FileMeshRenderer::render</a> · Compare: <a href="../../examples/file_mesh_direct.cpp">direct demo without a renderer</a> · Deeper: <a href="codebase.html#batching">instancing & batching</a></p>
+      </section>
+      <section class="walkthrough-step" id="diagnostics" aria-labelledby="inspect-title">
+        <p class="eyebrow">5 / Inspect the same shader</p><h2 id="inspect-title">Ask for rendering evidence</h2>
+        <pre><code>./build/vng_file_mesh_demo --analyze</code></pre>
+        <p>The demo asks its renderer for a diagnostic sweep before normal drawing, once. It requests the observed surface color along with diagnostic evidence:</p>
+        <pre data-source="../../examples/file_mesh.cpp"><code>auto request = vng::analysis::CaptureRequest::diagnostic()
+    .observe(SurfaceColor{});
+auto sweep = renderer-&gt;diagnose(*frame, *view, draws, request);</code></pre>
+        <p>Enhanced shader emission uses the same recorded program, with extra identification/observation output. The console report helps connect pixels to geometry and compare raster choices. This example requires one non-instanced ticket for diagnostics; it is not a general full-scene debugger for transparent effects.</p>
+        <p class="source-note">Read: <a href="../../examples/support/analysis_report.hpp">analysis_report.hpp</a>, <a href="../../examples/file_mesh_renderer.cpp">diagnose and validate_diagnostic</a> · Deeper: <a href="../analysis_rendering.md">analysis rendering guide</a></p>
+      </section>
+      <section class="walkthrough-step" id="demo-try" aria-labelledby="try-title">
+        <h2 id="try-title">Small changes to try</h2>
+        <p>These are small C++ edits to make and rebuild; the demo itself is not an editor panel.</p>
+        <ul class="steps"><li>Change a ticket’s brightness. Only the draw argument changes—not the shader definition.</li><li>Move the camera. Mesh bytes stay unchanged; the RenderView supplies a new projection.</li><li>Pass another compatible file: <code>./build/vng_file_mesh_demo path/to/mesh.vmesh</code>. It needs position/color fields mapped by this schema.</li><li>Read the <a href="../../examples/file_mesh_direct.cpp">direct demo</a> next to see the same boundaries without the concrete renderer wrapper.</li></ul>
+        <p class="source-note">Snippets are excerpts, not one copy-paste program. Complete files contain declarations, setup and all result checks. Documentation tests compare the marked excerpts with their source files.</p>
+      </section>
+      <footer><a href="walkthrough.html">← Code walkthrough</a><a href="index.html">Back to the overview →</a></footer>
+    </main>
+  </div>
+</body>
+</html>
