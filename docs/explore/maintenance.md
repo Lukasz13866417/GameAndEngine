@@ -203,3 +203,12 @@ The guide reflects the source inspected during this finite pass; it is not an
 always-running synchronization service. Resume from this note, the durable brief
 and current source, rather than assuming a future agent has hidden conversation
 memory.
+
+## Link drift pass · 2026-09-20
+
+`vng_editor_project` gained a public link to `vng_earth_assets` for the Earth
+blueprint's cloud-formation controls, and `RenderRequest` gained an
+`annotations` flag. The catalog now documents that link and lists
+`vng_earth_assets` as a 34th, CPU-only component with its own API/lifetime
+sections; the `walk-runtime` excerpt follows the current struct. Checks run:
+`node --test docs/explore/tests/content.test.cjs`.

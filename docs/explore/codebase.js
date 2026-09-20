@@ -112,10 +112,13 @@
       ["vng_ui", "vng_text_opengl"], { kind: "Integration", external: external("vng_glad_dependency") })
   ];
   const applications = [
+    component("vng_earth_assets", "Earth asset authoring", "Generate the stylized Earth mesh and edit its named cloud formations on the CPU.",
+      "make_mesh builds the Earth blueprint offline as an ordinary .vmesh document. Cloud settings, formation identities and move/turn/add/remove edits live in that document, so the editor can present them as ordinary blueprint controls. This is procedural content policy, not a renderer: it depends on vng_content only, never on OpenGL or the editor.",
+      ["examples/support/earth_assets.hpp", "examples/support/earth_clouds.hpp", "examples/support/earth_edit.cpp", "tests/examples/earth_assets_tests.cpp"], ["vng_content"], { kind: "App library" }),
     component("vng_editor_project", "Editor project model", "Authored scenes, private viewport state, editing transactions, history and persistence.",
-      "EditingSession is the authoring authority. The target also contains project codecs, narrow document patches, navigation math and preview-update coalescing. These are editor application policies, despite being built as a static library.",
+      "EditingSession is the authoring authority. The target also contains project codecs, narrow document patches, navigation math and preview-update coalescing. These are editor application policies, despite being built as a static library. It links vng_earth_assets so the Earth blueprint's cloud formations can be described as ordinary inspector controls.",
       ["examples/editor/editing_session.hpp", "examples/editor/project.hpp", "examples/editor/document_changes.hpp", "examples/editor/preview_updates.hpp", "tests/editor/editing_session_tests.cpp"],
-      ["vng_editor", "vng_timeline"], { kind: "App library", extra: { related: ["code-session-owner", "code-edit-delivery"] } }),
+      ["vng_editor", "vng_timeline", "vng_earth_assets"], { kind: "App library", extra: { related: ["code-session-owner", "code-edit-delivery"] } }),
     component("vng_example_support", "Example window-loop helpers", "Shared startup, options, diagnostics and native-loop repetition for demos.",
       "Small demo entry points delegate setup here so their rendering code remains readable. GlfwOpenGLSession is an example-owned backend pair, not a compulsory engine application object.",
       ["examples/support/glfw_opengl_session.hpp", "examples/support/window_loop.hpp", "examples/support/diagnostics.hpp"], ["vng_glfw_opengl"], { kind: "App library" }),
