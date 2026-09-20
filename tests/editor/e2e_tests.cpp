@@ -311,7 +311,6 @@ private:
                 else if(heading.text.starts_with("KEYFRAMES /")) tab="Scene";
                 else if(heading.text.starts_with("KEYFRAME /")) tab="Keyframe values";
                 else if(heading.text=="REGION / scene annotation") tab="Instance properties";
-                else if(heading.text.starts_with("CAMERA /")) tab="Instance properties";
                 else if(heading.text=="BLUEPRINT / local XYZ") {
                     if(const auto* container=node(page)) page=container->parent;
                     tab=find(button("Blueprint geometry"))?"Blueprint geometry":"Instance properties";
@@ -3447,6 +3446,15 @@ void Driver::workflow() {
         require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
             return widget.visible && widget.text.starts_with("EDITOR CAMERA");
         }), "Header does not say the editor camera is back");
+        return true;
+    });
+    add("Reselect the camera in the scene list so Delete targets instances", [this](const Observation& o) {
+        if (!ready(o)) return false;
+        const auto* camera = project::find_instance(o.state, camera_);
+        require(camera, "Camera is missing before Delete");
+        const auto* row = actionable(button("> #" + std::to_string(camera_) + " " + camera->name));
+        if (!row) return false;
+        click_at(center(intersection(row->bounds, row->clip)));
         return true;
     });
     add("Delete the camera instance", [this](const Observation& o) {

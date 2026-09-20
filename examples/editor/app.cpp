@@ -40,6 +40,7 @@
 #include "import_dialog.hpp"
 #include "open_scene_dialog.hpp"
 #include "camera_panel.hpp"
+#include "camera_glyph.hpp"
 #include "mesh_import_view.hpp"
 #include "animation.hpp"
 #include "preview_values.hpp"
@@ -249,10 +250,9 @@ int run(const Options& options) {
     auto nudges = vertex_tools.row().padding(0).gap(5);
     auto minus = nudges.button("X - 0.1").width(130);
     auto plus = nudges.button("X + 0.1").width(130);
-    // Camera actions stay usable without a selected keyframe, unlike the
-    // keyframe-gated properties page they sit above.
-    auto camera_host = screen.column().padding(10).gap(6);
-    CameraPanel camera_panel{camera_host};
+    // Camera actions float in the viewport beside the selected camera's glyph,
+    // so they stay reachable whatever the sidebar shows.
+    CameraPanel camera_panel{viewport_popups.column().padding(8).gap(6)};
     std::optional<CameraVisit> camera_visit;
     const auto inspecting = [&] { return camera_visit && !camera_visit->editable; };
     InspectorPanel inspector{properties_panel};
@@ -578,10 +578,7 @@ int run(const Options& options) {
         show_scene.width(tab_width * .18F);
         show_keyframe.width(tab_width * .38F);
         show_base.width(tab_width * .44F);
-        const auto camera_height = camera_panel.shown() ? 226.F : 0.F;
-        place(camera_host, {geometry.inspector.x, geometry.inspector.y, geometry.inspector.width, camera_height});
-        place(properties_panel, {geometry.inspector.x, geometry.inspector.y + camera_height, geometry.inspector.width,
-                                 std::max(40.F, geometry.inspector.height - camera_height)});
+        place(properties_panel, geometry.inspector);
         place(region_inspector, geometry.inspector);
         for (auto* field : {&x, &y, &z})
             field->width(std::max(60.0F, (xyz.bounds().width - 8) / 3));
@@ -1880,8 +1877,33 @@ int run(const Options& options) {
                 const bool can_author = editing.can_edit_scene_pose() && !playing && !mode_pending && !editing.awaiting_remote();
                 camera_panel.sync(view_state.mode == ViewMode::scene ? selected_camera : nullptr, camera_visit,
                                   selected_camera && active_now == selected_camera, can_author,
-                                  sidebar_tab == SidebarTab::properties && !viewport_interaction.custom_inspector());
-                camera_host.enabled(!dialog_was_open && !mode_pending && !editing.busy());
+                                  view_state.mode == ViewMode::scene && !playing && !logs_visible);
+                camera_panel.enabled(!dialog_was_open && !mode_pending && !editing.busy());
+                if (camera_panel.shown()) {
+                    // Beside the glyph body when it is on screen, else the viewport's top-right corner.
+                    const auto bounds = image.bounds();
+                    constexpr f32 panel_width = 324, panel_height = 236;
+                    ui::Rect at{bounds.x + bounds.width - panel_width - 12, bounds.y + 12, panel_width, panel_height};
+                    if (selected_camera)
+                        if (const auto snapshot = image_camera.snapshot(image_extent)) {
+                            const auto body = camera_glyph(evaluate_instance(state, *selected_camera, view_state.time)).body_center();
+                            Vec4 clip{};
+                            for (std::size_t row = 0; row < 4; ++row) {
+                                clip[row] = snapshot->view_projection[3][row];
+                                for (std::size_t column = 0; column < 3; ++column)
+                                    clip[row] += snapshot->view_projection[column][row] * body[column];
+                            }
+                            if (clip.w > 0) {
+                                const auto x = bounds.x + (clip.x / clip.w * .5F + .5F) * bounds.width;
+                                const auto y = bounds.y + (.5F - clip.y / clip.w * .5F) * bounds.height;
+                                if (bounds.contains({x, y})) {
+                                    at.x = std::clamp(x + 36, bounds.x, bounds.x + bounds.width - panel_width);
+                                    at.y = std::clamp(y - panel_height * .5F, bounds.y, bounds.y + bounds.height - panel_height);
+                                }
+                            }
+                        }
+                    camera_panel.place(at);
+                }
                 if (camera_panel.enter_clicked() && selected_camera) visit_camera(*selected_camera, true);
                 if (camera_panel.inspect_clicked() && selected_camera) visit_camera(*selected_camera, false);
                 if (camera_panel.back_clicked()) { end_camera_visit(true); status.text("Editor view restored"); }
@@ -2105,7 +2127,13 @@ int run(const Options& options) {
         const bool list_blocks_viewport = !viewport_window.opened() &&
             (instance_flyout.contains(viewport_raw.pointer) || blueprint_flyout.contains(viewport_raw.pointer) ||
              timeline.menu_contains(viewport_raw.pointer));
-        const bool viewport_enabled = viewport_ready && !toolbar_blocks_viewport && !list_blocks_viewport;
+        // The camera overlay swallows presses that start on it, never a drag in
+        // progress nor a press that began elsewhere in this input frame.
+        const bool camera_overlay_blocks = camera_panel.contains(viewport_raw.pointer) && !navigation.dragging() &&
+            !viewport_interaction.busy() && std::ranges::none_of(viewport_raw.events, [&](const input::Event& event) {
+                return event.kind == input::EventKind::pointer_down && !camera_panel.contains(event.position);
+            });
+        const bool viewport_enabled = viewport_ready && !toolbar_blocks_viewport && !list_blocks_viewport && !camera_overlay_blocks;
         const auto previous_camera = preview_camera_pose(state, view_state.time);
         if (walk_button.clicked() && viewport_enabled && !inspecting()) {
             finish_camera(false);
