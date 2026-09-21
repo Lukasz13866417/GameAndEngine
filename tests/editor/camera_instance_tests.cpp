@@ -196,6 +196,8 @@ TEST_CASE("Cameras move, turn and slide along their look direction, and draw a f
     CHECK(axes.front().direction.z == Catch::Approx(-1)); // Yaw zero looks down -Z.
     auto lines = scene_annotation_lines(state, 0);
     CHECK(lines.size() == camera_glyph_line_count); // Body, lens, reels, frustum, up tick and look line.
+    CHECK(scene_annotation_triangles(state, 0).size() == camera_glyph_triangle_count); // Solid body, lens and reels.
+    CHECK(scene_annotation_triangles(state, 0).front().color.x < .6F); // Fills are a darker tone than the wire.
     const auto eye = find_instance(state, camera)->transform.position;
     CHECK(std::ranges::count_if(lines, [&](const SceneLine& line) { return line.from == eye; }) == 4);
     state.viewport.mode = ViewMode::mesh;
@@ -203,4 +205,5 @@ TEST_CASE("Cameras move, turn and slide along their look direction, and draw a f
     state.viewport.mode = ViewMode::scene;
     camera_settings(state, camera)->visible = false;
     CHECK(scene_annotation_lines(state, 0).empty());
+    CHECK(scene_annotation_triangles(state, 0).empty());
 }

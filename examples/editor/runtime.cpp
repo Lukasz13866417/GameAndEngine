@@ -238,6 +238,7 @@ struct Runtime::Impl {
     std::optional<SceneAnnotationRenderer> annotations;
     std::optional<opengl::Framebuffer> annotation_target;
     std::vector<SceneLine> annotation_lines;
+    std::vector<SceneTriangle> annotation_triangles;
     u64 annotation_revision{};
     f32 annotation_time{-1};
     u32 annotation_selection{}, annotation_flags{};
@@ -752,6 +753,7 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
         if(p.annotation_revision!=state.document.revision || p.annotation_time!=sampled_time ||
            p.annotation_flags!=flags || p.annotation_selection!=state.viewport.selected_object) {
             p.annotation_lines=scene_annotation_lines(state,sampled_time,hidden_object);
+            p.annotation_triangles=scene_annotation_triangles(state,sampled_time,hidden_object);
             p.annotation_revision=state.document.revision;p.annotation_time=sampled_time;
             p.annotation_flags=flags;p.annotation_selection=state.viewport.selected_object;
         }
@@ -772,7 +774,7 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
         !v)
         return std::unexpected(v.error());
     if(decorate)
-        if(auto r=result(p.annotations->render(*output,*view,p.annotation_lines));!r)return std::unexpected(r.error());
+        if(auto r=result(p.annotations->render(*output,*view,p.annotation_lines,p.annotation_triangles));!r)return std::unexpected(r.error());
     if (auto v = result(output->end()); !v)
         return std::unexpected(v.error());
     ++p.stats.rendered_frames;

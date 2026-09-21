@@ -11,6 +11,11 @@ struct SceneLine {
     vng::Vec4 color;
     friend bool operator==(const SceneLine&, const SceneLine&) = default;
 };
+struct SceneTriangle {
+    vng::Vec3 a, b, c;
+    vng::Vec4 color;
+    friend bool operator==(const SceneTriangle&, const SceneTriangle&) = default;
+};
 // Clip two orthogonal families of grid lines against each polygon. Pairing
 // sorted edge crossings handles concave outlines without fan triangulation.
 inline void region_wall_grid(std::vector<SceneLine>& lines, const RegionGeometry& shape, vng::Vec4 color) {
@@ -69,6 +74,22 @@ inline void camera_annotation_lines(std::vector<SceneLine>& lines,const State& s
             : instance.id==state.viewport.selected_object ? Vec4{1,.52F,.08F,1} : Vec4{.55F,.6F,.75F,1};
         camera_glyph_lines(camera_glyph(value),[&](Vec3 from,Vec3 to){lines.push_back({from,to,color});});
     }
+}
+// Solid camera bodies, drawn under the wire glyph in a darker tone of its color.
+inline std::vector<SceneTriangle> scene_annotation_triangles(const State& state,vng::f32 time,vng::u32 hidden_object=0) {
+    using namespace vng;
+    std::vector<SceneTriangle> triangles;
+    if(state.viewport.mode!=ViewMode::scene)return triangles;
+    const auto* active=active_camera(state,time);
+    for(const auto& instance:state.document.instances) {
+        if(instance.id==hidden_object)continue;
+        if(!std::holds_alternative<CameraSettings>(instance.settings) || !evaluate_visibility(state,instance,time))continue;
+        const auto value=evaluate_instance(state,instance,time);
+        const auto tone=&instance==active ? Vec4{.55F,.47F,.14F,1}
+            : instance.id==state.viewport.selected_object ? Vec4{.55F,.29F,.05F,1} : Vec4{.24F,.27F,.34F,1};
+        camera_glyph_triangles(camera_glyph(value),[&](Vec3 a,Vec3 b,Vec3 c){triangles.push_back({a,b,c,tone});});
+    }
+    return triangles;
 }
 inline std::vector<SceneLine> scene_annotation_lines(const State& state,vng::f32 time,vng::u32 hidden_object=0) {
     using namespace vng;
