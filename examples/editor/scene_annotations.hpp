@@ -14,6 +14,9 @@ public:
     SceneAnnotationRenderer& operator=(SceneAnnotationRenderer&&) noexcept;
     std::expected<void,vng::opengl::Diagnostic> render(vng::opengl::Frame&,const vng::render::RenderView&,
                                                      std::span<const SceneLine>);
+    // Filled triangles draw first, depth-tested like the lines, so wire edges stay on top.
+    std::expected<void,vng::opengl::Diagnostic> render(vng::opengl::Frame&,const vng::render::RenderView&,
+                                                     std::span<const SceneLine>,std::span<const SceneTriangle>);
 private:
     struct Impl;
     explicit SceneAnnotationRenderer(std::unique_ptr<Impl>);

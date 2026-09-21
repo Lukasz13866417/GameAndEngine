@@ -19,6 +19,9 @@ struct SceneAnnotationRenderer::Impl {
     opengl::VertexArray vao;
     std::optional<opengl::Buffer> buffer;
     std::vector<SceneLine> lines;
+    std::optional<opengl::VertexArray> fill_vao;
+    std::optional<opengl::Buffer> fill_buffer;
+    std::vector<SceneTriangle> triangles;
 };
 SceneAnnotationRenderer::SceneAnnotationRenderer(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
 SceneAnnotationRenderer::~SceneAnnotationRenderer()=default;
@@ -45,10 +48,44 @@ std::expected<SceneAnnotationRenderer,opengl::Diagnostic> SceneAnnotationRendere
 }
 std::expected<void,opengl::Diagnostic> SceneAnnotationRenderer::render(opengl::Frame& frame,const render::RenderView& view,
                                                                      std::span<const SceneLine> lines) {
-    if(lines.empty())return {};
+    return render(frame,view,lines,{});
+}
+std::expected<void,opengl::Diagnostic> SceneAnnotationRenderer::render(opengl::Frame& frame,const render::RenderView& view,
+                                                                     std::span<const SceneLine> lines,std::span<const SceneTriangle> triangles) {
+    if(lines.empty() && triangles.empty())return {};
     auto& p=*impl_;
     auto scope=opengl::RenderStateScope::capture(frame.device(),std::array<u32,1>{0});
     if(!scope)return std::unexpected(scope.error());
+    if(!triangles.empty() && (!p.fill_buffer || !std::ranges::equal(triangles,p.triangles))) {
+        std::vector<Vertex> vertices(triangles.size()*3);
+        for(std::size_t i=0;i<triangles.size();++i) {
+            vertices[3*i].set(Position{},triangles[i].a);vertices[3*i+1].set(Position{},triangles[i].b);vertices[3*i+2].set(Position{},triangles[i].c);
+            for(unsigned j=0;j<3;++j)vertices[3*i+j].set(Color{},triangles[i].color);
+        }
+        auto buffer=opengl::Buffer::from_bytes(frame.device(),std::as_bytes(std::span{vertices}));
+        if(!buffer)return std::unexpected(buffer.error());
+        p.fill_buffer=std::move(*buffer);
+        if(!p.fill_vao) {
+            auto vao=opengl::VertexArray::create(frame.device());
+            if(!vao)return std::unexpected(vao.error());
+            p.fill_vao=std::move(*vao);
+        }
+        using Layout=gfx::VertexLayout<gfx::Stream<Vertex,gfx::PerVertex>>;
+        const std::array streams{opengl::ResolvedStreamBuffer{0,&*p.fill_buffer,0}};
+        if(auto r=opengl::configure_vertex_input(*p.fill_vao,gfx::resolve_vertex_input<Inputs,Layout>(),streams);!r)return r;
+        p.triangles.assign(triangles.begin(),triangles.end());
+    }
+    if(!triangles.empty()) {
+        auto context=frame.render_context();auto graphics=context.graphics_state();
+        if(auto r=graphics.set(render::DepthState{true,true,render::DepthCompare::less_equal});!r)return r;
+        if(auto r=graphics.set(render::BlendMode::disabled);!r)return r;
+        if(auto r=graphics.set(render::CullMode::none);!r)return r;
+        if(auto r=graphics.set(opengl::PolygonMode::fill);!r)return r;
+        if(auto r=context.run(p.program,view.camera()->view_projection);!r)return r;
+        if(auto r=p.fill_vao->bind();!r)return r;
+        if(auto drawn=frame.device().draw_arrays_instanced(opengl::Primitive::triangles,0,static_cast<u32>(triangles.size()*3));!drawn)return drawn;
+    }
+    if(lines.empty())return scope->restore();
     if(!p.buffer || !std::ranges::equal(lines,p.lines)) {
         std::vector<Vertex> vertices(lines.size()*2);
         for(std::size_t i=0;i<lines.size();++i) {
