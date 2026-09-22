@@ -9,55 +9,54 @@
 
 namespace example::glow {
 
-using namespace vng;
 
 inline void quad(
-    render::SurfaceMesh& mesh,
-    std::array<Vec3, 4> points,
-    Vec4 color = {1, 1, 1, 1},
-    f32 tiling = 1)
+    vng::render::SurfaceMesh& mesh,
+    std::array<vng::Vec3, 4> points,
+    vng::Vec4 color = {1, 1, 1, 1},
+    vng::f32 tiling = 1)
 {
-    const auto base = static_cast<u32>(mesh.vertex_count());
+    const auto base = static_cast<vng::u32>(mesh.vertex_count());
     const std::array uv{
-        Vec2{0, 0},
-        Vec2{tiling, 0},
-        Vec2{tiling, tiling},
-        Vec2{0, tiling},
+        vng::Vec2{0, 0},
+        vng::Vec2{tiling, 0},
+        vng::Vec2{tiling, tiling},
+        vng::Vec2{0, tiling},
     };
     for (std::size_t i = 0; i < 4; ++i) {
         auto& vertex = mesh.vertices().emplace_back();
-        vertex.set(gfx::Position{}, points[i]);
-        vertex.set(gfx::TexCoord<>{}, uv[i]);
-        vertex.set(gfx::Color{}, color);
+        vertex.set(vng::gfx::Position{}, points[i]);
+        vertex.set(vng::gfx::TexCoord<>{}, uv[i]);
+        vertex.set(vng::gfx::Color{}, color);
     }
     mesh.faces().emplace_back(base, base + 1, base + 2);
     mesh.faces().emplace_back(base, base + 2, base + 3);
 }
 
-inline render::SurfaceMesh ring()
+inline vng::render::SurfaceMesh ring()
 {
-    render::SurfaceMesh mesh(0);
+    vng::render::SurfaceMesh mesh(0);
     mesh.info().name = "Neon ring";
 
-    constexpr u32 major = 96;
-    constexpr u32 minor = 12;
-    constexpr f32 tau = 2 * std::numbers::pi_v<f32>;
+    constexpr vng::u32 major = 96;
+    constexpr vng::u32 minor = 12;
+    constexpr vng::f32 tau = 2 * std::numbers::pi_v<vng::f32>;
 
     // A thin torus gives the luminous ring a visible round cross-section.
-    const auto point = [](f32 a, f32 b) {
+    const auto point = [](vng::f32 a, vng::f32 b) {
         const auto radius = 1.0F + 0.045F * std::cos(b);
-        return Vec3{
+        return vng::Vec3{
             radius * std::cos(a),
             radius * std::sin(a),
             0.045F * std::sin(b),
         };
     };
-    for (u32 i = 0; i < major; ++i) {
-        for (u32 j = 0; j < minor; ++j) {
-            const auto a = tau * static_cast<f32>(i) / major;
-            const auto b = tau * static_cast<f32>(j) / minor;
-            const auto aa = tau * static_cast<f32>(i + 1) / major;
-            const auto bb = tau * static_cast<f32>(j + 1) / minor;
+    for (vng::u32 i = 0; i < major; ++i) {
+        for (vng::u32 j = 0; j < minor; ++j) {
+            const auto a = tau * static_cast<vng::f32>(i) / major;
+            const auto b = tau * static_cast<vng::f32>(j) / minor;
+            const auto aa = tau * static_cast<vng::f32>(i + 1) / major;
+            const auto bb = tau * static_cast<vng::f32>(j + 1) / minor;
             quad(mesh, {
                 point(a, b),
                 point(aa, b),
@@ -69,9 +68,9 @@ inline render::SurfaceMesh ring()
     return mesh;
 }
 
-inline render::SurfaceMesh box()
+inline vng::render::SurfaceMesh box()
 {
-    render::SurfaceMesh mesh(0);
+    vng::render::SurfaceMesh mesh(0);
     mesh.info().name = "Display plinth";
 
     // Per-face colors keep the plinth readable with the unlit surface shader.
@@ -102,9 +101,9 @@ inline render::SurfaceMesh box()
     return mesh;
 }
 
-inline render::SurfaceMesh floor()
+inline vng::render::SurfaceMesh floor()
 {
-    render::SurfaceMesh mesh(0);
+    vng::render::SurfaceMesh mesh(0);
     mesh.info().name = "Textured stage";
     quad(mesh, {{
         {-7, -1.3F, -5}, {-7, -1.3F, 5},
@@ -113,19 +112,19 @@ inline render::SurfaceMesh floor()
     return mesh;
 }
 
-inline gfx::ImageData grid_texture()
+inline vng::gfx::ImageData grid_texture()
 {
-    gfx::ImageData image{
+    vng::gfx::ImageData image{
         .extent = {64, 64},
         .pixels = std::vector<std::byte>(64 * 64 * 4),
     };
-    for (u32 y = 0; y < 64; ++y) {
-        for (u32 x = 0; x < 64; ++x) {
+    for (vng::u32 y = 0; y < 64; ++y) {
+        for (vng::u32 x = 0; x < 64; ++x) {
             const bool line = x < 2 || y < 2;
-            const std::array<u8, 4> color = line
-                ? std::array<u8, 4>{61, 85, 119, 255}
-                : std::array<u8, 4>{21, 28, 44, 255};
-            for (u32 channel = 0; channel < 4; ++channel) {
+            const std::array<vng::u8, 4> color = line
+                ? std::array<vng::u8, 4>{61, 85, 119, 255}
+                : std::array<vng::u8, 4>{21, 28, 44, 255};
+            for (vng::u32 channel = 0; channel < 4; ++channel) {
                 image.pixels[(y * 64 + x) * 4 + channel] = std::byte{color[channel]};
             }
         }
@@ -133,11 +132,11 @@ inline gfx::ImageData grid_texture()
     return image;
 }
 
-inline Mat4 placement(
-    Vec3 position,
-    Vec3 scale = {1, 1, 1},
-    f32 yaw = 0,
-    f32 pitch = 0)
+inline vng::Mat4 placement(
+    vng::Vec3 position,
+    vng::Vec3 scale = {1, 1, 1},
+    vng::f32 yaw = 0,
+    vng::f32 pitch = 0)
 {
     const auto cy = std::cos(yaw);
     const auto sy = std::sin(yaw);
@@ -145,7 +144,7 @@ inline Mat4 placement(
     const auto sx = std::sin(pitch);
 
     // Column-major transform: scale, then pitch and yaw, then translate.
-    Mat4 matrix{};
+    vng::Mat4 matrix{};
     matrix[0] = {cy * scale.x, 0, -sy * scale.x, 0};
     matrix[1] = {sy * sx * scale.y, cx * scale.y, cy * sx * scale.y, 0};
     matrix[2] = {sy * cx * scale.z, -sx * scale.z, cy * cx * scale.z, 0};
@@ -153,9 +152,9 @@ inline Mat4 placement(
     return matrix;
 }
 
-inline auto rings(f32 time)
+inline auto rings(vng::f32 time)
 {
-    using Draw = render::SurfaceDraw;
+    using Draw = vng::render::SurfaceDraw;
     return std::array{
         Draw{
             .transform = placement({-2.6F, 0, 0}, {1, 1, 1}, time * 0.24F + 0.18F, 0.1F),
@@ -182,7 +181,7 @@ inline auto rings(f32 time)
 
 inline auto plinths()
 {
-    using Draw = render::SurfaceDraw;
+    using Draw = vng::render::SurfaceDraw;
     return std::array{
         Draw{
             .transform = placement({-2.6F, -1.16F, 0}, {2.4F, 0.25F, 1.6F}),
