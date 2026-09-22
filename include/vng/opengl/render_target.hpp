@@ -5,13 +5,14 @@
 #include <vng/opengl/frame.hpp>
 #include <vng/opengl/framebuffer.hpp>
 #include <vng/opengl/image.hpp>
-#include <vng/providers/target.hpp>
+#include <vng/render/target.hpp>
+#include <vng/resources/diagnostic.hpp>
 
 namespace vng::opengl {
 
 // One coherent renderable resource: attachment storage and the framebuffer
-// referring to it move and reload together. Its provider retains construction
-// choices by value; the provider or builder that created it need not survive.
+// referring to it move and reload together. It keeps its own description by
+// value, so resize and reload recreate it without any outside builder.
 class RenderTarget final {
 public:
     [[nodiscard]] static std::expected<RenderTarget, Diagnostic> create(
@@ -33,12 +34,12 @@ public:
     [[nodiscard]] resources::Result<void> reload(const Device& device);
 
 private:
-    RenderTarget(providers::RenderTargetProvider provider, Image2D color,
+    RenderTarget(render::TargetDesc description, Image2D color,
         std::optional<Image2D> depth, Framebuffer framebuffer) noexcept
-        : provider_(std::move(provider)), color_(std::move(color)),
+        : description_(description), color_(std::move(color)),
           depth_(std::move(depth)), framebuffer_(std::move(framebuffer)) {}
 
-    providers::RenderTargetProvider provider_;
+    render::TargetDesc description_;
     Image2D color_;
     std::optional<Image2D> depth_;
     // Destroy the framebuffer before releasing the storage it refers to.

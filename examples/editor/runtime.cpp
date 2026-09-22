@@ -17,6 +17,7 @@
 #include <vng/content/vmesh_schema.hpp>
 #include <vng/shader/shader.hpp>
 #include <vng/opengl/render_state_scope.hpp>
+#include <vng/providers/target.hpp>
 #include <glad/gl.h>
 #include <chrono>
 #include <cstring>

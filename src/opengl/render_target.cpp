@@ -36,7 +36,7 @@ std::expected<RenderTarget, Diagnostic> RenderTarget::create(
     }
     if (auto complete = framebuffer->check_complete(); !complete)
         return std::unexpected(std::move(complete.error()));
-    return RenderTarget{providers::render_target(description), std::move(*color),
+    return RenderTarget{description, std::move(*color),
         std::move(depth), std::move(*framebuffer)};
 }
 
@@ -47,7 +47,7 @@ RenderTarget& RenderTarget::operator=(RenderTarget&& other) noexcept
         framebuffer_ = std::move(other.framebuffer_);
         color_ = std::move(other.color_);
         depth_ = std::move(other.depth_);
-        provider_ = std::move(other.provider_);
+        description_ = other.description_;
     }
     return *this;
 }
@@ -62,8 +62,8 @@ resources::Result<void> RenderTarget::resize(const Device& device, Extent2D exte
     if (auto allowed = device.require_resource_update("RenderTarget::resize"); !allowed)
         return std::unexpected(resources::to_diagnostic(std::move(allowed.error())));
     if (extent == this->extent()) return {};
-    auto candidate = provider_.provide(device, extent);
-    if (!candidate) return std::unexpected(std::move(candidate.error()));
+    auto candidate = create(device, description_, extent);
+    if (!candidate) return std::unexpected(resources::to_diagnostic(std::move(candidate.error())));
     *this = std::move(*candidate);
     return {};
 }
@@ -77,8 +77,8 @@ resources::Result<void> RenderTarget::reload(const Device& device)
         });
     if (auto allowed = device.require_resource_update("RenderTarget::reload"); !allowed)
         return std::unexpected(resources::to_diagnostic(std::move(allowed.error())));
-    auto candidate = provider_.provide(device, extent());
-    if (!candidate) return std::unexpected(std::move(candidate.error()));
+    auto candidate = create(device, description_, extent());
+    if (!candidate) return std::unexpected(resources::to_diagnostic(std::move(candidate.error())));
     *this = std::move(*candidate);
     return {};
 }
