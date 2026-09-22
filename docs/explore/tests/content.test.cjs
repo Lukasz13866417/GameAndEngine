@@ -103,7 +103,7 @@ test("core architectural boundaries and explicit ownership stay inspectable", ()
   assert.ok(dependencies("vng_glfw_opengl").includes("vng_window_glfw"));
   assert.ok(dependencies("vng_rig_opengl").includes("vng_rig"));
   assert.ok(!dependencies("vng_rig").includes("vng_rig_opengl"));
-  assert.deepEqual(Array.from(dependencies("vng_render")), ["vng_gfx"]);
+  assert.deepEqual(Array.from(dependencies("vng_render")), ["vng_gfx", "vng_resources"]);
   const session = nodes.find(node => node.id === "code-session-owner");
   assert.ok(session.ownership.owns.some(item => item.includes("Document, ViewportState")));
   const runtime = nodes.find(node => node.id === "code-runtime-owner");

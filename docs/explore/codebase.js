@@ -36,8 +36,8 @@
       ["include/vng/resources/provider.hpp", "include/vng/resources/shared.hpp", "tests/resources/provider_tests.cpp"], ["vng_core"],
       { type: "Header-only (INTERFACE)", visibility: "INTERFACE", extra: { related: ["resources"] } }),
     component("vng_render", "Rendering contracts", "Renderer tickets, views, frames and typed state/program facades.",
-      "Renderer<Ticket, Backend> supplies compile-time identity, not draw policy. Factories such as compile_program dispatch through the device type. Explicit OpenGL integration headers also live under render/; the neutral target itself does not link OpenGL or the shader compiler.",
-      ["include/vng/render/renderer.hpp", "include/vng/render/program.hpp", "include/vng/render/graphics_state.hpp", "tests/render"], ["vng_gfx"],
+      "Renderer<Ticket, Backend> supplies compile-time identity, not draw policy. Factories such as compile_program dispatch through the device type. OpenGL integration headers live in render_opengl/ and the other *_opengl directories; nothing under render/ includes a backend.",
+      ["include/vng/render/renderer.hpp", "include/vng/render/program.hpp", "include/vng/render/graphics_state.hpp", "tests/render"], ["vng_gfx", "vng_resources"],
       { type: "Header-only (INTERFACE)", visibility: "INTERFACE", extra: { related: ["renderer", "graphics-state", "code-backend-dispatch"] } }),
     component("vng_analysis", "Render evidence data", "Image evidence, provenance and inspection contracts for diagnostic rendering.",
       "Neutral analysis types describe captured results and their relationship to entities, primitives and observations. Producing pixels and enhanced shaders belongs to the rendering integration, not this target.",
@@ -57,19 +57,19 @@
       ["vng_resources", "vng_render", "vng_shader", "vng_content"], { type: "Header-only (INTERFACE)", visibility: "INTERFACE" }),
     component("vng_rig", "Armatures, poses & skin bindings", "CPU rigging data keeps shape, bone hierarchy, weights and animation pose separate.",
       "Armature stores rest structure; Pose stores changing local transforms. SkinBinding connects a mesh snapshot with an armature and weights. The dependency direction is rig_opengl → rig, never rig → rig_opengl.",
-      ["include/vng/rig/armature.hpp", "include/vng/rig/skin_binding.hpp", "src/rig", "tests/rig"], ["vng_gfx"]),
+      ["include/vng/rig/armature.hpp", "include/vng/rig/skin_binding.hpp", "include/vng/rig/skinned_mesh_renderer.hpp", "src/rig", "tests/rig"], ["vng_gfx", "vng_render"]),
     component("vng_text", "Font shaping & glyph data", "Fonts, shaped text and glyph bitmaps, without issuing OpenGL draws.",
       "Font uses FreeType and HarfBuzz internally. Its metrics and shaped runs are consumed by UI and text-rendering integrations. GPU atlas ownership belongs to the concrete text renderer.",
       ["include/vng/text/font.hpp", "include/vng/text/text_renderer.hpp", "src/text", "tests/text"], ["vng_core"], { external: external("Freetype::Freetype", "vng_harfbuzz_dependency") }),
     component("vng_ui", "Widgets & interaction", "Screen owns retained widgets; updates produce events and drawing data.",
       "Buttons, text fields, lists, scrollbars and themes are modeled here. Screen handles layout/input and prepares a DrawList. Rendering the DrawList is a separate backend concern; ICU supports text interaction.",
-      ["include/vng/ui/ui.hpp", "src/ui/ui.cpp", "tests/ui/ui_tests.cpp"], ["vng_text"], { external: external("ICU::uc", "ICU::i18n") }),
+      ["include/vng/ui/ui.hpp", "include/vng/ui/ui_renderer.hpp", "src/ui/ui.cpp", "tests/ui/ui_tests.cpp"], ["vng_text", "vng_gfx", "vng_render"], { external: external("ICU::uc", "ICU::i18n") }),
     component("vng_editor", "Reusable editing primitives", "Editable mesh topology, selection and inspector descriptions—not the whole editor app.",
       "These public primitives can be used without the editor UI process. Application document semantics and undo authority belong to EditingSession in examples/editor. The similarly named targets are intentionally distinguished here.",
       ["include/vng/editor/mesh.hpp", "include/vng/editor/inspector.hpp", "include/vng/editor/selection.hpp", "src/editor/mesh_topology.cpp"], ["vng_content", "vng_spatial"]),
     component("vng_editor_preview", "Linux preview transport", "Build/restart a worker, exchange control messages and receive completed RGBA frames.",
       "PreviewSession owns its child processes and transport; WorkerEndpoint is the worker side. Polling does not wait for compilation or a frame. This is trusted project-code fault isolation, not a security sandbox or an editor document model.",
-      ["include/vng/editor/preview.hpp", "src/editor/preview.cpp", "tests/editor/preview_tests.cpp"], ["vng_core"], { external: external("Threads::Threads") })
+      ["include/vng/editor/preview.hpp", "src/editor/preview.cpp", "tests/editor/preview_tests.cpp"], ["vng_editor"], { external: external("Threads::Threads") })
   ];
   const backends = [
     component("vng_glsl", "GLSL emission", "Lower neutral shader IR to deterministic GLSL, with no live graphics context.",
