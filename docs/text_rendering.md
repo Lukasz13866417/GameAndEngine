@@ -6,8 +6,8 @@ does not construct glyph meshes or shaders.
 
 ```cpp
 #include <array>
-#include <vng/opengl/text_renderer.hpp>
-#include <vng/render/text_renderer.hpp>
+#include <vng/text_opengl/text_renderer.hpp>
+#include <vng/text/text_renderer.hpp>
 #include <vng/text/font.hpp>
 
 auto font = vng::text::Font::load("examples/assets/fonts/DejaVuSans.ttf");

@@ -21,7 +21,7 @@ link the distinct `vng::glfw_opengl` integration target.
 Backend selection appears once, at creation:
 
 ```cpp
-#include <vng/window/glfw_opengl.hpp>
+#include <vng/glfw_opengl/glfw_opengl.hpp>
 
 auto created = vng::glfw_opengl::create_window(
     vng::window::WindowDesc{

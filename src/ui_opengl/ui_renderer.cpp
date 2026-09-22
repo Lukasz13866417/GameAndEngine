@@ -1,5 +1,5 @@
-#include <vng/opengl/ui_renderer.hpp>
-#include <vng/opengl/text_renderer.hpp>
+#include <vng/ui_opengl/ui_renderer.hpp>
+#include <vng/text_opengl/text_renderer.hpp>
 #include <vng/opengl/gfx_vertex_input.hpp>
 #include <vng/opengl/image.hpp>
 #include "../opengl/gl_error.hpp"

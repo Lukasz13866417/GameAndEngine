@@ -1,7 +1,7 @@
 #include "spaceship_renderer.hpp"
 
 #include <vng/opengl/gpu_mesh.hpp>
-#include <vng/render/opengl_program_runtime.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
 #include <vng/shader/shader.hpp>
 
 #include <cmath>

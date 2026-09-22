@@ -1,4 +1,4 @@
-#include <vng/opengl/bloom.hpp>
+#include <vng/bloom_opengl/bloom.hpp>
 
 #include <vng/gfx/gfx.hpp>
 #include <vng/opengl/buffer.hpp>

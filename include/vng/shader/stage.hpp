@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vng/dsl/dsl.hpp>
+#include <vng/shader/dsl/dsl.hpp>
 #include <vng/shader/arguments.hpp>
 #include <vng/shader/diagnostic.hpp>
 #include <vng/shader/interface.hpp>

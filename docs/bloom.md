@@ -9,7 +9,7 @@ does not rebuild or recompile resources.
 ## Render an HDR scene
 
 ```cpp
-#include <vng/opengl/bloom.hpp>
+#include <vng/bloom_opengl/bloom.hpp>
 #include <vng/opengl/render_target.hpp>
 #include <vng/providers/target.hpp>
 

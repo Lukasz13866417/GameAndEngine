@@ -11,7 +11,7 @@
 #include <vng/glsl/emitter.hpp>
 #include <vng/opengl/diagnostic.hpp>
 #include <vng/opengl/renderer.hpp>
-#include <vng/render/skinned_mesh_renderer.hpp>
+#include <vng/rig/skinned_mesh_renderer.hpp>
 #include <vng/resources/resources.hpp>
 
 namespace vng::opengl {

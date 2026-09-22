@@ -6,7 +6,7 @@
 #include "support/sun_softening.hpp"
 #include "support/window_loop.hpp"
 
-#include <vng/opengl/bloom.hpp>
+#include <vng/bloom_opengl/bloom.hpp>
 #include <vng/providers/target.hpp>
 
 #include <chrono>

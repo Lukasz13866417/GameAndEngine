@@ -43,10 +43,12 @@ or every C++ `#include`. Build options can disable conditional targets. See
 | `examples/editor/` | Editor document, authoring, interaction, communication and rendering policy | [editing_session.hpp](../examples/editor/editing_session.hpp), [app.cpp](../examples/editor/app.cpp) |
 | `tests/` | Compile-fail, CPU, GPU, application and native interaction checks | [editor/editing_session_tests.cpp](../tests/editor/editing_session_tests.cpp), [editor/e2e_tests.cpp](../tests/editor/e2e_tests.cpp) |
 
-Headers and targets do not map one-to-one. `vng_gfx` and `vng_render` are
-header-only targets. OpenGL-specific integration headers also exist under
-`include/vng/render`; those headers are not evidence that the neutral renderer
-base owns or links OpenGL. Inspect the particular header and target.
+Every directory under `include/vng/` and `src/` belongs to exactly one
+target of the same name, so a header's path tells you what it links. `vng_gfx`
+and `vng_render` are header-only. OpenGL integration headers live under
+`include/vng/render_opengl`, `include/vng/glfw_opengl` and the other
+`*_opengl` directories, never under the neutral `include/vng/render`.
+`tests/layering/layering.test.cjs` checks this on every test run.
 
 ## Follow a mesh from bytes to pixels
 
@@ -225,7 +227,7 @@ buffers. End the frame before resizing/reloading resources it borrows. The
 GPU resource creation, use **and destruction** require the compatible current
 context. Keep window/context alive until all dependent resources are destroyed.
 The OpenGL library does not create or depend on a GLFW window: the explicit
-[bridge](../include/vng/window/glfw_opengl.hpp) provides that pairing.
+[bridge](../include/vng/glfw_opengl/glfw_opengl.hpp) provides that pairing.
 
 ### Providers recreate; owners replace
 
@@ -244,7 +246,7 @@ auto rings = ring_builder.build();
 if (!rings) return fail(rings.error());
 ```
 
-The ready [MeshRenderer](../include/vng/opengl/mesh_renderer.hpp) owns resources
+The ready [MeshRenderer](../include/vng/resources_opengl/mesh_renderer.hpp) owns resources
 and retained recipes. Its `update(device)` transaction stages replacements,
 validates and commits a coherent bundle. It checks owner generation so a stale
 transaction cannot overwrite a newer one. Reload helpers call retained providers;
@@ -255,7 +257,7 @@ empty renderer base.
 For glow, an HDR target holds light values above one, bloom extracts/blurs them,
 and compositing/tone mapping produces display color. Size-dependent resources
 are resized between frames. This sequence is explicit rather than a hidden render
-graph; [the bloom implementation](../include/vng/opengl/bloom.hpp) does not own
+graph; [the bloom implementation](../include/vng/bloom_opengl/bloom.hpp) does not own
 sun-specific pattern/displacement policy.
 
 ### Text, UI and rigging keep CPU meaning separate from rendering
@@ -373,7 +375,7 @@ Play is a worker-owned window and can exist separately.
 
 | Change | Start in | Useful checks |
 | --- | --- | --- |
-| Shader operation or argument typing | `include/vng/dsl`, `include/vng/shader`, `src/shader` | `tests/shader`, `tests/compile_fail`, `tests/glsl` |
+| Shader operation or argument typing | `include/vng/shader/dsl`, `include/vng/shader`, `src/shader` | `tests/shader`, `tests/compile_fail`, `tests/glsl` |
 | Draw policy / live graphics state | Concrete renderer and `opengl/commands.hpp` | `tests/render`, `tests/opengl` |
 | Resource reconstruction / transactional reload | Provider recipe and concrete resource owner | `tests/resources`, `tests/opengl/resource_owner_tests.cpp` |
 | Authoring operation / undo / clipboard | `EditingSession`, `DocumentChanges`, `DocumentPatch` | `tests/editor/editing_session_tests.cpp`, operation-specific tests |

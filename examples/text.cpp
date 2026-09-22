@@ -4,7 +4,7 @@
 #include "support/window_loop.hpp"
 
 #include <vng/opengl/frame.hpp>
-#include <vng/opengl/text_renderer.hpp>
+#include <vng/text_opengl/text_renderer.hpp>
 
 #include <array>
 #include <iostream>

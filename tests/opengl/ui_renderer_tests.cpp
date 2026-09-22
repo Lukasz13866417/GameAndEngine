@@ -1,4 +1,4 @@
-#include <vng/opengl/ui_renderer.hpp>
+#include <vng/ui_opengl/ui_renderer.hpp>
 #include <vng/render/frame.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>

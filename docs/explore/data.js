@@ -163,7 +163,7 @@
           summary: "A window handles the platform. A graphics device handles GPU operations.",
           description: ["GLFW manages native windows and input. OpenGL implements graphics operations. A small integration layer combines them and supplies the current-context access needed by the device.", "Neither backend library depends on the other. Backend-neutral factories select implementations from their device or context. The architecture allows other backends; OpenGL is the implemented one today."],
           boundary: "A graphics context is the backend's current execution environment. It is not the same thing as a frame's convenient drawing-command handle. GPU calls must respect its thread and lifetime.",
-          links: [guide("Windows and contexts", "window_and_context"), source("include/vng/window/glfw_opengl.hpp")]
+          links: [guide("Windows and contexts", "window_and_context"), source("include/vng/glfw_opengl/glfw_opengl.hpp")]
         }
       ]
     },
@@ -285,7 +285,7 @@
           summary: "Inspect an enhanced rendering of the same shader—not a hand-maintained debug copy.",
           description: ["The shader runtime emits additional shader variants from the same IR to record color, depth, surface identity, or explicitly requested observations. Evidence connects pixels back to source geometry.", "Frame-based captures snapshot current managed graphics settings. A concrete renderer can instead supply the same explicit raster policy it uses for its draw. Diagnostic sweeps change one tested setting, such as culling, to help explain missing surfaces."],
           boundary: "Capture is opt-in and currently synchronous, opaque, and single-mesh/single-instance. It is not a full-scene debugger for arbitrary transparent effects. Unsupported raster modes are rejected, and native state is restored after capture.",
-          related: ["shader-dsl", "graphics-state"], links: [guide("Analysis rendering", "analysis_rendering"), guide("Evidence and inspection", "analysis_evidence"), source("include/vng/render/opengl_program_runtime.hpp")]
+          related: ["shader-dsl", "graphics-state"], links: [guide("Analysis rendering", "analysis_rendering"), guide("Evidence and inspection", "analysis_evidence"), source("include/vng/render_opengl/program_runtime.hpp")]
         }
       ]
     }

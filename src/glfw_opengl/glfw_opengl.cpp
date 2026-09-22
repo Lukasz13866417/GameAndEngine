@@ -1,7 +1,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
-#include <vng/window/glfw_opengl.hpp>
+#include <vng/glfw_opengl/glfw_opengl.hpp>
 
 #include "../window/glfw_access.hpp"
 

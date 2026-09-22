@@ -1,7 +1,7 @@
 #include <vng/gfx/gfx.hpp>
 #include <vng/opengl/opengl.hpp>
 #include <vng/render/render.hpp>
-#include <vng/render/opengl_program_runtime.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
 #include <vng/shader/shader.hpp>
 
 #include <catch2/catch_test_macros.hpp>

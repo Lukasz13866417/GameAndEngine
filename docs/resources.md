@@ -14,7 +14,7 @@ their original backend diagnostics.
 ## Build and reuse
 
 ```cpp
-#include <vng/opengl/mesh_renderer.hpp>
+#include <vng/resources_opengl/mesh_renderer.hpp>
 #include <vng/providers/image.hpp>
 #include <vng/providers/mesh.hpp>
 
@@ -235,8 +235,8 @@ UV authoring controls image orientation.
 ## Fonts and skins
 
 ```cpp
-#include <vng/opengl/text_renderer.hpp>
-#include <vng/providers/font.hpp>
+#include <vng/text_opengl/text_renderer.hpp>
+#include <vng/text/font_provider.hpp>
 
 auto text_builder = vng::render::text_renderer_builder(device);
 text_builder.font(vng::providers::font_file("assets/ui.ttf"));
@@ -252,8 +252,8 @@ font when it has a provider. A font supplied on an individual text ticket
 continues to belong to that ticket's caller. See [text rendering](text_rendering.md).
 
 ```cpp
-#include <vng/opengl/skinned_mesh_renderer.hpp>
-#include <vng/providers/skin.hpp>
+#include <vng/rig_opengl/skinned_mesh_renderer.hpp>
+#include <vng/rig/skin_provider.hpp>
 
 auto skin_builder = vng::render::skinned_mesh_renderer_builder(device);
 skin_builder.skin(vng::providers::skin(binding));

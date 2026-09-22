@@ -45,7 +45,7 @@ if (!cpu_mesh) {
         "Execute C++ to build the shader once. Later draw calls supply values to that recorded program; they do not replay the shader-building lambda.", [
         type("expr", "vng::dsl::Expr<T>", "A typed reference to one value in the shader being built.",
           "Float, Float3 and Float4x4 are aliases. Arithmetic appends operations inferred from the operands' builder. Copying an Expr copies its builder pointer/value ID, not a calculation or variable assignment. Expressions cannot become host bool and must not escape their builder lifetime. Literal operands record constants; runtime inputs should become typed shader arguments.",
-          "include/vng/dsl/expr.hpp", `// Inside a shader lambda:
+          "include/vng/shader/dsl/expr.hpp", `// Inside a shader lambda:
 vng::dsl::Float3 p = stage.input(Position{});
 auto translated = p + offset; // offset is another Float3
 auto clip = stage.camera().project(translated);`,

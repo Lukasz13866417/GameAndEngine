@@ -1,7 +1,7 @@
 #include "../../examples/support/sun_shaders.hpp"
 #include "../support/glfw_opengl.hpp"
 
-#include <vng/render/opengl_program_runtime.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>

@@ -1,7 +1,7 @@
 #pragma once
 #include "mesh_overlay.hpp"
 #include <vng/input/input.hpp>
-#include <vng/window/glfw_opengl.hpp>
+#include <vng/glfw_opengl/glfw_opengl.hpp>
 #include <vng/resources/diagnostic.hpp>
 #include <memory>
 #include <string>

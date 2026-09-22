@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vng/dsl/expr.hpp>
+#include <vng/shader/dsl/expr.hpp>
 
 #include <array>
 #include <type_traits>

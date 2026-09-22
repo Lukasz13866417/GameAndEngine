@@ -2,7 +2,7 @@
 #include "support/presentation.hpp"
 #include "support/ui_options.hpp"
 #include "support/window_loop.hpp"
-#include <vng/opengl/ui_renderer.hpp>
+#include <vng/ui_opengl/ui_renderer.hpp>
 #include <chrono>
 #include <iostream>
 

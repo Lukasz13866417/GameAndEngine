@@ -1,5 +1,5 @@
 #include <vng/opengl/device.hpp>
-#include <vng/window/glfw_opengl.hpp>
+#include <vng/glfw_opengl/glfw_opengl.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 

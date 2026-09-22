@@ -179,7 +179,7 @@ if(VNG_BUILD_OPENGL)
         PRIVATE vng_glad_dependency)
     vng_target_defaults(vng_opengl)
 
-    file(GLOB VNG_RENDER_OPENGL_SOURCES CONFIGURE_DEPENDS src/render/*.cpp)
+    file(GLOB VNG_RENDER_OPENGL_SOURCES CONFIGURE_DEPENDS src/render_opengl/*.cpp)
     add_library(vng_render_opengl STATIC ${VNG_RENDER_OPENGL_SOURCES})
     add_library(vng::render_opengl ALIAS vng_render_opengl)
     target_include_directories(vng_render_opengl PUBLIC
@@ -237,7 +237,7 @@ if(VNG_BUILD_WINDOW_GLFW)
 endif()
 
 if(VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW)
-    add_library(vng_glfw_opengl STATIC src/integration/glfw_opengl.cpp)
+    add_library(vng_glfw_opengl STATIC src/glfw_opengl/glfw_opengl.cpp)
     add_library(vng::glfw_opengl ALIAS vng_glfw_opengl)
     target_include_directories(vng_glfw_opengl PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -539,9 +539,9 @@ if(VNG_BUILD_TESTS)
             endif()
         endif()
 
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/render/opengl_program_runtime_tests.cpp")
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/render_opengl/program_runtime_tests.cpp")
             add_executable(vng_render_opengl_tests
-                tests/render/opengl_program_runtime_tests.cpp
+                tests/render_opengl/program_runtime_tests.cpp
                 tests/opengl/sun_math_tests.cpp
                 tests/opengl/argument_tests.cpp)
             target_link_libraries(vng_render_opengl_tests PRIVATE

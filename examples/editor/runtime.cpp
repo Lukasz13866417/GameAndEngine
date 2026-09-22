@@ -12,8 +12,8 @@
 #include "../support/sun_renderer.hpp"
 #include "../support/sun_softening.hpp"
 #include "../support/presentation.hpp"
-#include <vng/render/opengl_program_runtime.hpp>
-#include <vng/opengl/bloom.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
+#include <vng/bloom_opengl/bloom.hpp>
 #include <vng/content/vmesh_schema.hpp>
 #include <vng/shader/shader.hpp>
 #include <vng/opengl/render_state_scope.hpp>

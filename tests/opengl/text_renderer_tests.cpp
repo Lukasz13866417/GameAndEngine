@@ -1,11 +1,11 @@
 #include <vng/opengl/buffer.hpp>
 #include <vng/opengl/device.hpp>
 #include <vng/opengl/frame.hpp>
-#include <vng/opengl/text_renderer.hpp>
+#include <vng/text_opengl/text_renderer.hpp>
 #include <vng/render/frame.hpp>
-#include <vng/render/text_renderer.hpp>
+#include <vng/text/text_renderer.hpp>
 #include <vng/text/font.hpp>
-#include <vng/providers/font.hpp>
+#include <vng/text/font_provider.hpp>
 #include <vng/opengl/gpu_mesh.hpp>
 #include <vng/render/program.hpp>
 #include <vng/shader/shader.hpp>

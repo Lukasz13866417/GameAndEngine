@@ -44,8 +44,8 @@ draws return `std::expected<..., opengl::Diagnostic>`.
 `add_bone()` is the authoring exception: it returns a bone handle and records
 errors for `build()`, avoiding a check after every hierarchy declaration.
 
-The renderer factory is declared in `<vng/render/skinned_mesh_renderer.hpp>`;
-include `<vng/opengl/skinned_mesh_renderer.hpp>` to enable the OpenGL backend.
+The renderer factory is declared in `<vng/rig/skinned_mesh_renderer.hpp>`;
+include `<vng/rig_opengl/skinned_mesh_renderer.hpp>` to enable the OpenGL backend.
 The device determines the backend. The caller never writes GLSL, resolves
 attribute locations, creates a VAO, packs a matrix buffer, or supplies shaders.
 

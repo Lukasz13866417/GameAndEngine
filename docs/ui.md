@@ -26,7 +26,7 @@ OpenGL and GLFW.
 ## Small application API
 
 ```cpp
-#include <vng/opengl/ui_renderer.hpp>
+#include <vng/ui_opengl/ui_renderer.hpp>
 
 namespace ui = vng::ui;
 

@@ -3,7 +3,7 @@
 #include "../file_mesh_types.hpp"
 #include "mesh_draw.hpp"
 #include <vng/content/vmesh_schema.hpp>
-#include <vng/render/opengl_program_runtime.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
 #include <vng/shader/shader.hpp>
 
 namespace editor_example::mesh_shading {

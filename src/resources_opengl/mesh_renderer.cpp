@@ -1,4 +1,4 @@
-#include <vng/opengl/mesh_renderer.hpp>
+#include <vng/resources_opengl/mesh_renderer.hpp>
 #include <vng/providers/image.hpp>
 #include <vng/providers/program.hpp>
 #include <vng/shader/shader.hpp>
