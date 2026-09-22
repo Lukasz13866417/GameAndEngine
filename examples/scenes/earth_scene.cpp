@@ -1,5 +1,5 @@
 #include "earth_scene.hpp"
-#include "earth_assets.hpp"
+#include "../support/earth_assets.hpp"
 #include "../editor/animation.hpp"
 
 namespace example::earth {

@@ -1,4 +1,4 @@
-#include "support/solar_system_scene.hpp"
+#include "scenes/solar_system_scene.hpp"
 #include "editor/animation.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>

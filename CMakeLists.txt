@@ -123,6 +123,22 @@ if(VNG_BUILD_EDITOR)
         examples/editor/region_instances.cpp examples/editor/camera_instances.cpp)
     target_include_directories(vng_editor_project PUBLIC examples)
     vng_target_defaults(vng_editor_project)
+    if(TARGET vng_ui)
+        # Retained panels, dialogs and gizmo tools: everything the editor UI
+        # draws through vng_ui without a GL context. The app and the UI tests
+        # both link this; neither lists these sources again.
+        add_library(vng_editor_ui STATIC
+            examples/editor/inspector_panel.cpp examples/editor/timeline_panel.cpp examples/editor/tool_panel.cpp
+            examples/editor/blueprint_mesh_panel.cpp examples/editor/mesh_tools.cpp
+            examples/editor/file_dialog.cpp examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp
+            examples/editor/save_dialog.cpp
+            examples/editor/translation_tool.cpp examples/editor/rotation_tool.cpp examples/editor/scale_tool.cpp
+            examples/editor/world_bounds_tool.cpp examples/editor/surface_move_tool.cpp examples/editor/cage_tool.cpp
+            examples/editor/region_editor.cpp examples/editor/transform_gesture.cpp examples/editor/component_transform.cpp)
+        add_library(vng::editor_ui ALIAS vng_editor_ui)
+        target_link_libraries(vng_editor_ui PUBLIC vng_editor_project vng_ui)
+        vng_target_defaults(vng_editor_ui)
+    endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         find_package(Threads REQUIRED)
         add_library(vng_editor_preview STATIC src/editor/preview.cpp)
@@ -328,25 +344,16 @@ if(VNG_BUILD_TESTS)
             add_test(NAME vng_ui_tests COMMAND vng_ui_tests)
             set_tests_properties(vng_ui_tests PROPERTIES LABELS ui)
             if(VNG_BUILD_EDITOR)
-                add_executable(vng_editor_ui_tests tests/editor/inspector_panel_tests.cpp
-                    examples/editor/blueprint_mesh_panel.cpp examples/editor/surface_move_tool.cpp
-                    tests/editor/blueprint_mesh_panel_tests.cpp
-                    tests/editor/save_dialog_tests.cpp examples/editor/save_dialog.cpp
-                    tests/editor/import_dialog_tests.cpp examples/editor/import_dialog.cpp
-                    tests/editor/open_scene_dialog_tests.cpp examples/editor/open_scene_dialog.cpp
-                    examples/editor/file_dialog.cpp
-                    examples/editor/inspector_panel.cpp examples/editor/translation_tool.cpp
-                    examples/editor/rotation_tool.cpp tests/editor/rotation_tool_tests.cpp examples/editor/scale_tool.cpp examples/editor/world_bounds_tool.cpp
-                    tests/editor/scale_tool_tests.cpp tests/editor/blueprint_gizmo_tests.cpp tests/editor/world_bounds_tool_tests.cpp
-                    examples/editor/timeline_panel.cpp tests/editor/timeline_panel_tests.cpp
+                add_executable(vng_editor_ui_tests
+                    tests/editor/inspector_panel_tests.cpp tests/editor/blueprint_mesh_panel_tests.cpp
+                    tests/editor/save_dialog_tests.cpp tests/editor/import_dialog_tests.cpp tests/editor/open_scene_dialog_tests.cpp
+                    tests/editor/rotation_tool_tests.cpp tests/editor/scale_tool_tests.cpp tests/editor/blueprint_gizmo_tests.cpp
+                    tests/editor/world_bounds_tool_tests.cpp tests/editor/timeline_panel_tests.cpp
                     tests/editor/settings_panel_tests.cpp tests/editor/view_selector_tests.cpp tests/editor/toolbar_row_tests.cpp
-                    tests/editor/preview_fps_tests.cpp)
-                target_link_libraries(vng_editor_ui_tests PRIVATE vng_editor_project vng_ui Catch2::Catch2WithMain)
-                target_sources(vng_editor_ui_tests PRIVATE examples/editor/mesh_tools.cpp tests/editor/mesh_tools_tests.cpp)
-                target_sources(vng_editor_ui_tests PRIVATE tests/editor/instance_list_tests.cpp)
-                target_sources(vng_editor_ui_tests PRIVATE tests/editor/tool_panel_tests.cpp examples/editor/tool_panel.cpp examples/editor/transform_gesture.cpp examples/editor/component_transform.cpp examples/editor/cage_tool.cpp examples/editor/region_editor.cpp
-                    tests/editor/region_ui_tests.cpp tests/editor/component_transform_tests.cpp tests/editor/instance_transform_tests.cpp)
-                target_include_directories(vng_editor_ui_tests PRIVATE examples)
+                    tests/editor/preview_fps_tests.cpp tests/editor/mesh_tools_tests.cpp tests/editor/instance_list_tests.cpp
+                    tests/editor/tool_panel_tests.cpp tests/editor/region_ui_tests.cpp tests/editor/component_transform_tests.cpp
+                    tests/editor/instance_transform_tests.cpp)
+                target_link_libraries(vng_editor_ui_tests PRIVATE vng_editor_ui Catch2::Catch2WithMain)
                 target_compile_definitions(vng_editor_ui_tests PRIVATE VNG_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/fonts/DejaVuSans.ttf")
                 vng_target_defaults(vng_editor_ui_tests)
                 add_test(NAME vng_editor_ui_tests COMMAND vng_editor_ui_tests)
@@ -709,7 +716,7 @@ if(VNG_BUILD_EXAMPLES)
     target_link_libraries(vng_make_fleet PRIVATE vng_content)
     vng_target_defaults(vng_make_fleet)
     if(TARGET vng_editor_project)
-        add_library(vng_earth_scene STATIC examples/support/earth_scene.cpp)
+        add_library(vng_earth_scene STATIC examples/scenes/earth_scene.cpp)
         target_link_libraries(vng_earth_scene PUBLIC vng_editor_project)
         vng_target_defaults(vng_earth_scene)
         add_executable(vng_make_earth EXCLUDE_FROM_ALL examples/tools/make_earth.cpp)
@@ -722,20 +729,20 @@ if(VNG_BUILD_EXAMPLES)
             vng_target_defaults(vng_earth_assets_tests)
             add_test(NAME vng_earth_assets_tests COMMAND vng_earth_assets_tests)
         endif()
-        add_library(vng_fleet_scene STATIC examples/support/fleet_scene.cpp)
+        add_library(vng_fleet_scene STATIC examples/scenes/fleet_scene.cpp)
         target_link_libraries(vng_fleet_scene PUBLIC vng_editor_project)
         vng_target_defaults(vng_fleet_scene)
         add_executable(vng_make_fleet_scene EXCLUDE_FROM_ALL examples/tools/make_fleet_scene.cpp)
         target_link_libraries(vng_make_fleet_scene PRIVATE vng_fleet_scene)
         vng_target_defaults(vng_make_fleet_scene)
-        add_library(vng_asteroid_scene STATIC examples/support/asteroid_scene.cpp
+        add_library(vng_asteroid_scene STATIC examples/scenes/asteroid_scene.cpp
             examples/support/asteroid_assets.cpp)
         target_link_libraries(vng_asteroid_scene PUBLIC vng_fleet_scene)
         vng_target_defaults(vng_asteroid_scene)
         add_executable(vng_make_asteroid_scene EXCLUDE_FROM_ALL examples/tools/make_asteroid_scene.cpp)
         target_link_libraries(vng_make_asteroid_scene PRIVATE vng_asteroid_scene)
         vng_target_defaults(vng_make_asteroid_scene)
-        add_library(vng_solar_system_scene STATIC examples/support/solar_system_scene.cpp)
+        add_library(vng_solar_system_scene STATIC examples/scenes/solar_system_scene.cpp)
         target_link_libraries(vng_solar_system_scene PUBLIC vng_asteroid_scene)
         vng_target_defaults(vng_solar_system_scene)
         add_executable(vng_make_solar_system_scene EXCLUDE_FROM_ALL examples/tools/make_solar_system_scene.cpp)
@@ -842,8 +849,8 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
         target_link_libraries(vng_editor_runtime PUBLIC vng_editor_project vng_sun_support
             vng_bloom_opengl vng_example_presentation PRIVATE vng_glad_dependency)
         vng_target_defaults(vng_editor_runtime)
-        add_library(vng_scene_demo_support STATIC examples/support/scene_demo.cpp
-            examples/support/fleet_inspection.cpp examples/support/spaceflight_scene.cpp)
+        add_library(vng_scene_demo_support STATIC examples/scenes/scene_demo.cpp
+            examples/scenes/fleet_inspection.cpp examples/support/spaceflight_scene.cpp)
         target_link_libraries(vng_scene_demo_support PUBLIC vng_editor_runtime vng_example_support)
         vng_target_defaults(vng_scene_demo_support)
         add_executable(vng_earth_demo examples/earth.cpp)
@@ -900,14 +907,8 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
         endif()
         if(VNG_BUILD_UI)
             add_library(vng_editor_app STATIC examples/editor/app.cpp
-                examples/editor/blueprint_mesh_panel.cpp examples/editor/surface_move_tool.cpp
-                examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp examples/editor/file_dialog.cpp
-                examples/editor/save_dialog.cpp examples/editor/inspector_panel.cpp examples/editor/translation_tool.cpp
-                examples/editor/rotation_tool.cpp examples/editor/scale_tool.cpp examples/editor/world_bounds_tool.cpp
-                examples/editor/timeline_panel.cpp examples/editor/mesh_tools.cpp examples/editor/mesh_overlay.cpp
-                examples/editor/viewport_window.cpp)
-            target_sources(vng_editor_app PRIVATE examples/editor/tool_panel.cpp examples/editor/transform_gesture.cpp examples/editor/component_transform.cpp examples/editor/cage_tool.cpp examples/editor/region_editor.cpp)
-            target_link_libraries(vng_editor_app PUBLIC vng_editor_project vng_editor_preview
+                examples/editor/mesh_overlay.cpp examples/editor/viewport_window.cpp)
+            target_link_libraries(vng_editor_app PUBLIC vng_editor_ui vng_editor_preview
                 vng_ui_opengl vng_example_support vng_example_presentation)
             target_link_libraries(vng_editor_app PRIVATE vng_glad_dependency)
             target_compile_definitions(vng_editor_app PRIVATE

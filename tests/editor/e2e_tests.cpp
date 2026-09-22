@@ -19,9 +19,9 @@
 #include "../../examples/editor/selection.hpp"
 #include "../../examples/editor/view_selector.hpp"
 #include "../../examples/support/presentation.hpp"
-#include "../../examples/support/asteroid_scene.hpp"
+#include "../../examples/scenes/asteroid_scene.hpp"
 #include "../../examples/support/earth_assets.hpp"
-#include "../../examples/support/earth_scene.hpp"
+#include "../../examples/scenes/earth_scene.hpp"
 #include "../../examples/editor/scene_file.hpp"
 #include <vng/ui/inspection.hpp>
 

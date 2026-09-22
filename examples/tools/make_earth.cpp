@@ -1,5 +1,5 @@
 // Offline authoring only. Never overwrite an edited asset implicitly.
-#include "../support/earth_scene.hpp"
+#include "../scenes/earth_scene.hpp"
 #include "../support/earth_assets.hpp"
 #include "../editor/scene_file.hpp"
 #include <iostream>

@@ -1,6 +1,6 @@
 #include "../../examples/editor/blueprint_mesh_renderer.hpp"
 #include "../../examples/editor/runtime.hpp"
-#include "../../examples/support/asteroid_scene.hpp"
+#include "../../examples/scenes/asteroid_scene.hpp"
 #include "../support/glfw_opengl.hpp"
 #include <vng/render/program.hpp>
 #include <vng/gfx/buffer.hpp>

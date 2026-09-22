@@ -203,7 +203,7 @@ CPU blueprint authoring
 ├── support/earth_assets.cpp   : coast clipping, biomes, relief, cloud geometry
 │   └── CloudParticles        : seeded puff placement, spatial bins, merged density/height
 ├── support/earth_edit.cpp     : recipe + formation poses + cloud-only replacement/movement
-└── support/earth_scene.cpp    : ordinary blueprint, instance, camera, timeline
+└── scenes/earth_scene.cpp    : ordinary blueprint, instance, camera, timeline
 
 Editor
 └── BlueprintMeshPanel        : generic InspectorPanel + one background CPU job

@@ -143,3 +143,18 @@ test("private headers are not reached across target directories, beyond the list
   }
   assert.deepEqual(found.sort(), [...privateReachIns].sort());
 });
+
+// The example tree is layered the same way: support helpers know only the
+// engine, scene generators know the editor document, and the editor never
+// reaches into generated scenes.
+const exampleIncludes = directory => walk(path.join(repository, "examples", directory)).map(relative)
+  .flatMap(file => [...readFileSync(path.join(repository, file), "utf8").matchAll(/^\s*#\s*include\s*"\.\.\/([a-z_]+)\//gm)]
+    .map(match => `${file} includes ../${match[1]}/`));
+
+test("examples/support never includes the editor or the scenes", () => {
+  assert.deepEqual(exampleIncludes("support").filter(line => /\.\.\/(editor|scenes)\//.test(line)), []);
+});
+
+test("examples/editor never includes the scene generators", () => {
+  assert.deepEqual(exampleIncludes("editor").filter(line => /\.\.\/scenes\//.test(line)), []);
+});

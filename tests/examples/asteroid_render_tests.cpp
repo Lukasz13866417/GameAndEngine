@@ -1,6 +1,6 @@
 #include "editor/runtime.hpp"
 #include "editor/animation.hpp"
-#include "support/asteroid_scene.hpp"
+#include "scenes/asteroid_scene.hpp"
 #include "../support/glfw_opengl.hpp"
 #include <vng/analysis/manifest.hpp>
 #include <catch2/catch_test_macros.hpp>
