@@ -1,4 +1,4 @@
-#include "support/earth_scene.hpp"
+#include "scenes/earth_scene.hpp"
 #include "support/earth_assets.hpp"
 #include "support/presentation.hpp"
 #include "editor/runtime.hpp"

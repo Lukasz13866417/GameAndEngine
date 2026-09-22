@@ -104,10 +104,10 @@ toggle has the same isolated-object scope.
 ## Offline authoring and implementation
 
 [fleet_reveal.cpp](../examples/fleet_reveal.cpp) selects the saved document and
-diagnostic subjects; [scene_demo.cpp](../examples/support/scene_demo.cpp) shares
+diagnostic subjects; [scene_demo.cpp](../examples/scenes/scene_demo.cpp) shares
 playback, camera sampling and presentation with the [asteroid-belt variant](asteroid_fleet.md).
 The initial choreography lives
-in [fleet_scene.cpp](../examples/support/fleet_scene.cpp); the fleet model
+in [fleet_scene.cpp](../examples/scenes/fleet_scene.cpp); the fleet model
 generator is [make_fleet.cpp](../examples/tools/make_fleet.cpp). Neither generator
 runs during normal playback or while opening the scene in the editor.
 

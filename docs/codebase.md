@@ -39,7 +39,8 @@ or every C++ `#include`. Build options can disable conditional targets. See
 | `include/vng/` | Public types, templates and API declarations | [gfx/record.hpp](../include/vng/gfx/record.hpp), [render/renderer.hpp](../include/vng/render/renderer.hpp) |
 | `src/` | Compiled implementations | [shader/ir.cpp](../src/shader/ir.cpp), [opengl/commands.cpp](../src/opengl/commands.cpp) |
 | `examples/*.cpp` | Runnable feature-focused programs | [file_mesh_direct.cpp](../examples/file_mesh_direct.cpp), [editor.cpp](../examples/editor.cpp) |
-| `examples/support/` | Shared demo setup and effect/scene policy | [sun_shaders.cpp](../examples/support/sun_shaders.cpp), [scene_demo.cpp](../examples/support/scene_demo.cpp) |
+| `examples/support/` | Shared demo setup, effect policy and CPU asset generators; never includes the editor | [sun_shaders.cpp](../examples/support/sun_shaders.cpp), [window_loop.hpp](../examples/support/window_loop.hpp) |
+| `examples/scenes/` | Authored scene generators and the shared scene demo, built on the editor document model | [scene_demo.cpp](../examples/scenes/scene_demo.cpp), [solar_system_scene.cpp](../examples/scenes/solar_system_scene.cpp) |
 | `examples/editor/` | Editor document, authoring, interaction, communication and rendering policy | [editing_session.hpp](../examples/editor/editing_session.hpp), [app.cpp](../examples/editor/app.cpp) |
 | `tests/` | Compile-fail, CPU, GPU, application and native interaction checks | [editor/editing_session_tests.cpp](../tests/editor/editing_session_tests.cpp), [editor/e2e_tests.cpp](../tests/editor/e2e_tests.cpp) |
 

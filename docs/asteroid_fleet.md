@@ -76,7 +76,7 @@ partial early occlusion and the later unobstructed reveal.
 ## Source and regeneration
 
 [asteroid_fleet.cpp](../examples/asteroid_fleet.cpp) configures the small shared
-[scene playback helper](../examples/support/scene_demo.cpp). Both fleet demos
+[scene playback helper](../examples/scenes/scene_demo.cpp). Both fleet demos
 and the editor use the existing editor Runtime; no asteroid-specific renderer,
 new engine API, or scene format was needed.
 
@@ -88,7 +88,7 @@ not loading existing scenes or undo/redo. Both preferences persist separately
 from scene content and apply without restarting.
 
 Offline geometry lives in [asteroid_assets.cpp](../examples/support/asteroid_assets.cpp)
-and choreography/scattering in [asteroid_scene.cpp](../examples/support/asteroid_scene.cpp).
+and choreography/scattering in [asteroid_scene.cpp](../examples/scenes/asteroid_scene.cpp).
 The latter reuses the fleet's existing ship blueprints, not the solar shot's motion.
 
 ```sh

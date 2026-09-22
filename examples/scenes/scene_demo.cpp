@@ -1,10 +1,10 @@
 #include "scene_demo.hpp"
 #include "../editor/animation.hpp"
 #include "../editor/scene_file.hpp"
-#include "glfw_opengl_session.hpp"
-#include "presentation.hpp"
-#include "spaceflight_scene.hpp"
-#include "window_loop.hpp"
+#include "../support/glfw_opengl_session.hpp"
+#include "../support/presentation.hpp"
+#include "../support/spaceflight_scene.hpp"
+#include "../support/window_loop.hpp"
 
 #include <chrono>
 #include <iostream>

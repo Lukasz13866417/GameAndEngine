@@ -1,5 +1,5 @@
 #include "asteroid_scene.hpp"
-#include "asteroid_assets.hpp"
+#include "../support/asteroid_assets.hpp"
 #include "fleet_scene.hpp"
 #include "../editor/animation.hpp"
 #include <algorithm>

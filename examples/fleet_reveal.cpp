@@ -1,4 +1,4 @@
-#include "support/scene_demo.hpp"
+#include "scenes/scene_demo.hpp"
 
 int main(int argc,char** argv) {
     constexpr std::array evidence{

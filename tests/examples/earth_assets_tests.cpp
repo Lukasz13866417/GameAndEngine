@@ -1,6 +1,6 @@
 #include "support/earth_assets.hpp"
 #include "support/earth_clouds.hpp"
-#include "support/earth_scene.hpp"
+#include "scenes/earth_scene.hpp"
 #include "support/mesh_frame.hpp"
 #include "editor/editing_session.hpp"
 #include "editor/animation.hpp"

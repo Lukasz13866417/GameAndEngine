@@ -1,4 +1,4 @@
-#include "support/fleet_scene.hpp"
+#include "scenes/fleet_scene.hpp"
 #include "editor/animation.hpp"
 
 #include <catch2/catch_test_macros.hpp>

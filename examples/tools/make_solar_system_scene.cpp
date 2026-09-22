@@ -1,4 +1,4 @@
-#include "../support/solar_system_scene.hpp"
+#include "../scenes/solar_system_scene.hpp"
 #include "../editor/scene_file.hpp"
 #include <iostream>
 #include <string_view>

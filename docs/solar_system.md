@@ -43,13 +43,13 @@ Use a new output path; the demo does not overwrite screenshots.
 ## Source and regeneration
 
 [solar_system.cpp](../examples/solar_system.cpp) configures the shared
-[scene playback helper](../examples/support/scene_demo.cpp). The layout lives
-in [solar_system_scene.cpp](../examples/support/solar_system_scene.cpp): it
+[scene playback helper](../examples/scenes/scene_demo.cpp). The layout lives
+in [solar_system_scene.cpp](../examples/scenes/solar_system_scene.cpp): it
 reuses the fleet scene's ship blueprints and named formation, imports
 `assets/earth.vmesh`, generates the three rock blueprints, and scatters the belt
 with safe separation from every ship. The constants a test can depend on
 (distances, identities, Earth radius) are in
-[solar_system_scene.hpp](../examples/support/solar_system_scene.hpp).
+[solar_system_scene.hpp](../examples/scenes/solar_system_scene.hpp).
 
 `vng_solar_system_scene_tests` checks the brief on the CPU: one keyframe,
 every actor present, the camera beside Earth looking away from the sun with

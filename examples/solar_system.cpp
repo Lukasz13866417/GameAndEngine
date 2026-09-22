@@ -1,5 +1,5 @@
-#include "support/scene_demo.hpp"
-#include "support/solar_system_scene.hpp"
+#include "scenes/scene_demo.hpp"
+#include "scenes/solar_system_scene.hpp"
 
 int main(int argc,char** argv) {
     constexpr std::array evidence{
