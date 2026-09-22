@@ -10,7 +10,7 @@
 #include <vng/opengl/diagnostic.hpp>
 #include <vng/opengl/frame.hpp>
 #include <vng/opengl/gpu_mesh.hpp>
-#include <vng/render/opengl_program_runtime.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
 #include <vng/opengl/renderer.hpp>
 #include <vng/render/simple_mesh_renderer.hpp>
 #include <vng/render/view.hpp>

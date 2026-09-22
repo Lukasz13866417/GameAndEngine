@@ -1,4 +1,4 @@
-#include <vng/dsl/dsl.hpp>
+#include <vng/shader/dsl/dsl.hpp>
 auto rejected(vng::dsl::Float expression, float brightness)
 {
     auto body = [brightness](vng::dsl::Float value) {

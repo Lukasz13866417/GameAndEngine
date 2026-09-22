@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-#include <vng/window/glfw_opengl.hpp>
+#include <vng/glfw_opengl/glfw_opengl.hpp>
 
 namespace vng::test {
 

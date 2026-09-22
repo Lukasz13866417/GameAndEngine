@@ -3,12 +3,12 @@
 #include <vng/opengl/buffer.hpp>
 #include <vng/opengl/device.hpp>
 #include <vng/opengl/frame.hpp>
-#include <vng/opengl/skinned_mesh_renderer.hpp>
+#include <vng/rig_opengl/skinned_mesh_renderer.hpp>
 #include <vng/render/frame.hpp>
 #include <vng/render/view.hpp>
-#include <vng/render/skinned_mesh_renderer.hpp>
+#include <vng/rig/skinned_mesh_renderer.hpp>
 #include <vng/rig/rig.hpp>
-#include <vng/providers/skin.hpp>
+#include <vng/rig/skin_provider.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 

@@ -6,7 +6,7 @@
 
 #include <vng/opengl/diagnostic.hpp>
 #include <vng/opengl/renderer.hpp>
-#include <vng/render/text_renderer.hpp>
+#include <vng/text/text_renderer.hpp>
 #include <vng/resources/resources.hpp>
 
 namespace vng::opengl {

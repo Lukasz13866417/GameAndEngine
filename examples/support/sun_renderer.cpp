@@ -3,7 +3,7 @@
 
 #include <vng/opengl/gpu_mesh.hpp>
 #include <vng/opengl/image.hpp>
-#include <vng/render/opengl_program_runtime.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
 #include <vng/render/program.hpp>
 #include <glad/gl.h>
 

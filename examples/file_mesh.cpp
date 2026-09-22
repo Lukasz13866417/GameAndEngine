@@ -7,7 +7,7 @@
 
 #include <vng/content/content.hpp>
 #include <vng/gfx/gfx.hpp>
-#include <vng/render/opengl.hpp>
+#include <vng/render_opengl/render_opengl.hpp>
 
 #include <array>
 #include <filesystem>

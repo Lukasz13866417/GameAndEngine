@@ -2,7 +2,7 @@
 #include "../../examples/editor/runtime.hpp"
 #include "../../examples/support/presentation.hpp"
 #include "../support/glfw_opengl.hpp"
-#include <vng/opengl/ui_renderer.hpp>
+#include <vng/ui_opengl/ui_renderer.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <glad/gl.h>
 #include <chrono>

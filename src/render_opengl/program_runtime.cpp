@@ -1,4 +1,4 @@
-#include <vng/render/opengl_program_runtime.hpp>
+#include <vng/render_opengl/program_runtime.hpp>
 
 #include <algorithm>
 #include <bit>

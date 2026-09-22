@@ -64,7 +64,7 @@
 #include "../support/glfw_opengl_session.hpp"
 #include "../support/presentation.hpp"
 #include <vng/editor/preview.hpp>
-#include <vng/opengl/ui_renderer.hpp>
+#include <vng/ui_opengl/ui_renderer.hpp>
 #include <charconv>
 #include <chrono>
 #include <iostream>

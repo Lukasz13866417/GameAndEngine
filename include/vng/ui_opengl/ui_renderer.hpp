@@ -1,5 +1,5 @@
 #pragma once
-#include <vng/render/ui_renderer.hpp>
+#include <vng/ui/ui_renderer.hpp>
 #include <vng/opengl/frame.hpp>
 #include <vng/opengl/renderer.hpp>
 #include <memory>

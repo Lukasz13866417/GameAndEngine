@@ -3,15 +3,15 @@
 #include "support/glow_scene.hpp"
 #include "support/window_loop.hpp"
 
-#include <vng/opengl/bloom.hpp>
-#include <vng/opengl/mesh_renderer.hpp>
+#include <vng/bloom_opengl/bloom.hpp>
+#include <vng/resources_opengl/mesh_renderer.hpp>
 #include <vng/opengl/render_target.hpp>
 #include <vng/providers/image.hpp>
 #include <vng/providers/mesh.hpp>
 #include <vng/providers/target.hpp>
 #ifdef VNG_GLOW_TEXT
-#include <vng/opengl/text_renderer.hpp>
-#include <vng/providers/font.hpp>
+#include <vng/text_opengl/text_renderer.hpp>
+#include <vng/text/font_provider.hpp>
 #endif
 
 #include <chrono>

@@ -1,6 +1,7 @@
 #include <vng/gfx/image.hpp>
 #include <vng/opengl/opengl.hpp>
 #include <vng/opengl/render_target.hpp>
+#include <vng/providers/target.hpp>
 #include <vng/render/frame.hpp>
 
 #include <catch2/catch_test_macros.hpp>

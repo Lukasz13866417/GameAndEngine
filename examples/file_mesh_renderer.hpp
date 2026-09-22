@@ -8,7 +8,7 @@
 
 #include <vng/opengl/opengl.hpp>
 #include <vng/opengl/renderer.hpp>
-#include <vng/render/opengl.hpp>
+#include <vng/render_opengl/render_opengl.hpp>
 #include <vng/render/render.hpp>
 #include <vng/shader/diagnostic.hpp>
 #include <vng/shader/program.hpp>

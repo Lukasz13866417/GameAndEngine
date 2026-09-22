@@ -1,4 +1,4 @@
-#include <vng/dsl/dsl.hpp>
+#include <vng/shader/dsl/dsl.hpp>
 int runtime_value();
 auto rejected(vng::dsl::Int expression)
 {

@@ -1,7 +1,7 @@
 #include "viewport_window.hpp"
 #include "../support/glfw_opengl_session.hpp"
 #include "../support/presentation.hpp"
-#include <vng/opengl/ui_renderer.hpp>
+#include <vng/ui_opengl/ui_renderer.hpp>
 
 namespace editor_example {
 using namespace vng;

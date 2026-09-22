@@ -1,4 +1,4 @@
-#include <vng/opengl/text_renderer.hpp>
+#include <vng/text_opengl/text_renderer.hpp>
 
 #include <vng/gfx/gfx.hpp>
 #include <vng/opengl/frame.hpp>

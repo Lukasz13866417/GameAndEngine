@@ -4,7 +4,7 @@
 #include "../../examples/support/space_background.hpp"
 #include "../support/glfw_opengl.hpp"
 
-#include <vng/opengl/bloom.hpp>
+#include <vng/bloom_opengl/bloom.hpp>
 #include <vng/opengl/buffer.hpp>
 #include <vng/opengl/render_target.hpp>
 #include <vng/providers/target.hpp>

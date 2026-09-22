@@ -6,7 +6,7 @@
 
 #include <vng/gfx/camera.hpp>
 #include <vng/opengl/frame.hpp>
-#include <vng/opengl/skinned_mesh_renderer.hpp>
+#include <vng/rig_opengl/skinned_mesh_renderer.hpp>
 
 #include <array>
 #include <chrono>
