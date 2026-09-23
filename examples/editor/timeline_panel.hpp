@@ -19,7 +19,7 @@ struct TimelineAction {
     std::vector<KeyframeValue> values{};
     std::vector<KeyframeChange> changes{}; // apply_range: time..destination, edited fields only
     std::vector<vng::f32> selection{}; // erase: all selected timestamps
-    vng::u64 object{}; // select_object: instance ID or the animation camera
+    vng::u64 object{}; // select_object: scene instance ID
     vng::editor::SelectionMode selection_mode{vng::editor::SelectionMode::replace};
 };
 

@@ -109,8 +109,10 @@ TEST_CASE("Editing an animated camera is atomic and preserves an authored camera
     REQUIRE(id);
     REQUIRE(key_camera(state, *id, 0, {0, 0, 8, {}}));
     REQUIRE(key_camera(state, *id, 5, {70, 12, 10, {1, 2, 3}}, Interpolation::hold));
+    // Re-keying the cut with the default interpolation keeps it a cut.
+    REQUIRE(key_camera(state, *id, 5, {80, 12, 10, {1, 2, 3}}));
     CHECK(evaluate_camera(state, 4.99F)->yaw == Catch::Approx(0));
-    CHECK(evaluate_camera(state, 5)->yaw == Catch::Approx(70));
+    CHECK(evaluate_camera(state, 5)->yaw == Catch::Approx(80));
     const auto before = state.document.timeline;
     CHECK_FALSE(key_camera(state, *id, 7, {25, 12, camera_min_distance * .5F, {}}));
     CHECK(state.document.timeline == before);

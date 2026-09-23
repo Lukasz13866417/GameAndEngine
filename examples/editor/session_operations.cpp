@@ -328,8 +328,8 @@ content::Result<bool> EditingSession::set_camera(u32 id, const CameraPose& pose)
     if (!turned) return fail(turned.error().message);
     DocumentChanges lens_changes;
     if (auto adjusted = apply_lens(state_, lens_changes, id, lens_before, lens); !adjusted) return fail(adjusted.error().message);
-    // Saving a camera away from time zero keys four properties; like every
-    // other authoring path it may not grow the timeline past the user's budget.
+    // Saving a camera away from time zero keys four properties; it may not grow
+    // the timeline past the user's budget any more than other pose edits may.
     if (auto capacity = check_track_growth(*before); !capacity) return fail(capacity.error().message);
     if (!*moved) changes.properties.erase({id, "position"});
     if (!*turned) changes.properties.erase({id, "rotation"});
@@ -393,6 +393,10 @@ content::Result<bool> EditingSession::set_transform(u32 id, Vec3 rotation, f32 s
     if (!scaled || !axes) {
         if (auto restored = restore(*before, false); !restored) return std::unexpected(restored.error());
         return std::unexpected(!scaled ? scaled.error() : axes.error());
+    }
+    if (auto capacity = check_track_growth(*before); !capacity) {
+        if (auto restored = restore(*before, false); !restored) return std::unexpected(restored.error());
+        return std::unexpected(capacity.error());
     }
     if (!*rotated && !*scaled && !*axes) return false;
     if (!*rotated) changes.properties.erase({id, "rotation"});

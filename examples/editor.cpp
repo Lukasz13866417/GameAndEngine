@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
                    "Default: maximized with borders. F11 toggles true fullscreen.\n"
                    "Edit examples/editor/effects.cpp or runtime.cpp, then Reload C++.\n"
                    "Viewport: MMB orbit, Shift+MMB pan, wheel or Ctrl+MMB zoom.\n"
-                   "Edit animation camera: navigate the saved shot; off keeps a private editor view.\n"
+                   "Scene cameras: select one, then Inspect/Enter to look through it; Save this camera authors the view.\n"
                    "Objects mode: click a surface to select; Tab switches mesh vertex editing.\n"
                    "Delete removes the selected keyframe or object instance; blueprints remain.\n"
                    "Import mesh... browses .vmesh files and adds a blueprint + instance without replacing the scene.\n"

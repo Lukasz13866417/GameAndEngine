@@ -85,6 +85,32 @@ TEST_CASE("Lens and forward motion smooth independently without changing authore
     CHECK(motion.settled()); CHECK(motion.pose()==goal);
 }
 
+TEST_CASE("Viewport requests default legacy zoom, validate the lens and retire the pilot flag", "[editor][viewport][zoom]") {
+    project::ViewportRequest request{1,{}};
+    request.view.editor_camera.zoom=3;
+    auto bytes=project::encode_viewport_request(request); REQUIRE(bytes);
+    CHECK(bytes->substr(0,8)==std::string("VNGVIEW\5",8));
+    auto legacy=*bytes; legacy.resize(72); legacy[7]=1;
+    auto decoded=project::decode_viewport_request(legacy); REQUIRE(decoded);
+    CHECK(decoded->view.editor_camera.zoom==1);
+    request.view.editor_camera.zoom=0;
+    CHECK_FALSE(project::encode_viewport_request(request));
+    request.view.editor_camera.zoom=std::numeric_limits<float>::infinity();
+    CHECK_FALSE(project::encode_viewport_request(request));
+    // Flags start after the magic, two revisions and four u32 identities.
+    constexpr std::size_t flags=8+8+8+4*4;
+    auto with_pilot=*bytes; with_pilot[flags]=static_cast<char>(with_pilot[flags]|4);
+    CHECK_FALSE(project::decode_viewport_request(with_pilot)); // Version 5 reserves the retired bit.
+    for (const char version : {2,3,4}) { // Older requests carried it; it now means nothing.
+        auto old=with_pilot; old[7]=version;
+        const auto accepted=project::decode_viewport_request(old);
+        REQUIRE(accepted);
+        CHECK(accepted->view.editor_camera.zoom==3);
+        CHECK(accepted->view.weld==project::ViewportState{}.weld);
+        CHECK(accepted->view.paused==project::ViewportState{}.paused);
+    }
+}
+
 TEST_CASE("Scene roundtrip keeps independent editor and scene camera lens values", "[editor][viewport][zoom]") {
     auto state=make_state();
     state.viewport.editor_camera.zoom=2;

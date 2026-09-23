@@ -26,6 +26,7 @@ std::string packet(PreviewUpdates& updates, u64 generation, const State& state) 
     REQUIRE(*next);
     return std::move(**next);
 }
+InstanceTransform& project_transform(State& state) { return *instance_transform(state, 1); }
 void no_packet(PreviewUpdates& updates, u64 generation, const State& state) {
     auto next = updates.next(generation, state);
     REQUIRE(next);
@@ -381,4 +382,32 @@ TEST_CASE("Unsent camera keys mixed with geometry retain their explicit targets"
     REQUIRE(apply_patch(restored,*patch));
     CHECK(restored.document.mesh.position(0)==Vec3{1,2,3});
     CHECK(evaluate_camera(restored,3)->yaw==30.F);
+}
+
+TEST_CASE("A failed encode neither reserves the update slot nor drops the pending edit") {
+    auto state = source();
+    PreviewUpdates updates;
+    updates.add(1);
+    packet(updates, 1, state);
+    updates.acknowledge(1, 1);
+    state.document.revision = 2;
+    project_transform(state).position.x = std::numeric_limits<f32>::quiet_NaN();
+    updates.position_changed(1);
+    REQUIRE_FALSE(updates.next(1, state));
+    CHECK_FALSE(updates.ready(1, 2));
+    state.document.revision = 3;
+    project_transform(state).position.x = 4;
+    updates.position_changed(1);
+    const auto wire = packet(updates, 1, state);
+    REQUIRE(wire.starts_with("position\n"));
+    const auto edit = decode_position_edit(std::string_view(wire).substr(9));
+    REQUIRE(edit);
+    CHECK(edit->base_revision == 1); // Still based on the last acknowledged revision.
+    CHECK(edit->revision == 3);
+    CHECK(edit->position.base_position.x == 4);
+    updates.acknowledge(1, 3);
+    CHECK(updates.ready(1, 3));
+    updates.acknowledge(1, 0); // Zero means no packet in flight, never a valid acknowledgement.
+    CHECK(updates.ready(1, 3));
+    no_packet(updates, 1, state);
 }

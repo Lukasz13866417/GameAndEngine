@@ -127,8 +127,9 @@ visit (Inspect/Enter) and the view mode remain independent of Undo/Redo.
 `set_camera(id, pose)` writes an editor pose into a scene camera and
 `set_active_camera(id)` makes it the simulation's camera from the selected
 keyframe on, clearing the others there; both are single undoable edits and,
-like every authoring path, respect the timeline track budget. Scene cameras are
-the only simulation camera: there is no separate camera gesture.
+like gestures, `set_transform` and keyframe edits, respect the timeline track
+budget. Scene cameras are the only simulation camera: there is no separate
+camera gesture.
 
 ## Discrete edits
 

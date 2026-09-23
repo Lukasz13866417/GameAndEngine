@@ -298,6 +298,37 @@ TEST_CASE("Track budget applies atomically to adding keyframes and saving camera
     REQUIRE(camera_session.timeline_track_limit(4));
     REQUIRE(camera_session.set_camera(*camera, pose));
     CHECK(camera_session.state().document.timeline.tracks().size() == 4);
+
+    // Choosing the active camera keys "active" on both cameras here.
+    auto two = scene();
+    const auto first = ensure_camera(two, {0, 0, 8, {}});
+    REQUIRE(first);
+    const auto second = instantiate(two, BlueprintId::camera);
+    REQUIRE(second);
+    two.viewport.time = 2;
+    two.document.keyframe_names[2] = "Cut";
+    EditingSession cut_session{two}; cut_session.select_keyframe(2);
+    REQUIRE(cut_session.timeline_track_limit(1));
+    CHECK_FALSE(cut_session.set_active_camera(*second));
+    CHECK(cut_session.state().document.timeline == two.document.timeline);
+    CHECK(active_camera(cut_session.state(), 2)->id == *first);
+    CHECK_FALSE(cut_session.dirty()); CHECK_FALSE(cut_session.take_changes());
+    REQUIRE(cut_session.timeline_track_limit(2));
+    REQUIRE(cut_session.set_active_camera(*second));
+    CHECK(active_camera(cut_session.state(), 2)->id == *second);
+
+    // Inspector rotation/scale Apply keys rotation, scale and axis scale.
+    auto posed = scene();
+    posed.viewport.time = 2;
+    posed.document.keyframe_names[2] = "Pose";
+    EditingSession transform_session{posed}; transform_session.select_keyframe(2);
+    REQUIRE(transform_session.timeline_track_limit(1));
+    CHECK_FALSE(transform_session.set_transform(1, {0, 30, 0}, 2, Vec3{1, 2, 1}));
+    CHECK(transform_session.state().document.timeline == posed.document.timeline);
+    CHECK_FALSE(transform_session.dirty()); CHECK_FALSE(transform_session.take_changes());
+    REQUIRE(transform_session.timeline_track_limit(3));
+    REQUIRE(transform_session.set_transform(1, {0, 30, 0}, 2, Vec3{1, 2, 1}));
+    CHECK(transform_session.state().document.timeline.tracks().size() == 3);
 }
 
 TEST_CASE("Native callbacks cannot bypass the session track preference", "[editor][session][settings][timeline][remote]") {

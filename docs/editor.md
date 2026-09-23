@@ -347,8 +347,8 @@ metadata and **Logs → Interaction timing** measurements/export.
   with the camera's name during a visit, and **SIM CAMERA / independent Play**.
   Camera placement, lens and activeness are ordinary keyframe properties: **Blend**
   interpolates the segment arriving at a key; clear it for a held shot followed by
-  a cut. Scenes without cameras keep evaluating the older saved animation shot,
-  but adding a camera takes over.
+  a cut. A scene without cameras has no simulation view: independent Play and
+  the demos ask you to add one (**Blueprints > Camera +**).
 - Choose **Vertices** mode for the mesh. Clicking selects; dragging a vertex does
   not move it. **G/R/S** starts move/rotate/scale following the mouse without a
   held button. **X/Y/Z** toggles a world-axis constraint. **Enter or LMB** confirms;

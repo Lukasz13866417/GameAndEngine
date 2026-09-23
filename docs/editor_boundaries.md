@@ -8,7 +8,7 @@ context-owning thread. This refactor does not add a render graph or simulation t
 
 | Owner | Data | Changes when |
 | --- | --- | --- |
-| `Document` | Applied blueprints, separate mesh drafts, instances, authored camera, timeline, document revision | Authored content is edited |
+| `Document` | Applied blueprints, separate mesh drafts, instances (including scene cameras), timeline, document revision | Authored content is edited |
 | `ViewportState` | Private camera target, selected object/vertex, inspected blueprint, playhead/play state, view sequence | Navigation, selection, scrubbing, or inspection changes |
 | `Runtime` | Per-blueprint GPU resources, render targets, shader realizations | Explicit resource invalidation or target resize |
 | Presented frame | Pixels, generation/frame/document/view IDs, actual camera pose, sampled time, interaction trace | A completed worker frame is accepted |
@@ -308,12 +308,20 @@ no other simulation camera and no camera-specific packet. History entries also
 retain change identities: undo/redo of known vertex, property and keyframe
 changes sends patches, not serialized meshes.
 
-Scene files before `editor_project = 5` stored the simulation camera as a
-document-level orbit shot with yaw/pitch/distance/target/zoom tracks.
-`legacy_camera.hpp` is the only code that still reads that shape: loading turns
-the shot into an active **Animation camera** instance keyed at every old key time
-(held where the old keys held), and a scene that already had camera instances
-drops the unused shot. Saving writes version 5.
+Scene files before `editor_project = 5` also stored a document-level orbit shot
+with yaw/pitch/distance/target/zoom tracks, which was the simulation camera
+whenever a scene had no camera instances. `legacy_camera.hpp` is the only code
+that knows that shape: the decoder asks it to read the shot and route its
+tracks, and it turns a shot that was in use into an active **Animation camera**
+instance. Focus and zoom copy the
+old distance and zoom tracks key for key, rotation uses yaw and pitch key times,
+and the eye, which moved on an orbit, gets extra keys where a straight line
+would drift more than about half a pixel (the shipped fleet reveal grows from
+35 to 63 keyframes). A cut in one component while another moves keeps both via
+a key one millisecond before the cut. Keys are thinned only when the result
+would exceed a timeline limit. A scene that already had camera instances drops
+the unused shot, as does a scene already at the instance limit. An eye beyond
+the scene's coordinate range is clamped into it. Saving writes version 5.
 
 Native `ProjectControls` callbacks report the properties they committed. The
 worker replies with `state_patch`, updating those properties/tracks in the UI

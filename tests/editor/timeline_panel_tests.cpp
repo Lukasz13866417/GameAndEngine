@@ -834,8 +834,12 @@ TEST_CASE("Slider capture survives acknowledgements until release", "[editor][ui
 
 TEST_CASE("Timeline drawing stays below menus and inspector labels fit", "[editor][ui][timeline]") {
     Fixture f;
-    // Include the camera's four extra rows without clipping a final row at
-    // the viewport edge; scrolling clips partially visible labels by design.
+    // A scene camera adds four lens rows (Optical zoom, Focus distance, Active
+    // camera, Visible) with the longest labels. Size the viewport so no final
+    // row is clipped at its edge; scrolling clips partially visible labels by design.
+    const auto camera = ensure_camera(f.source, {0, 0, 8, {}});
+    REQUIRE(camera);
+    f.panel.selected_objects(std::array<u64, 3>{1, 2, *camera});
     f.input.logical_size = {1800, 1500};
     f.input.framebuffer = {1800, 1500};
     f.host.position({20, 1330});
@@ -844,6 +848,9 @@ TEST_CASE("Timeline drawing stays below menus and inspector labels fit", "[edito
     f.panel.show(f.source);
     f.pump();
     f.add();
+    CHECK(f.has("Optical zoom"));
+    CHECK(f.has("Focus distance"));
+    CHECK(f.has("Active camera"));
     auto list = f.draw();
     for (const auto& command : list.commands) {
         const auto* text = std::get_if<ui::TextDraw>(&command);

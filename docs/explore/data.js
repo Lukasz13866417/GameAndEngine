@@ -183,7 +183,7 @@
             {
               id: "document", title: "Document — authored content", kind: "Editor app",
               summary: "The scene you are making, rather than the way you happen to be looking at it.",
-              description: ["The document contains applied blueprint geometry, separate mesh drafts, scene instances, the authored camera, animation, and world bounds. Content edits affect its revision and saved status.", "The session owns it. It is not a renderer, and it does not own GPU buffers."],
+              description: ["The document contains applied blueprint geometry, separate mesh drafts, scene instances (including scene cameras), animation, and world bounds. Content edits affect its revision and saved status.", "The session owns it. It is not a renderer, and it does not own GPU buffers."],
               related: ["blueprints", "mesh-drafts", "timeline"], links: [source("examples/editor/project.hpp")]
             },
             {
