@@ -235,7 +235,6 @@ TEST_CASE("Mixed selection changes retain every pending edit in either order", "
     ++state.document.revision;
     const std::array<u32, 1> vertex{0};
     const auto other = [&] {
-        SECTION("camera") { updates.camera_changed(); }
         SECTION("playback") { updates.playback_changed(); }
         SECTION("position") { updates.position_changed(1); }
         SECTION("vertices") { updates.changed(vertex); }

@@ -4,6 +4,7 @@
 #include "animation.hpp"
 #include "preview_values.hpp"
 #include "effect_presets.hpp"
+#include "legacy_camera.hpp"
 #include "../support/mesh_frame.hpp"
 #include <vng/editor/limits.hpp>
 #include <vng/content/document.hpp>
@@ -146,7 +147,7 @@ content::Result<void> validate_state(const State& s) {
         return invalid("Invalid selection or revision (revision must be in 1..2^53-1)");
     if (!valid_settings(s.document.mesh_blueprint) || !valid_settings(s.document.sun_blueprint) ||
         !range(s.viewport.time, 0, 86400) ||
-        !valid_camera_pose(s.viewport.editor_camera) || !valid_camera_pose(s.document.animation_camera))
+        !valid_camera_pose(s.viewport.editor_camera))
         return invalid("Scene settings exceed editor limits");
     if (s.document.instances.size() > max_scene_instances || !s.document.next_instance_id)
         return invalid("Scene instance count/identity exceeds editor limits");
@@ -219,9 +220,11 @@ void animation_value(std::ostream& out, const timeline::Value& value) {
         },
         value);
 }
-void read_animation(State& state, content::Reader reader) {
+// A legacy shot collects the old camera tracks, which are no scene property.
+void read_animation(State& state, content::Reader reader, LegacyCameraShot* legacy) {
     state.document.timeline_duration = reader.get<f32>("duration");
-    const auto properties = animation_properties(state);
+    auto properties = animation_properties(state);
+    if (legacy) std::ranges::move(legacy_camera_properties(legacy->pose), std::back_inserter(properties));
     std::vector<timeline::Track> tracks;
     std::size_t total_keys{};
     for (const auto track : reader.child("tracks").elements()) {
@@ -253,7 +256,8 @@ void read_animation(State& state, content::Reader reader) {
                                                        : timeline::Interpolation::linear});
             ++total_keys;
         }
-        tracks.push_back(std::move(decoded));
+        if (legacy && decoded.target.object == legacy_camera_object) legacy->tracks.push_back(std::move(decoded));
+        else tracks.push_back(std::move(decoded));
     }
     if (auto replaced = state.document.timeline.replace(std::move(tracks)); !replaced)
         reader.fail(replaced.error().message);
@@ -450,7 +454,6 @@ content::Result<void> inspect_mesh(const State& state, ViewportState& view, Blue
         std::sin(camera_vertical_fov * .5F * std::numbers::pi_v<f32> / 180) / .52F;
     view.mode = ViewMode::mesh;
     view.inspected_mesh = blueprint;
-    view.pilot_camera = false;
     view.paused = true;
     view.selected_vertex = 0;
     view.editor_camera.target = {
@@ -519,7 +522,6 @@ bool instance_in_view(const State& state, const SceneInstance& instance) {
     return viewed && viewed->id == instance.id;
 }
 std::string object_name(const State& state, u64 id) {
-    if (id == camera_animation_object) return "Animation camera";
     const auto* instance = id <= std::numeric_limits<u32>::max()
                                ? find_instance(state, static_cast<u32>(id)) : nullptr;
     return instance ? instance->name : "No object";
@@ -632,7 +634,7 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o << std::setprecision(9) << std::boolalpha;
-    o << "vscene 1.0\neditor_project = 4;\nrevision = " << s.document.revision
+    o << "vscene 1.0\neditor_project = 5;\nrevision = " << s.document.revision
       << ";\nmesh_data = " << quote_string(*mesh) << ";\n";
     o << "blueprints = { mesh = ";
     write_settings(o, s.document.mesh_blueprint);
@@ -677,9 +679,6 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
         o << "; },\n";
     }
     o << "];\n";
-    o << "animation_camera = { ";
-    write_camera(o, s.document.animation_camera);
-    o << "};\n";
     o << "world_bounds = { minimum = "; vector(o, s.document.world_bounds.minimum);
     o << "; maximum = "; vector(o, s.document.world_bounds.maximum); o << "; };\n";
     const auto& environment = s.document.environment;
@@ -695,7 +694,6 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
     if (include_editor_view) {
         o << "sequence = " << s.viewport.sequence << "; ";
         write_camera(o, s.viewport.editor_camera);
-        o << "pilot_camera = " << s.viewport.pilot_camera << "; ";
         o << "show_regions = " << s.viewport.show_regions << "; show_world_bounds = " << s.viewport.show_world_bounds << "; ";
         o << "gizmo_only = " << s.viewport.gizmo_only << "; ";
     }
@@ -748,7 +746,7 @@ content::Result<State> decode(std::string_view source) {
         return std::unexpected(mesh.error());
     return doc->read([&](content::Reader& r) {
         const auto version = r.get<u32>("editor_project");
-        if (version < 1 || version > 4)
+        if (version < 1 || version > 5)
             r.fail("Unsupported editor project version");
         State s{.document = {.revision = r.get<u64>("revision"), .mesh = std::move(*mesh)}};
         for (const auto member : r.members()) if (member.name == "world_bounds")
@@ -891,39 +889,45 @@ content::Result<State> decode(std::string_view source) {
         s.viewport.weld = v.get<bool>("weld");
         s.viewport.paused = v.get<bool>("paused");
         s.viewport.time = v.get<f32>("time");
-        bool has_editor_camera{}, has_animation_camera{};
+        bool has_editor_camera{};
         for (const auto member : v.members())
             if (member.name == "yaw" || member.name == "pitch" ||
                 member.name == "distance" || member.name == "camera_target")
                 has_editor_camera = true;
         if (has_editor_camera)
             s.viewport.editor_camera = read_camera(v);
-        s.viewport.pilot_camera = v.get_or<bool>("pilot_camera", false);
         s.viewport.show_regions = v.get_or<bool>("show_regions", false);
         s.viewport.show_world_bounds = v.get_or<bool>("show_world_bounds", false);
         s.viewport.gizmo_only = v.get_or<bool>("gizmo_only", false);
-        for (const auto member : r.members()) {
-            if (member.name != "animation_camera") continue;
-            s.document.animation_camera = read_camera(member.value);
-            has_animation_camera = true;
+        // Before version 5 every scene had a document-level shot: its own
+        // `animation_camera`, or in the oldest files the single `view` camera.
+        std::optional<LegacyCameraShot> legacy;
+        if (version < 5) {
+            legacy.emplace(LegacyCameraShot{s.viewport.editor_camera, {}});
+            for (const auto member : r.members())
+                if (member.name == "animation_camera") legacy->pose = read_camera(member.value);
         }
-        // Old scene files had one camera in `view`. Upgrade it without moving
-        // the authored shot. New scene files don't persist inspection poses.
-        if (!has_animation_camera) s.document.animation_camera = s.viewport.editor_camera;
-        if (!has_editor_camera) s.viewport.editor_camera = s.document.animation_camera;
         // Legacy scenes had a playhead but no duration; retain their current
         // view instead of placing a saved time outside the new timeline ruler.
         s.document.timeline_duration = std::max(10.F, s.viewport.time);
         for (const auto member : r.members())
             if (member.name == "timeline")
-                read_animation(s, member.value);
+                read_animation(s, member.value, legacy ? &*legacy : nullptr);
+        if (legacy)
+            if (auto migrated = migrate_legacy_camera(s, *legacy); !migrated) r.fail(migrated.error().message);
+        // Scene files don't persist the editor view; open looking through the
+        // scene's camera where it starts, as the old shot did.
+        if (!has_editor_camera) {
+            if (legacy) s.viewport.editor_camera = legacy->pose;
+            else if (const auto pose = evaluate_camera(s, 0)) s.viewport.editor_camera = *pose;
+        }
         if (auto valid = validate_state(s); !valid)
             r.fail(valid.error().message);
         return s;
     });
 }
 gfx::Camera camera(const State& s) {
-    return camera(preview_camera_pose(s,s.viewport.time),s.viewport.mode);
+    return camera(s.viewport.editor_camera, s.viewport.mode);
 }
 gfx::Camera camera(const CameraPose& pose, ViewMode mode, f32 maximum_distance) {
     gfx::Camera camera;

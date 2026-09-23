@@ -98,7 +98,7 @@ TEST_CASE("Fleet choreography is ordinary editable timestamp tracks, not hidden 
 {
     const auto state=authored();
     REQUIRE(project::validate_animation(state));
-    REQUIRE(project::has_camera_animation(state));
+    REQUIRE(state.document.timeline.find({fleet::camera,"position"}));
     REQUIRE(project::is_camera_instance(state,fleet::camera));
     CHECK(project::active_camera(state,0)->id==fleet::camera);
     for(const auto property : {"position","rotation","focus","zoom"}) {
@@ -119,8 +119,8 @@ TEST_CASE("Fleet choreography is ordinary editable timestamp tracks, not hidden 
             CHECK(track->keys[i].incoming==timeline::Interpolation::linear);
         }
     }
-    const auto before=project::evaluate_camera(state,0);
-    const auto after=project::evaluate_camera(state,fleet::reveal_time);
+    const auto before=*project::evaluate_camera(state,0);
+    const auto after=*project::evaluate_camera(state,fleet::reveal_time);
     CHECK(before!=after);
     CHECK(state.document.keyframe_names.size()>=6);
     CHECK(state.document.timeline.find({fleet::flagship,"position"}));
@@ -150,7 +150,7 @@ TEST_CASE("Fleet flyby keeps the camera and entire hero ship clear of the solar 
         const auto center=star.transform.position;
         // Conservative allowance for the solar displacement envelope.
         const auto radius=std::get<project::SunSettings>(star.settings).radius*star.transform.scale*1.05F;
-        const auto eye=project::camera(project::evaluate_camera(state,time),project::ViewMode::scene).position();
+        const auto eye=project::camera(*project::evaluate_camera(state,time),project::ViewMode::scene).position();
         camera_clearance=std::min(camera_clearance,length(sub(eye,center))-radius);
         hero_clearance=std::min(hero_clearance,
             length(sub(lead.transform.position,center))-radius-bound*lead.transform.scale);
@@ -169,7 +169,7 @@ TEST_CASE("The opening hides complete fleet silhouettes behind the sun and later
     // Slightly inside the nominal surface, avoiding a test that relies on a
     // protruding solar strand or bloom to hide an otherwise visible hull tip.
     const auto radius=std::get<project::SunSettings>(star.settings).radius*star.transform.scale*.97F;
-    const auto eye=project::camera(project::evaluate_camera(state,0),project::ViewMode::scene).position();
+    const auto eye=project::camera(*project::evaluate_camera(state,0),project::ViewMode::scene).position();
     std::size_t checked_vertices{},exposed_vertices{};
     for(const auto& base : state.document.instances) {
         if(base.id==fleet::hero||base.id==fleet::sun||base.id==fleet::camera) continue;
@@ -186,7 +186,7 @@ TEST_CASE("The opening hides complete fleet silhouettes behind the sun and later
     }
     REQUIRE(checked_vertices>10000);
     CHECK(exposed_vertices==0);
-    const auto revealed_eye=project::camera(project::evaluate_camera(state,fleet::reveal_time),
+    const auto revealed_eye=project::camera(*project::evaluate_camera(state,fleet::reveal_time),
                                            project::ViewMode::scene).position();
     std::size_t revealed{};
     for(const auto& base : state.document.instances) {
@@ -221,7 +221,6 @@ TEST_CASE("Fleet scene preserves all blueprints, instances and tunable animation
         CHECK(a.settings==b.settings);
     }
     CHECK(restored->document.environment==state.document.environment);
-    CHECK(restored->document.animation_camera==state.document.animation_camera);
     CHECK(restored->document.timeline==state.document.timeline);
     CHECK(restored->document.timeline_duration==fleet::duration);
     CHECK(restored->document.keyframe_names==state.document.keyframe_names);

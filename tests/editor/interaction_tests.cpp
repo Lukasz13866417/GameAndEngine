@@ -1,6 +1,6 @@
 #include "../../examples/editor/viewport_session.hpp"
 #include "../../examples/editor/presented_view.hpp"
-#include "../../examples/editor/animation_camera_edit.hpp"
+#include "../../examples/editor/animation.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <limits>
@@ -85,47 +85,19 @@ TEST_CASE("Lens and forward motion smooth independently without changing authore
     CHECK(motion.settled()); CHECK(motion.pose()==goal);
 }
 
-TEST_CASE("Legacy camera transports default optical zoom while new packets validate it", "[editor][viewport][zoom]") {
-    project::ViewportRequest request{1,{}};
-    request.view.editor_camera.zoom=3;
-    auto bytes=project::encode_viewport_request(request); REQUIRE(bytes);
-    auto legacy=*bytes; legacy.resize(72); legacy[7]=1;
-    auto decoded=project::decode_viewport_request(legacy); REQUIRE(decoded);
-    CHECK(decoded->view.editor_camera.zoom==1);
-    request.view.editor_camera.zoom=0;
-    CHECK_FALSE(project::encode_viewport_request(request));
-    request.view.editor_camera.zoom=std::numeric_limits<float>::infinity();
-    CHECK_FALSE(project::encode_viewport_request(request));
-
-    project::AnimationCameraEdit edit{1,2,{0,0,8,{},2}};
-    auto packet=project::encode_animation_camera_edit(edit); REQUIRE(packet);
-    packet->resize(48); (*packet)[7]=1;
-    auto pose=project::decode_animation_camera_edit(*packet); REQUIRE(pose);
-    CHECK(pose->pose.zoom==1);
-    edit.tracks.emplace();
-    packet=project::encode_animation_camera_edit(edit); REQUIRE(packet);
-    packet->erase(48,4); packet->pop_back(); (*packet)[7]=2;
-    pose=project::decode_animation_camera_edit(*packet); REQUIRE(pose);
-    CHECK(pose->pose.zoom==1); REQUIRE(pose->tracks); CHECK_FALSE((*pose->tracks)[4]);
-}
-
-TEST_CASE("Scene roundtrip keeps independent editor and animation lens values", "[editor][viewport][zoom]") {
+TEST_CASE("Scene roundtrip keeps independent editor and scene camera lens values", "[editor][viewport][zoom]") {
     auto state=make_state();
     state.viewport.editor_camera.zoom=2;
-    state.document.animation_camera.zoom=.5F;
+    const auto camera=project::ensure_camera(state,{0,0,8,{},.5F});
+    REQUIRE(camera);
+    REQUIRE(project::key_camera(state,*camera,0,{0,0,8,{},1}));
+    REQUIRE(project::key_camera(state,*camera,5,{0,0,8,{},4}));
     auto text=project::encode(state); REQUIRE(text);
     auto decoded=project::decode(*text); REQUIRE(decoded);
     CHECK(decoded->viewport.editor_camera==state.viewport.editor_camera);
-    CHECK(decoded->document.animation_camera==state.document.animation_camera);
-    REQUIRE(project::key_camera(state,0,{0,0,8,{},1}));
-    REQUIRE(project::key_camera(state,5,{0,0,8,{},4}));
-    ++state.document.revision;
-    auto edit=project::capture_animation_camera_edit(state.document.revision-1,state.document);
-    auto wire=project::encode_animation_camera_edit(edit); REQUIRE(wire);
-    auto packet=project::decode_animation_camera_edit(*wire); REQUIRE(packet);
-    CHECK(*packet==edit);
+    CHECK(project::evaluate_camera(*decoded,2.5F)->zoom==Catch::Approx(2.5F));
+    CHECK(project::evaluate_camera(*decoded,5)==project::evaluate_camera(state,5));
 }
-
 TEST_CASE("Wheel smoothing is time based and does not mutate the target", "[editor][viewport]") {
     project::CameraPose start; start.distance=10;
     auto goal=start; goal.distance=5;
@@ -237,26 +209,6 @@ TEST_CASE("Input tracing is lazy and synthetic event times are explicitly marked
     CHECK(timings.interaction().id==0);
 }
 
-TEST_CASE("Authored camera edits cannot clobber a newer private viewport", "[editor][viewport]") {
-    auto state=make_state();
-    state.viewport.sequence=100;
-    state.viewport.editor_camera={45,20,3,{1,2,3}};
-    const auto view=state.viewport;
-    project::AnimationCameraEdit edit{1,2,{30,10,9,{2,1,0},3}};
-    auto bytes=project::encode_animation_camera_edit(edit);
-    REQUIRE(bytes); CHECK(bytes->size()==52);
-    auto decoded=project::decode_animation_camera_edit(*bytes);
-    REQUIRE(decoded);
-    REQUIRE(project::apply_animation_camera_edit(state.document,*decoded));
-    CHECK(state.document.revision==2);
-    CHECK(state.document.animation_camera==edit.pose);
-    CHECK(state.viewport==view);
-    CHECK_FALSE(project::apply_animation_camera_edit(state.document,*decoded));
-    CHECK(state.viewport==view);
-    for (std::size_t n=0;n<bytes->size();++n)
-        CHECK_FALSE(project::decode_animation_camera_edit(bytes->substr(0,n)));
-}
-
 TEST_CASE("Stale viewport targets cannot roll a newer snapshot backward", "[editor][viewport]") {
     auto state=make_state();
     state.viewport.sequence=10;
@@ -270,90 +222,3 @@ TEST_CASE("Stale viewport targets cannot roll a newer snapshot backward", "[edit
     CHECK(state.viewport.editor_camera.distance==8);
 }
 
-TEST_CASE("Compact camera track packets round trip cuts and replace only authored camera data",
-          "[editor][camera][protocol]") {
-    auto authored=make_state();
-    auto worker=authored;
-    const auto private_view=worker.viewport;
-    const auto original_mesh=worker.document.mesh.document();
-    const auto names=worker.document.keyframe_names;
-    const auto other_track=*worker.document.timeline.find({1,"position"});
-    REQUIRE(project::key_camera(authored,0,{0,10,8,{}}));
-    REQUIRE(project::key_camera(authored,5,{30,20,6,{1,2,3}}));
-    REQUIRE(project::key_property(authored,{project::camera_animation_object,"yaw"},5,30.F,
-                                   timeline::Interpolation::hold));
-    authored.document.revision=2;
-    auto edit=project::capture_animation_camera_edit(1,authored.document);
-    REQUIRE(edit.tracks);
-    (*edit.tracks)[0]->label="Camera cut / orbit";
-    (*edit.tracks)[0]->layer="Cinematic camera";
-    const auto bytes=project::encode_animation_camera_edit(edit);
-    REQUIRE(bytes);
-    CHECK(bytes->size()<512);
-    const auto decoded=project::decode_animation_camera_edit(*bytes);
-    REQUIRE(decoded);
-    CHECK(*decoded==edit);
-    for(std::size_t size=0;size<bytes->size();++size)
-        CHECK_FALSE(project::decode_animation_camera_edit(bytes->substr(0,size)));
-    CHECK_FALSE(project::decode_animation_camera_edit(*bytes+"trailing"));
-    REQUIRE(project::apply_animation_camera_edit(worker.document,*decoded));
-    CHECK(project::evaluate_camera(worker,4.99F).yaw==0.F);
-    CHECK(project::evaluate_camera(worker,5).yaw==30.F);
-    CHECK(worker.viewport==private_view);
-    CHECK(worker.document.mesh.document()==original_mesh);
-    CHECK(worker.document.keyframe_names==names);
-    CHECK(*worker.document.timeline.find({1,"position"})==other_track);
-    CHECK(worker.document.timeline.find({project::camera_animation_object,"yaw"})->label=="Camera cut / orbit");
-    CHECK_FALSE(project::apply_animation_camera_edit(worker.document,*decoded));
-
-    // An explicitly empty v2 replacement removes only camera tracks. v1 pose
-    // edits still leave animation tracks untouched, for backwards compatibility.
-    project::AnimationCameraEdit pose{2,3,{10,0,7,{}}};
-    REQUIRE(project::apply_animation_camera_edit(worker.document,pose));
-    CHECK(project::has_camera_animation(worker));
-    project::AnimationCameraEdit clear{3,4,pose.pose,project::CameraTracks{}};
-    REQUIRE(project::apply_animation_camera_edit(worker.document,clear));
-    CHECK_FALSE(project::has_camera_animation(worker));
-    CHECK(*worker.document.timeline.find({1,"position"})==other_track);
-}
-
-TEST_CASE("Malformed camera tracks and capacity failures cannot partially apply",
-          "[editor][camera][protocol]") {
-    auto worker=make_state();
-    auto authored=worker;
-    REQUIRE(project::key_camera(authored,0,{0,0,8,{}}));
-    REQUIRE(project::key_camera(authored,5,{30,10,6,{1,2,3}}));
-    authored.document.revision=2;
-    const auto valid=project::capture_animation_camera_edit(1,authored.document);
-    const auto before=worker.document.timeline;
-    const auto before_pose=worker.document.animation_camera;
-    const auto rejected=[&](const project::AnimationCameraEdit& edit) {
-        CHECK_FALSE(project::apply_animation_camera_edit(worker.document,edit));
-        CHECK(worker.document.timeline==before);
-        CHECK(worker.document.animation_camera==before_pose);
-        CHECK(worker.document.revision==1);
-    };
-    auto bad=valid;
-    (*bad.tracks)[0]->target.object=1;
-    rejected(bad);
-    bad=valid; (*bad.tracks)[0]->keys.back().value=Vec3{}; rejected(bad);
-    bad=valid; (*bad.tracks)[0]->keys.back().value=181.F; rejected(bad);
-    bad=valid; (*bad.tracks)[3]->keys.back().time=11.F; rejected(bad);
-    bad=valid; (*bad.tracks)[1]->keys.back().incoming=static_cast<timeline::Interpolation>(99); rejected(bad);
-    bad=valid; (*bad.tracks)[2]->keys.resize(timeline::max_keys_per_track+1); rejected(bad);
-    bad=valid; (*bad.tracks)[0]->layer=std::string(timeline::max_layer_bytes+1,'x'); rejected(bad);
-    bad=valid; (*bad.tracks)[3]->keys.back().time=std::numeric_limits<f32>::quiet_NaN(); rejected(bad);
-
-    // Applying four individually valid tracks can still exceed the complete
-    // timeline's capacity. The existing timeline and revision must survive.
-    worker.document.timeline={};
-    std::vector<timeline::Track> capacity;
-    for(u64 object=1;object<=timeline::max_tracks;++object)
-        capacity.push_back({{object,"value"},{},{},{{0,1.F,timeline::Interpolation::hold}}});
-    REQUIRE(worker.document.timeline.replace(std::move(capacity)));
-    const auto full=worker.document.timeline;
-    CHECK_FALSE(project::apply_animation_camera_edit(worker.document,valid));
-    CHECK(worker.document.timeline==full);
-    CHECK(worker.document.animation_camera==before_pose);
-    CHECK(worker.document.revision==1);
-}

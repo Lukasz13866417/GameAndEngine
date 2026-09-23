@@ -1,6 +1,5 @@
 #include "preview_updates.hpp"
 #include "project.hpp"
-#include "animation_camera_edit.hpp"
 #include "document_patch.hpp"
 
 namespace editor_example {
@@ -18,7 +17,7 @@ void PreviewUpdates::reset(vng::u64 generation) { peers_[generation] = Peer{}; }
 void PreviewUpdates::reject(vng::u64 generation) {
     auto& peer = peers_[generation];
     peer.sent = 0; peer.changes = {.full = true}; peer.rejected = true;
-    peer.camera = peer.camera_tracks = peer.playback = peer.selection = false;
+    peer.playback = peer.selection = false;
 }
 void PreviewUpdates::changed() { changed(DocumentChanges{.full = true}); }
 void PreviewUpdates::changed(const DocumentChanges& changes) {
@@ -34,13 +33,6 @@ void PreviewUpdates::changed(std::span<const vng::u32> vertices, vng::u32 bluepr
     DocumentChanges changes;
     changes.vertices[blueprint].insert(vertices.begin(), vertices.end());
     changed(changes);
-}
-void PreviewUpdates::camera_changed() {
-    for (auto& [id, peer] : peers_) { (void)id; peer.rejected = false; peer.camera = true; }
-}
-void PreviewUpdates::camera_tracks_changed() {
-    camera_changed();
-    for (auto& [id, peer] : peers_) { (void)id; peer.camera_tracks = true; }
 }
 // Legacy revision-bearing selection/playback packets remain readable for old
 // clients. The application uses the independently sequenced view lane.
@@ -71,7 +63,7 @@ bool PreviewUpdates::ready(vng::u64 generation, vng::u64 revision) const {
     const auto found = peers_.find(generation);
     if (found == peers_.end()) return false;
     const auto& p = found->second;
-    return p.base == revision && !p.sent && !p.known && p.changes.empty() && !p.camera && !p.playback && !p.selection;
+    return p.base == revision && !p.sent && !p.known && p.changes.empty() && !p.playback && !p.selection;
 }
 vng::content::Result<std::optional<std::string>> PreviewUpdates::next(vng::u64 generation, const State& state) {
     auto found = peers_.find(generation);
@@ -85,10 +77,10 @@ vng::content::Result<std::optional<std::string>> PreviewUpdates::next(vng::u64 g
     if (peer.rejected || peer.sent || ready(generation, state.document.revision)) return std::optional<std::string>{};
     auto changes = peer.changes;
     const bool legacy_mixed = (peer.selection || peer.playback) &&
-        (!changes.empty() || peer.camera || (peer.selection && peer.playback));
+        (!changes.empty() || (peer.selection && peer.playback));
     std::string packet;
     if (changes.full || !peer.base || legacy_mixed ||
-        (changes.empty() && !peer.known && !peer.camera && !peer.playback && !peer.selection)) {
+        (changes.empty() && !peer.known && !peer.playback && !peer.selection)) {
         auto bytes = encode(state);
         if (!bytes) return std::unexpected(bytes.error());
         packet = "snapshot\n" + std::move(*bytes);
@@ -104,20 +96,10 @@ vng::content::Result<std::optional<std::string>> PreviewUpdates::next(vng::u64 g
         auto bytes = encode_playback_edit(*edit);
         if (!bytes) return std::unexpected(bytes.error());
         packet = "playback\n" + std::move(*bytes);
-    } else if (peer.camera && changes.empty()) {
-        auto edit = peer.camera_tracks ? capture_animation_camera_edit(peer.base, state.document)
-            : AnimationCameraEdit{peer.base, state.document.revision, state.document.animation_camera};
-        auto bytes = encode_animation_camera_edit(edit);
-        if (!bytes) {
-            vng::content::Diagnostic error; error.message = bytes.error(); return std::unexpected(std::move(error));
-        }
-        packet = "animation_camera\n" + std::move(*bytes);
     } else {
-        if (peer.camera) for (auto property : camera_track_properties)
-            changes.properties.insert({camera_animation_object, std::string(property)});
         // Keep the tiny single-property encodings. A mixed dirty set is a
         // versioned patch, never a reason to serialize scene geometry.
-        if (!peer.camera && changes.mesh_placements.empty() && changes.meshes.empty() && changes.vertices.empty() && !changes.duration && !changes.world_bounds && changes.regions.empty() && changes.markers.empty() && changes.properties.size() == 1 &&
+        if (changes.mesh_placements.empty() && changes.meshes.empty() && changes.vertices.empty() && !changes.duration && !changes.world_bounds && changes.regions.empty() && changes.markers.empty() && changes.properties.size() == 1 &&
             changes.properties.begin()->object <= UINT32_MAX) {
             const auto& target = *changes.properties.begin();
             const auto object = static_cast<vng::u32>(target.object);
@@ -151,7 +133,7 @@ vng::content::Result<std::optional<std::string>> PreviewUpdates::next(vng::u64 g
     peer.sent = state.document.revision;
     peer.changes = {};
     peer.known = false;
-    peer.camera = peer.camera_tracks = peer.playback = peer.selection = false;
+    peer.playback = peer.selection = false;
     return std::optional{std::move(packet)};
 }
 } // namespace editor_example

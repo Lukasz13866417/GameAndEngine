@@ -243,7 +243,6 @@ TEST_CASE("Rotation edits preserve mixed property and geometry targets",
     const std::array<u32, 1> vertex{0};
     SECTION("another rotation object") { updates.rotation_changed(2); }
     SECTION("position") { updates.position_changed(1); }
-    SECTION("camera") { updates.camera_changed(); }
     SECTION("legacy selection") { updates.selection_changed(); full = true; }
     SECTION("legacy playback") { updates.playback_changed(); full = true; }
     SECTION("geometry") { updates.changed(vertex); }

@@ -38,6 +38,9 @@ In the demo, Space pauses, R restarts, and Esc closes. Run without `--once` to
 watch the approach and reveal. In the editor, select the **Tracking camera**,
 click **Inspect** and **Play (in editor)** to follow the authored shot. The
 independent Play window uses the same renderer and renders through that camera.
+The shipped `.vscene` predates scene cameras, so its shot loads as an
+**Animation camera** instance with the same keys; a freshly generated scene
+names it **Tracking camera**.
 
 Ship/camera paths and rock rotation are ordinary timeline keys. Named
 milestones mark entry, threading the gap, breaking through, and holding position.

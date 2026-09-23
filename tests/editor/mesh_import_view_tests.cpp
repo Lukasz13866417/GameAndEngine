@@ -1,3 +1,4 @@
+#include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/mesh_import_view.hpp"
 #include <catch2/catch_test_macros.hpp>
 
@@ -14,19 +15,15 @@ TEST_CASE("Import inspection frames off-center geometry without changing the aut
     auto mesh = editor::EditableMesh::create(document);
     REQUIRE(mesh);
     State state{.document = {.mesh = std::move(*mesh)}};
+    REQUIRE(ensure_camera(state, {45, 20, 9, {1, 2, 3}})); // The scene camera is authored content, left alone.
     state.viewport.selected_object = 1;
     state.viewport.selected_vertex = 2;
-    state.viewport.pilot_camera = true;
-    state.document.animation_camera = {45, 20, 9, {1, 2, 3}};
-    const auto camera_before = state.document.animation_camera;
     const auto instances_before = state.document.instances;
     const auto geometry_before = state.document.mesh.document();
     inspect_imported_mesh(state);
     CHECK(state.viewport.mode == ViewMode::mesh);
-    CHECK_FALSE(state.viewport.pilot_camera);
     CHECK(state.viewport.paused);
     CHECK(state.viewport.selected_vertex == 0);
-    CHECK(state.document.animation_camera == camera_before);
     CHECK(state.document.instances == instances_before);
     CHECK(state.document.mesh.document() == geometry_before);
     CHECK(state.viewport.editor_camera.target == Vec3{10, 5, 2});
@@ -74,7 +71,6 @@ TEST_CASE("Explicit blueprint inspection frames that asset without following sce
     const auto object = instantiate(state, blueprint);
     REQUIRE(object);
     const auto instances = state.document.instances;
-    const auto authored_camera = state.document.animation_camera;
     inspect_imported_mesh(state);
     CHECK(state.viewport.inspected_mesh == blueprint);
     CHECK(state.viewport.editor_camera.target == Vec3{10, 4, 2});
@@ -83,7 +79,6 @@ TEST_CASE("Explicit blueprint inspection frames that asset without following sce
     CHECK(state.viewport.inspected_mesh == BlueprintId::mesh);
     CHECK(state.viewport.editor_camera.target == Vec3{});
     CHECK(state.document.instances == instances);
-    CHECK(state.document.animation_camera == authored_camera);
     REQUIRE(erase_instance(state, *object));
     REQUIRE(inspect_mesh(state, blueprint));
     CHECK(state.viewport.selected_object == 0);

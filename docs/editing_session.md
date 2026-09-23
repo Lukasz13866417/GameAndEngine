@@ -75,7 +75,6 @@ The other gesture pairs are:
 | `begin_rotation(object, selection, pivot)` | `rotate(primary_euler_degrees)` |
 | `begin_scale(object)` | `scale(uniform_scale)` |
 | `begin_vertices(blueprint, vertex_ids)` | `vertices(absolute_positions)` or `move_vertices(delta_from_start)` |
-| `begin_camera()` | `camera(pose)` (legacy saved shot; scenes with camera instances use `set_camera` / `set_active_camera` instead) |
 | `begin_world_bounds()` | `world_bounds({minimum, maximum})` |
 
 Rotation defaults to a shared geometric selection center. `TransformPivot`
@@ -127,7 +126,9 @@ conflicting controls while captured. The current private camera, any camera
 visit (Inspect/Enter) and the view mode remain independent of Undo/Redo.
 `set_camera(id, pose)` writes an editor pose into a scene camera and
 `set_active_camera(id)` makes it the simulation's camera from the selected
-keyframe on, clearing the others there; both are single undoable edits.
+keyframe on, clearing the others there; both are single undoable edits and,
+like every authoring path, respect the timeline track budget. Scene cameras are
+the only simulation camera: there is no separate camera gesture.
 
 ## Discrete edits
 

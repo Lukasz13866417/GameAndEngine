@@ -64,7 +64,7 @@ TEST_CASE("Adding cameras places them at the editor view and only the first beco
     CHECK(is_camera_instance(state, first)); CHECK_FALSE(is_camera_instance(state, 1));
     CHECK(find_instance(state, first)->name == "Camera " + std::to_string(first));
     CHECK(active_camera(state, 0)->id == first);
-    CHECK(close(evaluate_camera(state, 0), first_view));
+    CHECK(close(*evaluate_camera(state, 0), first_view));
     CHECK(close(camera_pose(*find_instance(state, second)), second_view));
     const auto catalog = blueprint_catalog(state);
     const auto entry = std::ranges::find(catalog, BlueprintId::camera, &Blueprint::id);
@@ -79,37 +79,33 @@ TEST_CASE("Adding cameras places them at the editor view and only the first beco
     for (const auto property : {"zoom", "focus", "active", "visible"})
         CHECK(std::ranges::find(properties, timeline::Target{first, property}, &AnimationProperty::target) != properties.end());
     auto bytes = encode_scene(state); REQUIRE(bytes);
-    CHECK(bytes->find("editor_project = 4;") != std::string::npos);
+    CHECK(bytes->find("editor_project = 5;") != std::string::npos);
     auto restored = decode(*bytes); REQUIRE(restored);
     CHECK(restored->document.instances == state.document.instances);
-    CHECK(close(evaluate_camera(*restored, 0), first_view));
+    CHECK(close(*evaluate_camera(*restored, 0), first_view));
 }
 
-TEST_CASE("The scene camera follows the active camera's keys and falls back without cameras", "[editor][camera]") {
+TEST_CASE("The scene camera follows the active camera's keys and is absent without cameras", "[editor][camera]") {
     auto state = scene();
     const CameraPose start{0, 0, 10, {}, 1}, end{90, 0, 10, {}, 1};
-    REQUIRE(key_camera(state, 0, start)); // The legacy document shot still evaluates without cameras.
-    REQUIRE(key_camera(state, 4, end));
     CHECK_FALSE(has_camera(state));
-    CHECK(has_camera_animation(state));
-    CHECK(evaluate_camera(state, 2).yaw == Catch::Approx(45));
+    CHECK_FALSE(evaluate_camera(state, 2)); // Without a camera the simulation has no view of its own.
     auto camera = ensure_camera(state, start, "Shot"); REQUIRE(camera);
     CHECK(find_instance(state, *camera)->name == "Shot");
     auto again = ensure_camera(state, end); REQUIRE(again);
     CHECK(*again == *camera); // An existing camera is kept, not moved.
-    CHECK(close(evaluate_camera(state, 2), start)); // Instance without keys: the legacy tracks no longer apply.
+    CHECK(close(*evaluate_camera(state, 2), start));
     REQUIRE(key_camera(state, *camera, 0, start));
     REQUIRE(key_camera(state, *camera, 4, end));
-    CHECK(has_camera_animation(state));
     const auto middle = evaluate_camera(state, 2);
-    CHECK(middle.distance == Catch::Approx(10));
+    REQUIRE(middle);
+    CHECK(middle->distance == Catch::Approx(10));
     // Interpolating the eye position moves along the chord, so the pivot distance is kept while the eye passes closer.
     const auto expected_eye = evaluate_transform(state, *find_instance(state, *camera), 2).position;
     CHECK(expected_eye.x == Catch::Approx(5)); CHECK(expected_eye.z == Catch::Approx(5));
-    CHECK(middle.yaw == Catch::Approx(45));
+    CHECK(middle->yaw == Catch::Approx(45));
     CHECK_FALSE(key_camera(state, 1, 2, end)); // Not a camera.
 }
-
 TEST_CASE("Only one camera can be active at a time and the session keys the switch", "[editor][camera][session]") {
     auto initial = scene();
     const auto first = add_camera(initial, {0, 0, 10, {}, 1});
@@ -129,7 +125,7 @@ TEST_CASE("Only one camera can be active at a time and the session keys the swit
     CHECK(active_camera(state, 0)->id == first);
     CHECK(active_camera(state, 5)->id == second);
     CHECK(active_camera(state, 9)->id == second);
-    CHECK(evaluate_camera(state, 5).yaw == Catch::Approx(90));
+    CHECK(evaluate_camera(state, 5)->yaw == Catch::Approx(90));
     CHECK(session.dirty());
     auto again = session.set_active_camera(second); REQUIRE(again); CHECK_FALSE(*again);
     REQUIRE(session.undo());
@@ -154,15 +150,15 @@ TEST_CASE("Saving the editor view authors a camera at the selected keyframe", "[
     auto saved = session.set_camera(camera, view);
     REQUIRE(saved); CHECK(*saved);
     const auto& state = session.state();
-    CHECK(close(evaluate_camera(state, 5), view));
-    CHECK(close(evaluate_camera(state, 0), {0, 0, 10, {}, 1})); // The keyed value starts at the cut, not before.
+    CHECK(close(*evaluate_camera(state, 5), view));
+    CHECK(close(*evaluate_camera(state, 0), {0, 0, 10, {}, 1})); // The keyed value starts at the cut, not before.
     for (const auto property : {"position", "rotation", "zoom", "focus"})
         CHECK(state.document.timeline.find({camera, property}));
     auto repeat = session.set_camera(camera, view); REQUIRE(repeat); CHECK_FALSE(*repeat);
     REQUIRE(session.undo());
-    CHECK(close(evaluate_camera(session.state(), 5), {0, 0, 10, {}, 1}));
+    CHECK(close(*evaluate_camera(session.state(), 5), {0, 0, 10, {}, 1}));
     REQUIRE(session.redo());
-    CHECK(close(evaluate_camera(session.state(), 5), view));
+    CHECK(close(*evaluate_camera(session.state(), 5), view));
     CHECK_FALSE(session.set_camera(1, view));
 }
 

@@ -129,7 +129,7 @@ void NavigationTool::move(CameraPose& s, ViewMode view, bool& smooth_zoom, Vec2 
 bool NavigationTool::update(State& s, Vec2 origin, Vec2 size,
                             std::span<const input::Event> unhandled,
                             std::span<const input::Event> raw, bool enabled) {
-    return update(view_camera(s), s.viewport.mode, s.viewport.smooth_zoom, origin, size, unhandled, raw, enabled);
+    return update(s.viewport.editor_camera, s.viewport.mode, s.viewport.smooth_zoom, origin, size, unhandled, raw, enabled);
 }
 bool NavigationTool::update(CameraPose& pose, ViewMode view, bool& smooth_zoom, Vec2 origin, Vec2 size,
                             std::span<const input::Event> unhandled,

@@ -10,7 +10,7 @@
 
 namespace editor_example {
 
-enum class EditGesture { none, move, rotation, scale, vertices, camera, world_bounds, region, mesh_draft, mesh_transform };
+enum class EditGesture { none, move, rotation, scale, vertices, world_bounds, region, mesh_draft, mesh_transform };
 enum class MeshOperation { fill, subdivide, align };
 struct MeshOperationSettings {
     vng::u32 levels{1}; // Repeated midpoint subdivision of the selected patch.
@@ -63,7 +63,6 @@ public:
     [[nodiscard]] vng::content::Result<void> begin_attitude(vng::u32 primary, std::span<const vng::u32> selection = {}, TransformPivot = {});
     [[nodiscard]] vng::content::Result<void> begin_scale(vng::u32 primary, std::span<const vng::u32> selection = {}, bool with_axes = false);
     [[nodiscard]] vng::content::Result<void> begin_vertices(BlueprintId, std::span<const vng::u32>);
-    [[nodiscard]] vng::content::Result<void> begin_camera();
     [[nodiscard]] vng::content::Result<void> begin_world_bounds();
     [[nodiscard]] vng::content::Result<bool> world_bounds(const WorldBounds&);
     [[nodiscard]] vng::content::Result<vng::u32> add_region(RegionShape, vng::Vec3 center, vng::f32 radius);
@@ -87,7 +86,6 @@ public:
     [[nodiscard]] vng::content::Result<bool> scale_factor(vng::f32, int axis = -1, ScaleLimits limits = {});
     [[nodiscard]] vng::content::Result<bool> move_vertices(vng::Vec3 delta);
     [[nodiscard]] vng::content::Result<bool> vertices(std::span<const VertexPosition>);
-    [[nodiscard]] vng::content::Result<bool> camera(const CameraPose&);
     [[nodiscard]] vng::content::Result<bool> commit();
     [[nodiscard]] vng::content::Result<bool> cancel();
 
@@ -160,7 +158,6 @@ private:
         std::vector<vng::u32> objects;
         std::vector<vng::Vec3> origins;
         std::vector<vng::timeline::Value> sampled;
-        std::optional<CameraPose> camera_origin;
         BlueprintId blueprint{};
         bool different{};
         std::vector<std::array<vng::Vec3,3>> attitude_axes{};

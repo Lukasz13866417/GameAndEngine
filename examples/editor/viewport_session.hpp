@@ -22,7 +22,7 @@ inline bool valid_viewport(const ViewportState& v) {
 inline std::expected<std::string, std::string> encode_viewport_request(const ViewportRequest& r) {
     if (!r.required_document_revision || !valid_viewport(r.view))
         return std::unexpected("Invalid viewport request");
-    std::string bytes{"VNGVIEW\4", 8};
+    std::string bytes{"VNGVIEW\5", 8};
     const auto integer = [&](vng::u64 n, unsigned width) {
         for (unsigned i=0; i<width; ++i) bytes += static_cast<char>((n >> (8*i)) & 255);
     };
@@ -30,7 +30,8 @@ inline std::expected<std::string, std::string> encode_viewport_request(const Vie
     integer(static_cast<unsigned>(r.view.mode),4);
     integer(static_cast<unsigned>(r.view.inspected_mesh),4);
     integer(r.view.selected_object,4); integer(r.view.selected_vertex,4);
-    integer(r.view.weld | (r.view.paused<<1) | (r.view.pilot_camera<<2) | (r.view.smooth_zoom<<3) |
+    // Bit 2 was the retired pilot-camera flag and stays zero.
+    integer(r.view.weld | (r.view.paused<<1) | (r.view.smooth_zoom<<3) |
             (r.view.show_regions<<4) | (r.view.show_world_bounds<<5) | (r.view.gizmo_only<<6),4);
     const auto& p=r.view.editor_camera;
     for (float value : {r.view.time,p.yaw,p.pitch,p.distance,p.target.x,p.target.y,p.target.z,p.zoom})
@@ -39,7 +40,8 @@ inline std::expected<std::string, std::string> encode_viewport_request(const Vie
 }
 inline std::expected<ViewportRequest,std::string> decode_viewport_request(std::string_view bytes) {
     const bool legacy = bytes.size()==72 && bytes.substr(0,8)==std::string_view{"VNGVIEW\1",8};
-    const bool visibility = bytes.size()==76 && bytes.substr(0,8)==std::string_view{"VNGVIEW\4",8};
+    const bool current = bytes.size()==76 && bytes.substr(0,8)==std::string_view{"VNGVIEW\5",8};
+    const bool visibility = current || (bytes.size()==76 && bytes.substr(0,8)==std::string_view{"VNGVIEW\4",8});
     const bool annotations = bytes.size()==76 && bytes.substr(0,8)==std::string_view{"VNGVIEW\3",8};
     if (!legacy && !annotations && !visibility && (bytes.size()!=76 || bytes.substr(0,8)!=std::string_view{"VNGVIEW\2",8}))
         return std::unexpected("Unknown viewport request size or version");
@@ -57,8 +59,9 @@ inline std::expected<ViewportRequest,std::string> decode_viewport_request(std::s
     r.view.inspected_mesh=static_cast<BlueprintId>(integer(4));
     r.view.selected_object=static_cast<vng::u32>(integer(4)); r.view.selected_vertex=static_cast<vng::u32>(integer(4));
     const auto flags=integer(4);
-    if (flags>(visibility?127:annotations?63:15)) return std::unexpected("Invalid viewport flags");
-    r.view.weld=flags&1; r.view.paused=flags&2; r.view.pilot_camera=flags&4; r.view.smooth_zoom=flags&8;
+    if (flags>(visibility?127:annotations?63:15) || (current && (flags&4))) return std::unexpected("Invalid viewport flags");
+    // Older requests may carry the retired pilot-camera bit; it has no meaning now.
+    r.view.weld=flags&1; r.view.paused=flags&2; r.view.smooth_zoom=flags&8;
     r.view.show_regions=flags&16; r.view.show_world_bounds=flags&32;
     r.view.gizmo_only=flags&64;
     auto& p=r.view.editor_camera;

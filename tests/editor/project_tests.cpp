@@ -198,8 +198,10 @@ TEST_CASE("Malformed authored environment values are rejected before becoming sc
 TEST_CASE("Camera undo snapshots keep mesh storage and compose with document history",
           "[editor][project][camera][history]") {
     auto initial=state();
-    REQUIRE(project::key_camera(initial,0,{0,0,8,{}}));
-    REQUIRE(project::key_camera(initial,5,{30,10,6,{1,2,3}}));
+    const auto camera=project::ensure_camera(initial,{0,0,8,{}});
+    REQUIRE(camera);
+    REQUIRE(project::key_camera(initial,*camera,0,{0,0,8,{}}));
+    REQUIRE(project::key_camera(initial,*camera,5,{30,10,6,{1,2,3}}));
     REQUIRE(project::key_property(initial,{1,"position"},4,Vec3{3,4,5}));
     initial.viewport.time=5;
     project::EditingSession editing{std::move(initial)}; editing.select_keyframe(editing.state().viewport.time);
@@ -207,10 +209,9 @@ TEST_CASE("Camera undo snapshots keep mesh storage and compose with document his
     const auto before_camera=project::evaluate_camera(value,5);
     const auto mesh_address=std::get<std::vector<f32>>(value.document.mesh.document().vertex_fields[2].values).data();
     const auto other_track=*value.document.timeline.find({1,"position"});
-    REQUIRE(editing.begin_camera());
-    REQUIRE(editing.camera({60,20,9,{3,4,5}}));
-    REQUIRE(editing.commit());
+    REQUIRE(editing.set_camera(*camera,{60,20,9,{3,4,5}}));
     const auto changed_camera=project::evaluate_camera(value,5);
+    CHECK(changed_camera!=before_camera);
     const auto viewport=value.viewport;
     const auto instance_identity=value.document.next_instance_id;
     REQUIRE(editing.undo());
@@ -240,11 +241,6 @@ TEST_CASE("Camera undo snapshots keep mesh storage and compose with document his
     REQUIRE(editing.redo());
     CHECK(project::find_instance(value,*created));
     CHECK(value.document.next_instance_id==allocated);
-    REQUIRE(editing.begin_camera());
-    REQUIRE(editing.camera(project::evaluate_camera(value,5)));
-    REQUIRE(editing.commit());
-    REQUIRE(editing.undo()); // No-op camera gesture did not create an entry.
-    CHECK_FALSE(project::find_instance(value,*created));
 }
 
 TEST_CASE("Mesh edits distinguish unique vertices from position-welded seam copies",
@@ -346,8 +342,7 @@ TEST_CASE("Editor project serialization round trips authored scene and complete 
     original.viewport.editor_camera.yaw = -33;
     original.viewport.editor_camera.pitch = 23;
     original.viewport.editor_camera.distance = 4.5F;
-    original.document.animation_camera = {70, -15, 12, {1, -2, 3}};
-    original.viewport.pilot_camera = true;
+    REQUIRE(project::ensure_camera(original, {70, -15, 12, {1, -2, 3}}));
     REQUIRE(original.document.mesh.set_position(0, {-.5F, .25F, 1.125F}));
     const auto text = encoded(original);
     auto round_trip = project::decode(text);
@@ -357,7 +352,8 @@ TEST_CASE("Editor project serialization round trips authored scene and complete 
     CHECK((*editor_example::mesh_settings(*round_trip, 1)) == (*editor_example::mesh_settings(original, 1)));
     CHECK((*editor_example::sun_settings(*round_trip, 2)) == (*editor_example::sun_settings(original, 2)));
     CHECK(round_trip->document.instances == original.document.instances);
-    CHECK(text.find("editor_project = 4;") != std::string::npos);
+    CHECK(text.find("editor_project = 5;") != std::string::npos);
+    CHECK(text.find("animation_camera") == std::string::npos);
     CHECK(round_trip->document.revision == original.document.revision);
     CHECK(round_trip->viewport.mode == original.viewport.mode);
     CHECK(round_trip->viewport.selected_object == original.viewport.selected_object);
@@ -368,8 +364,6 @@ TEST_CASE("Editor project serialization round trips authored scene and complete 
     CHECK(round_trip->viewport.editor_camera.yaw == original.viewport.editor_camera.yaw);
     CHECK(round_trip->viewport.editor_camera.pitch == original.viewport.editor_camera.pitch);
     CHECK(round_trip->viewport.editor_camera.distance == original.viewport.editor_camera.distance);
-    CHECK(round_trip->document.animation_camera == original.document.animation_camera);
-    CHECK(round_trip->viewport.pilot_camera == original.viewport.pilot_camera);
     CHECK(encoded(*round_trip) == text);
 }
 
@@ -412,7 +406,7 @@ TEST_CASE("Deleting scene instances retains blueprints without resurrecting anim
     project::instance_transform(*persisted, *first)->position = {3, 2, 1};
     CHECK(project::instance_transform(*persisted, *second)->position != Vec3{3, 2, 1});
     CHECK(persisted->document.timeline.tracks().empty());
-    CHECK(project::animation_properties(*persisted).size() == 19);
+    CHECK(project::animation_properties(*persisted).size() == 14);
     const auto restored = project::decode(encoded(*persisted));
     REQUIRE(restored);
     CHECK(restored->document.instances == persisted->document.instances);
@@ -507,7 +501,7 @@ TEST_CASE("Instance transforms apply uniform scale then Rx Ry Rz then translatio
 TEST_CASE("Legacy scene layouts migrate positions and scales out of appearance settings", "[editor][project][legacy][transform]") {
     auto text = omit_value(replace_value(encoded(state()), "editor_project", "1"), "inspected_mesh");
     const auto begin = text.find("blueprints = ");
-    const auto end = text.find("animation_camera = ");
+    const auto end = text.find("world_bounds = ");
     const auto mesh_begin = text.find("mesh_data = ");
     REQUIRE(mesh_begin < begin);
     REQUIRE(begin < end);
@@ -550,7 +544,7 @@ TEST_CASE("Legacy scene layouts migrate positions and scales out of appearance s
         CHECK(project::instance_mesh(*loaded, *spawned) == project::instance_mesh(*loaded, 6));
     }
     const auto modern = encoded(*loaded);
-        CHECK(modern.find("editor_project = 4;") != std::string::npos);
+        CHECK(modern.find("editor_project = 5;") != std::string::npos);
     auto again = project::decode(modern);
     REQUIRE(again);
     CHECK(again->document.instances == loaded->document.instances);
@@ -835,70 +829,147 @@ TEST_CASE("Long UTF-8 blueprint labels leave a valid bounded instance name",
     REQUIRE(project::encode(value));
 }
 
-TEST_CASE("Scene serialization saves the animation camera but excludes inspection navigation",
+TEST_CASE("Scene serialization saves scene cameras but excludes the editor view",
           "[editor][project][camera]") {
     auto value = state();
-    value.document.animation_camera = {72, -32, 14, {1, -2, 3}};
+    const auto camera = project::ensure_camera(value, {72, -32, 14, {1, -2, 3}});
+    REQUIRE(camera);
     value.viewport.editor_camera = {-16, 9, 6, {2, 3, 4}};
-    value.viewport.pilot_camera = true;
     const auto saved = project::encode_scene(value);
     REQUIRE(saved);
-    CHECK(saved->find("animation_camera =") != std::string::npos);
+    CHECK(saved->find("animation_camera") == std::string::npos);
     CHECK(saved->find("pilot_camera") == std::string::npos);
     value.viewport.editor_camera = {90, 15, 3, {}};
-    value.viewport.pilot_camera = false;
     const auto after_navigation = project::encode_scene(value);
     REQUIRE(after_navigation);
     CHECK(*after_navigation == *saved);
     auto loaded = project::decode(*saved);
     REQUIRE(loaded);
-    CHECK(loaded->document.animation_camera == value.document.animation_camera);
-    CHECK(loaded->viewport.editor_camera == value.document.animation_camera);
-    CHECK_FALSE(loaded->viewport.pilot_camera);
+    CHECK(*project::find_instance(*loaded, *camera) == *project::find_instance(value, *camera));
+    // Without a saved editor view, a scene opens looking through its camera.
+    CHECK(loaded->viewport.editor_camera == *project::evaluate_camera(*loaded, 0));
     CHECK(loaded->document.mesh.document() == value.document.mesh.document());
     CHECK((*editor_example::mesh_settings(*loaded, 1)) == (*editor_example::mesh_settings(value, 1)));
     CHECK((*editor_example::sun_settings(*loaded, 2)) == (*editor_example::sun_settings(value, 2)));
 }
 
-TEST_CASE("Legacy view camera is upgraded into both camera roles without changing its pose",
-          "[editor][project][camera]") {
+namespace {
+// A version 4 file: the camera was a document-level shot with its own tracks.
+std::string legacy_scene(const project::State& value, std::string_view shot, std::string_view camera_tracks = {}) {
+    auto text = replace_value(encoded(value), "editor_project", "4");
+    if (!shot.empty()) text.insert(text.find("world_bounds = "), "animation_camera = { " + std::string(shot) + " };\n");
+    const auto tracks = text.find("    tracks = [\n");
+    REQUIRE(tracks != std::string::npos);
+    text.insert(tracks + 15, camera_tracks);
+    return text;
+}
+bool near(const project::CameraPose& a, const project::CameraPose& b) {
+    const auto close = [](f32 x, f32 y) { return std::abs(x - y) < 1e-3F; };
+    return close(a.yaw, b.yaw) && close(a.pitch, b.pitch) && close(a.distance, b.distance) && close(a.zoom, b.zoom) &&
+        close(a.target.x, b.target.x) && close(a.target.y, b.target.y) && close(a.target.z, b.target.z);
+}
+std::vector<const project::SceneInstance*> cameras(const project::State& value) {
+    std::vector<const project::SceneInstance*> result;
+    for (const auto& instance : value.document.instances)
+        if (std::holds_alternative<project::CameraSettings>(instance.settings)) result.push_back(&instance);
+    return result;
+}
+} // namespace
+
+TEST_CASE("Legacy scene shots load as an active camera instance with the same pose and keys",
+          "[editor][project][camera][legacy]") {
     auto value = state();
     value.viewport.editor_camera = {-55, 7, 3, {2, -3, 4}};
-    auto legacy = encoded(value);
-    const auto start = legacy.find("animation_camera = ");
-    REQUIRE(start != std::string::npos);
-    legacy.erase(start, legacy.find('\n', start) + 1 - start);
-    auto restored = project::decode(legacy);
-    REQUIRE(restored);
-    CHECK(restored->viewport.editor_camera == value.viewport.editor_camera);
-    CHECK(restored->document.animation_camera == value.viewport.editor_camera);
-    CHECK_FALSE(restored->viewport.pilot_camera);
+    const project::CameraPose shot{72, -32, 14, {1, -2, 3}, 2};
+    const std::string shot_text = "yaw = 72; pitch = -32; distance = 14; zoom = 2; camera_target = [1,-2,3];";
+    const std::string yaw_track =
+        "        { object = 4294967296; property = \"yaw\"; label = \"Orbit (deg)\"; layer = \"Camera\"; keys = [\n"
+        "            { time = 0; value = 72; incoming = \"hold\"; },\n"
+        "            { time = 4; value = 12; incoming = \"linear\"; },\n"
+        "            { time = 6; value = -30; incoming = \"hold\"; },\n        ]; },\n";
+
+    SECTION("A static shot") {
+        auto loaded = project::decode(legacy_scene(value, shot_text));
+        INFO((loaded ? "legacy scene loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        const auto found = cameras(*loaded);
+        REQUIRE(found.size() == 1);
+        CHECK(found.front()->name == "Animation camera");
+        CHECK(std::get<project::CameraSettings>(found.front()->settings).active);
+        CHECK(near(*project::evaluate_camera(*loaded, 0), shot));
+        CHECK(loaded->viewport.editor_camera == value.viewport.editor_camera); // A saved editor view is kept.
+        CHECK(loaded->document.timeline.tracks().empty());
+        // Saving writes the current format, and loading it again adds nothing.
+        const auto modern = encoded(*loaded);
+        CHECK(modern.find("editor_project = 5;") != std::string::npos);
+        CHECK(modern.find("animation_camera") == std::string::npos);
+        auto again = project::decode(modern);
+        REQUIRE(again);
+        CHECK(again->document.instances == loaded->document.instances);
+    }
+    SECTION("An animated shot keeps its keys, interpolation and cuts") {
+        auto loaded = project::decode(legacy_scene(value, shot_text, yaw_track));
+        INFO((loaded ? "legacy scene loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        REQUIRE(cameras(*loaded).size() == 1);
+        CHECK(near(*project::evaluate_camera(*loaded, 0), shot));
+        CHECK(project::evaluate_camera(*loaded, 2)->yaw == Catch::Approx(42));
+        CHECK(project::evaluate_camera(*loaded, 4)->yaw == Catch::Approx(12));
+        CHECK(project::evaluate_camera(*loaded, 5.9F)->yaw == Catch::Approx(12)); // Held until the cut.
+        CHECK(project::evaluate_camera(*loaded, 6)->yaw == Catch::Approx(-30));
+        for (const auto time : {0.F, 4.F, 6.F}) {
+            CHECK(project::evaluate_camera(*loaded, time)->distance == Catch::Approx(14));
+            CHECK(project::evaluate_camera(*loaded, time)->zoom == Catch::Approx(2));
+        }
+        for (const auto& track : loaded->document.timeline.tracks())
+            CHECK(track.target.object == cameras(*loaded).front()->id);
+    }
+    SECTION("The oldest files kept their only camera in the view") {
+        auto loaded = project::decode(legacy_scene(value, {}));
+        REQUIRE(loaded);
+        REQUIRE(cameras(*loaded).size() == 1);
+        CHECK(near(*project::evaluate_camera(*loaded, 0), value.viewport.editor_camera));
+        CHECK(loaded->viewport.editor_camera == value.viewport.editor_camera);
+    }
+    SECTION("A scene that already has cameras never used its shot") {
+        auto with_camera = value;
+        const auto existing = project::ensure_camera(with_camera, {10, 5, 8, {}});
+        REQUIRE(existing);
+        auto loaded = project::decode(legacy_scene(with_camera, shot_text, yaw_track));
+        REQUIRE(loaded);
+        const auto found = cameras(*loaded);
+        REQUIRE(found.size() == 1);
+        CHECK(found.front()->id == *existing);
+        CHECK(loaded->document.timeline.tracks().empty());
+    }
+    SECTION("Current files cannot carry the old camera tracks") {
+        auto current = replace_value(legacy_scene(value, {}, yaw_track), "editor_project", "5");
+        CHECK_FALSE(project::decode(current));
+    }
 }
 
-TEST_CASE("Undo and redo authored camera edits retain inspection camera and pilot mode",
+TEST_CASE("Undo and redo saved cameras retain the editor view",
           "[editor][project][camera][history]") {
-    project::EditingSession editing{state()}; editing.select_keyframe(editing.state().viewport.time);
+    auto initial = state();
+    const auto camera = project::ensure_camera(initial, {0, 0, 8, {}});
+    REQUIRE(camera);
+    project::EditingSession editing{std::move(initial)}; editing.select_keyframe(editing.state().viewport.time);
     const auto& value = editing.state();
-    const auto original_animation = value.document.animation_camera;
-    REQUIRE(editing.begin_camera());
-    REQUIRE(editing.camera({45, -20, 4, {2, 0, 1}}));
-    REQUIRE(editing.commit());
-    const auto edited_animation = value.document.animation_camera;
+    const auto original = *project::find_instance(value, *camera);
+    REQUIRE(editing.set_camera(*camera, {45, -20, 4, {2, 0, 1}}));
+    const auto edited = *project::find_instance(value, *camera);
+    CHECK(edited != original);
     editing.viewport().editor_camera = {-60, 35, 10, {3, 4, 5}};
     const auto inspection = value.viewport.editor_camera;
-    editing.viewport().pilot_camera = true;
     REQUIRE(editing.undo());
-    CHECK(value.document.animation_camera == original_animation);
+    CHECK(*project::find_instance(value, *camera) == original);
     CHECK(value.viewport.editor_camera == inspection);
-    CHECK(value.viewport.pilot_camera);
-    editing.viewport().pilot_camera = false;
     REQUIRE(editing.redo());
-    CHECK(value.document.animation_camera == edited_animation);
+    CHECK(*project::find_instance(value, *camera) == edited);
     CHECK(value.viewport.editor_camera == inspection);
-    CHECK_FALSE(value.viewport.pilot_camera);
 }
 
-TEST_CASE("Undo and redo retain current isolation view and animation camera routing",
+TEST_CASE("Undo and redo retain the current isolation view and editor camera",
           "[editor][project][camera][history]") {
     project::EditingSession editing{state()}; editing.select_keyframe(editing.state().viewport.time);
     const auto& value = editing.state();
@@ -908,31 +979,25 @@ TEST_CASE("Undo and redo retain current isolation view and animation camera rout
     REQUIRE(editing.translate_vertices(project::BlueprintId::mesh, std::array<u32,1>{0}, {2, 3, 4}));
 
     // An edit made in isolated mesh view must not drag the user back there
-    // when undo is invoked later while piloting the scene's animation camera.
+    // when undo is invoked later from the scene view.
     view.mode = project::ViewMode::scene;
-    view.pilot_camera = true;
     view.editor_camera = {-60, 35, 10, {3, 4, 5}};
     const auto inspection = value.viewport.editor_camera;
-    const auto shot_position = project::camera(value).position();
+    const auto scene_position = project::camera(value).position();
     REQUIRE(editing.undo());
     CHECK(value.document.mesh.position(0) == original_vertex);
     CHECK(value.viewport.mode == project::ViewMode::scene);
-    CHECK(value.viewport.pilot_camera);
     CHECK(value.viewport.editor_camera == inspection);
-    CHECK(&project::view_camera(value) == &value.document.animation_camera);
-    CHECK(project::camera(value).position() == shot_position);
+    CHECK(project::camera(value).position() == scene_position);
 
     // Redo is equally independent of which editor-only view is now active.
     view.mode = project::ViewMode::sun;
-    view.pilot_camera = false;
     const auto inspection_position = project::camera(value).position();
     REQUIRE(editing.redo());
     CHECK(project::mesh_edit_geometry(value, project::BlueprintId::mesh)->position(0) == Vec3{2, 3, 4});
     CHECK(value.document.mesh.position(0) == original_vertex);
     CHECK(value.viewport.mode == project::ViewMode::sun);
-    CHECK_FALSE(value.viewport.pilot_camera);
     CHECK(value.viewport.editor_camera == inspection);
-    CHECK(&project::view_camera(value) == &value.viewport.editor_camera);
     CHECK(project::camera(value).position() == inspection_position);
 }
 
@@ -940,7 +1005,7 @@ TEST_CASE("Editor project decoding rejects missing wrong-type out-of-range and o
           "[editor][project]") {
     const auto source = encoded(state());
     CHECK_FALSE(project::decode("not a scene"));
-    CHECK_FALSE(project::decode(replace_value(source, "editor_project", "5")));
+    CHECK_FALSE(project::decode(replace_value(source, "editor_project", "6")));
     CHECK_FALSE(project::decode(replace_value(source, "revision", "0")));
     CHECK_FALSE(project::decode(replace_value(source, "revision", "-1")));
     CHECK_FALSE(project::decode(replace_value(source, "mode", "3")));

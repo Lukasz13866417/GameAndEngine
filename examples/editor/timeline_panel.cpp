@@ -489,7 +489,6 @@ void TimelinePanel::show(const State& state) {
         std::map<BlueprintId, std::string_view> blueprint_names;
         for (const auto& blueprint : blueprint_catalog(state)) blueprint_names.emplace(blueprint.id, blueprint.name);
         std::map<u64, Impl::Snapshot::ObjectInfo> objects;
-        objects.emplace(camera_animation_object, Impl::Snapshot::ObjectInfo{"Animation camera", "Animation camera"});
         for (const auto& instance : state.document.instances) {
             const auto blueprint = blueprint_names.find(instance.blueprint);
             const auto identifier = blueprint == blueprint_names.end() ? instance.name

@@ -302,15 +302,18 @@ a later edit. Blueprint identity is independent of the currently inspected view.
 Structural edits (import, instance creation/deletion, load), reconnects and
 unknown changes still require snapshots.
 Scene cameras are ordinary instances: their placement, lens and active flag
-travel as instance property patches like any other keyed value. The legacy
-saved shot of older scenes has its own ordered patch and cannot overwrite
-the independently moving private camera. Pose-only edits use a 52-byte
-packet; animated-camera edits replace just its five tracks in a bounded v4
-packet, coalesced behind the same acknowledgement slot. Neither path serializes
-meshes. Camera gestures also use lightweight Undo entries containing only the
-pose, camera tracks and inspection bookmark. Other history entries retain their
-existing storage, but also retain change identities: undo/redo of known vertex,
-property and keyframe changes sends patches, not serialized meshes.
+travel as instance property patches like any other keyed value, never embedded
+meshes, and cannot overwrite the independently moving private camera. There is
+no other simulation camera and no camera-specific packet. History entries also
+retain change identities: undo/redo of known vertex, property and keyframe
+changes sends patches, not serialized meshes.
+
+Scene files before `editor_project = 5` stored the simulation camera as a
+document-level orbit shot with yaw/pitch/distance/target/zoom tracks.
+`legacy_camera.hpp` is the only code that still reads that shape: loading turns
+the shot into an active **Animation camera** instance keyed at every old key time
+(held where the old keys held), and a scene that already had camera instances
+drops the unused shot. Saving writes version 5.
 
 Native `ProjectControls` callbacks report the properties they committed. The
 worker replies with `state_patch`, updating those properties/tracks in the UI
@@ -343,8 +346,9 @@ edit and follows the document lane instead.
 Inspector event stamps include that context identity, so an old Apply cannot act
 on a different selection or newly sampled value at the same document revision.
 
-The legacy camera/selection/playback packet codecs remain available for existing
+The legacy selection/playback packet codecs remain available for existing
 protocol tests/tools; the editor's private interactions use the new viewport lane.
+`ViewportRequest` version 5 retired the pilot-camera flag bit; it must be zero.
 
 ## Rendering and zoom
 
@@ -659,5 +663,5 @@ is introduced by timing capture.
 Relevant code: `examples/editor/editing_session.hpp`, `session_operations.cpp`,
 `project.hpp`, `viewport_session.hpp`,
 `document_changes.hpp`, `document_patch.hpp`, `preview_updates.hpp`,
-`animation_camera_edit.hpp`, `presented_view.hpp`, `runtime.hpp`, `timing_panel.hpp`,
+`legacy_camera.hpp`, `presented_view.hpp`, `runtime.hpp`, `timing_panel.hpp`,
 `include/vng/editor/interaction_timing.hpp`, and `src/editor/preview.cpp`.

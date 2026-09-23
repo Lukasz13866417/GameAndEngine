@@ -13,9 +13,9 @@ namespace {
 using namespace vng;
 constexpr u64 max_revision = (u64{1} << 53) - 1;
 constexpr std::size_t max_bytes = vng::editor::max_document_bytes;
-// Up to nine editable properties per instance plus the camera contract.
-// This transport ceiling must follow the scene ceiling, not the user budget.
-constexpr std::size_t max_properties = std::size_t{max_scene_instances} * 9 + camera_track_properties.size();
+// Up to nine editable properties per instance. This transport ceiling must
+// follow the scene ceiling, not the user budget.
+constexpr std::size_t max_properties = std::size_t{max_scene_instances} * 9;
 auto invalid(std::string message) {
     content::Diagnostic error;
     error.message = std::move(message);
@@ -28,15 +28,6 @@ using PropertyReference = std::conditional_t<std::is_const_v<S>,
 template<class S>
 std::optional<PropertyReference<S>> property_reference(S& state, const timeline::Target& target) {
     const auto& key = target.property;
-    if (target.object == camera_animation_object) {
-        auto& c = state.document.animation_camera;
-        if (key == "yaw") return &c.yaw;
-        if (key == "pitch") return &c.pitch;
-        if (key == "distance") return &c.distance;
-        if (key == "zoom") return &c.zoom;
-        if (key == "target") return &c.target;
-        return {};
-    }
     if (target.object > UINT32_MAX) return {};
     auto* instance = find_instance(state, static_cast<u32>(target.object));
     if (!instance) return {};

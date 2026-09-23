@@ -277,7 +277,7 @@ metadata and **Logs → Interaction timing** measurements/export.
   restrict camera travel or change the world bounds. Default: 10,000 units.
   Very large distances can reduce depth-buffer precision.
   Open **Camera settings** in the second toolbar for a flyout below the button,
-  available regardless of the selected sidebar tab. It groups pose, zoom, animation-camera mode, walking, viewing
+  available regardless of the selected sidebar tab. It groups pose, zoom, walking, viewing
   distance, orbit limits and explicitly labeled **Walk** speeds. It also provides
   independent **Shift + middle drag** pan and **Ctrl + middle drag** speed
   multipliers (default 1), plus rotation in degrees per logical pixel (default
@@ -422,9 +422,9 @@ metadata and **Logs → Interaction timing** measurements/export.
 - **Undo/Redo** cover mesh edits, accepted inspector actions, and timeline
   key additions/updates/moves/deletions and duration changes in the current
   document. Loading another scene starts a new undo history so an old document
-  cannot be restored into the new file's Save target. Animation-camera gestures
-  are undoable; inspection-camera navigation is not. Undo/Redo preserve the
-  inspection pose, the selected camera mode, and the current isolation view.
+  cannot be restored into the new file's Save target. Saving or activating a
+  scene camera is undoable; editor-camera navigation is not. Undo/Redo preserve
+  the editor camera, any camera visit, and the current isolation view.
 - **Face IDs** uses the existing enhanced shader emission/capture path.
   It shows the selected object's source-face identities, isolated before bloom;
   this is deliberately not a diagnostic of the entire composited scene.
@@ -433,9 +433,11 @@ metadata and **Logs → Interaction timing** measurements/export.
   confirms replacement if it already exists. Cancel or failure retains the
   previous current file and unsaved state. The `.vscene` includes all scene settings,
   cameras, keyframes and embedded `.vmesh`, including edited geometry. The private
-  inspection pose and any camera visit are not saved. Opening a scene initializes
-  the inspection pose from its saved shot. Older files without camera instances
-  still load; their saved animation shot keeps rendering until a camera is added.
+  editor view and any camera visit are not saved. Opening a scene starts the editor
+  view looking through its active camera at time zero. Files saved before scene
+  cameras existed still load: their saved shot becomes an active **Animation
+  camera** instance with the same pose and keys, and the next save writes the
+  current format.
 - **Open scene...** (Ctrl+O) in the top toolbar browses for a `.vscene` and makes
   the chosen scene the current Save target; `--scene FILE` does the same at
   startup. The browser starts beside the current scene with it preselected, or in
@@ -784,12 +786,12 @@ without destroying the worker. A private Play clock leaves authored time intact.
 Viewport picking/gizmos are disabled during Play; numeric editing and inspector
 controls remain usable with the debug link on.
 The native window supports the same orbit/pan/zoom controls, even with the debug
-link off. By default it follows the authored camera timeline at the independent
-playback time. Navigating in that window switches to a private inspection pose
-and temporarily stops following the shot; restarting Play resumes the camera
-timeline. Stop restores the editor's chosen view. Connected edits to the base
-animation-camera pose also clear the private override. Inspection-camera edits
-and toggling the editor's camera mode do not disturb native Play.
+link off. By default it looks through the active scene camera at the independent
+playback time. Navigating in that window switches to a private pose and
+temporarily stops following the camera; restarting Play resumes it. Stop
+restores the editor's chosen view. Connected edits that move the scene camera
+also clear the private override. Editor-camera navigation does not disturb
+native Play.
 
 **Debug link** is independent of Play:
 
@@ -852,12 +854,9 @@ and sampled time, so picking does not use the next requested camera target.
 
 Wheel zoom is smoothed on the worker using a time-based log-magnification response;
 forward/backward wheel translation uses the same settling time in position space;
-orbit, pan and numeric camera edits remain direct. Editing the authored animation
-camera uses an independent ordered patch that cannot overwrite private
-viewport state. Pose-only packets are 52 bytes; animated edits send only the
-five camera tracks, never embedded meshes. Legacy packets/scenes default to zoom 1.
-Camera Undo entries are lightweight
-too. Normal/diagnostic rendering still evaluate the same timeline,
+orbit, pan and numeric camera edits remain direct. Saving a scene camera is an
+ordinary instance property patch that cannot overwrite private viewport state.
+Normal/diagnostic rendering still evaluate the same timeline,
 including the independent window's private clock. See
 [editor boundaries](editor_boundaries.md) for the ownership and timing details.
 

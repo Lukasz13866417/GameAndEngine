@@ -1,14 +1,12 @@
 #include "../../examples/editor/project.hpp"
 #include "../../examples/editor/document_patch.hpp"
 #include "../../examples/editor/edits.hpp"
-#include "../../examples/editor/camera_edits.hpp"
 #include "../../examples/editor/playback.hpp"
 #include "../../examples/editor/position_edits.hpp"
 #include "../../examples/editor/rotation_edits.hpp"
 #include "../../examples/editor/scale_edits.hpp"
 #include "../../examples/editor/selection_edits.hpp"
 #include "../../examples/editor/animation.hpp"
-#include "../../examples/editor/animation_camera_edit.hpp"
 #include "../../examples/editor/preview_viewport.hpp"
 #include "../../examples/editor/settings.hpp"
 #include "../../examples/editor/viewport_session.hpp"
@@ -281,6 +279,7 @@ void inspect_time(Harness& h, vng::f32 time) {
 void large_timeline_test(Harness& h) {
     project::State next{.document = {.revision = h.authored.document.revision + 1,
                                    .mesh = h.authored.document.mesh}};
+    next.viewport.sequence = h.authored.viewport.sequence + 1;
     project::sun_settings(next, 2)->visible = false;
     next.viewport.selected_object = 1;
     next.viewport.time = 0;
@@ -508,33 +507,25 @@ void native_play_test(Harness& h) {
 void camera_and_selection_test(Harness& h) {
     const auto before = h.query_stats();
     const auto pixels = h.session.latest_frame()->rgba;
-    auto changed = h.authored;
-    changed.viewport.editor_camera = {35.F, 22.F, 6.F, {.3F, .15F, 0}};
-    ++changed.document.revision;
-    const auto edit = take(project::camera_edit(h.authored.document.revision, changed),
-                           "Describe local camera edit");
-    take(project::apply_camera_edit(h.authored, edit), "Apply local camera edit");
-    const auto payload = take(project::encode_camera_edit(edit), "Encode compact camera edit");
-    take(h.session.send("camera\n" + payload), "Send compact camera edit");
-    h.until("camera acknowledgement, schema and changed pixels", [&] {
-        return h.acknowledged_revision == h.authored.document.revision && h.schema &&
-               h.schema->stamp.revision == h.authored.document.revision &&
-               h.matching_frame(h.authored.document.revision);
+    // The editor camera is private view state on the latest-value lane: no
+    // authored revision, acknowledgement, or document/mesh work.
+    h.authored.viewport.editor_camera = {35.F, 22.F, 6.F, {.3F, .15F, 0}};
+    ++h.authored.viewport.sequence;
+    const auto view = project::encode_viewport_request({h.authored.document.revision, h.authored.viewport});
+    check(bool(view), "Encode editor camera view");
+    take(h.session.send_latest("view\n" + *view), "Send editor camera view");
+    h.until("editor camera view and changed pixels", [&] {
+        const auto& frame = h.session.latest_frame();
+        return frame && frame->info.view_sequence == h.authored.viewport.sequence && frame->info.settled;
     });
     check(!equivalent_pixels(h.session.latest_frame()->rgba, pixels),
-          "Camera edit did not change the rendered view");
+          "Editor camera change did not change the rendered view");
     const auto after = h.query_stats();
     check(after.at("full_mesh_uploads") == before.at("full_mesh_uploads") &&
               after.at("vertex_updates") == before.at("vertex_updates") &&
-              after.at("vertex_bytes_uploaded") == before.at("vertex_bytes_uploaded"),
-          "Camera navigation unnecessarily touched GPU mesh storage");
-    const auto resyncs = h.resyncs;
-    h.allow_resync = true;
-    take(h.session.send("camera\n" + payload), "Replay stale camera edit");
-    h.until("stale camera resynchronization", [&] { return h.resyncs > resyncs; });
-    h.allow_resync = false;
-    check(h.query_stats().at("revision") == static_cast<double>(h.authored.document.revision),
-          "Stale camera patch changed the view revision");
+              after.at("vertex_bytes_uploaded") == before.at("vertex_bytes_uploaded") &&
+              after.at("revision") == before.at("revision"),
+          "Camera navigation touched GPU mesh storage or the authored revision");
 
     const auto camera_pixels = h.session.latest_frame()->rgba;
     for (vng::u32 selected : {0U, 2U, 1U}) {
@@ -552,115 +543,90 @@ void camera_and_selection_test(Harness& h) {
         check(equivalent_pixels(camera_pixels, h.session.latest_frame()->rgba),
               "Selection alone changed the production scene or camera");
     }
-    std::cout << "Camera/selection passed: compact pose, unchanged GPU storage, stale rejection, "
+    std::cout << "Camera/selection passed: private view lane, unchanged GPU storage and revision, "
                  "empty selection and object inspectors.\n";
 }
 
-void animation_camera_test(Harness& h) {
+void scene_camera_test(Harness& h) {
     auto original = h.authored;
     h.authored.viewport.mode = project::ViewMode::scene;
     (*editor_example::sun_settings(h.authored, 2)).visible = false;
     (*editor_example::mesh_settings(h.authored, 1)).visible = true;
     (*editor_example::instance_transform(h.authored, 1)).position = {};
     h.authored.viewport.paused = true;
+    h.authored.viewport.time = 0;
     h.authored.document.timeline = {};
     h.authored.document.keyframe_names.clear();
-    h.authored.viewport.pilot_camera = false;
+    // The editor view sees the mesh; the scene camera deliberately looks away.
     h.authored.viewport.editor_camera = {0, 0, 6, {}};
-    h.authored.document.animation_camera = {0, 0, 6, {40, 0, 0}};
+    const auto camera = take(project::ensure_camera(h.authored, {0, 0, 6, {40, 0, 0}}), "Add a scene camera");
     ++h.authored.document.revision;
     h.send_snapshot();
-    h.until("separate inspection and animation cameras", [&] {
+    h.until("separate editor and scene cameras", [&] {
         return h.matching_frame(h.authored.document.revision);
     });
     check(bright_pixels(*h.session.latest_frame()) > 100,
-          "Inspection camera does not see the mesh in camera-separation fixture");
+          "The embedded preview did not look through the editor camera");
     const auto uploads = h.query_stats();
     const auto inspection_frame = h.session.latest_frame()->info.frame_id;
-    take(h.session.send("play\n1"), "Start independent Play through animation camera");
-    h.until("independent Play animation-camera frame", [&] {
+    take(h.session.send("play\n1"), "Start independent Play through the scene camera");
+    h.until("independent Play scene-camera frame", [&] {
         return h.playing && h.matching_frame(h.authored.document.revision) &&
                h.session.latest_frame()->info.frame_id > inspection_frame;
     });
     check(bright_pixels_any_extent(*h.session.latest_frame()) == 0,
-          "Independent Play used the inspection camera instead of the authored animation camera");
+          "Independent Play used the editor camera instead of the scene camera");
 
-    auto send_camera = [&] {
-        const auto base_revision = h.authored.document.revision++;
-        const auto edit = take(project::camera_edit(base_revision, h.authored),
-                               "Describe split camera update");
-        take(h.session.send("camera\n" +
-                            take(project::encode_camera_edit(edit), "Encode split camera update")),
-             "Send split camera update");
-        h.until("split camera acknowledgement and frame", [&] {
-            return h.acknowledged_revision == h.authored.document.revision &&
-                   h.matching_frame(h.authored.document.revision);
-        });
-    };
-
-    // Both inspection poses see the mesh, while Play deliberately looks away.
-    // This checks the produced pixels, not just which pose a status report says
-    // was chosen. The static mesh makes independent playback time immaterial.
-    h.authored.viewport.editor_camera = {35, 20, 6, {}};
-    send_camera();
-    check(bright_pixels_any_extent(*h.session.latest_frame()) == 0,
-          "Compact inspection navigation replaced the private independent Play camera");
-
-    h.authored.document.animation_camera = {-30, 10, 6, {}};
-    send_camera();
+    // Moving the camera instance is an ordinary authored patch, and Play follows it.
+    const auto base_revision = h.authored.document.revision;
+    project::place_camera(*project::find_instance(h.authored, camera), {-30, 10, 6, {}});
+    ++h.authored.document.revision;
+    project::DocumentChanges moved;
+    for (const auto* property : {"position", "rotation", "zoom", "focus"}) moved.properties.insert({camera, property});
+    const auto patch = take(project::capture_patch(base_revision, h.authored, moved), "Capture camera move");
+    take(h.session.send("patch\n" + take(project::encode_patch(patch), "Encode camera move")), "Send camera move");
+    h.until("camera move acknowledged during Play", [&] {
+        return h.acknowledged_revision == h.authored.document.revision && h.matching_frame(h.authored.document.revision);
+    });
     check(bright_pixels_any_extent(*h.session.latest_frame()) > 100,
-          "An authored animation-camera edit did not update independent Play");
+          "Moving the scene camera did not update independent Play");
 
-    // Changing only the inspection camera through a full snapshot must obey
-    // the same isolation rule as the compact camera-only message.
+    // Changing only the editor camera must not steer Play.
     h.authored.viewport.editor_camera = {0, 0, 6, {40, 0, 0}};
     ++h.authored.document.revision;
     h.send_snapshot();
-    h.until("inspection-only snapshot during independent Play", [&] {
+    h.until("editor-camera-only snapshot during independent Play", [&] {
         return h.matching_frame(h.authored.document.revision);
     });
     check(bright_pixels_any_extent(*h.session.latest_frame()) > 100,
-          "Inspection-only snapshot replaced the private independent Play camera");
+          "An editor camera change replaced the scene camera in independent Play");
 
     const auto play_frame = h.session.latest_frame()->info.frame_id;
-    take(h.session.send("play\n0"), "Stop independent Play and restore inspection view");
-    h.until("restored private inspection camera", [&] {
+    take(h.session.send("play\n0"), "Stop independent Play and restore the editor view");
+    h.until("restored editor camera", [&] {
         return !h.playing && h.matching_frame(h.authored.document.revision) &&
                h.session.latest_frame()->info.frame_id > play_frame;
     });
     check(bright_pixels(*h.session.latest_frame()) == 0,
-          "Stopping independent Play did not restore the inspection camera");
-
-    h.authored.viewport.pilot_camera = true;
-    send_camera();
-    check(bright_pixels(*h.session.latest_frame()) > 100,
-          "Pilot animation camera toggle did not show its authored view");
-    h.authored.viewport.pilot_camera = false;
-    send_camera();
-    check(bright_pixels(*h.session.latest_frame()) == 0,
-          "Disabling pilot mode did not restore the previous inspection pose");
+          "Stopping independent Play did not restore the editor camera");
     const auto after = h.query_stats();
     check(after.at("full_mesh_uploads") == uploads.at("full_mesh_uploads") &&
               after.at("vertex_updates") == uploads.at("vertex_updates") &&
               after.at("vertex_bytes_uploaded") == uploads.at("vertex_bytes_uploaded"),
-          "Camera selection and navigation unnecessarily uploaded mesh geometry");
+          "Camera edits and navigation unnecessarily uploaded mesh geometry");
 
-    // An actual camera timeline must drive both the embedded preview and the
-    // independent process window; a static authored pose is not sufficient.
-    h.authored.viewport.pilot_camera = true;
-    h.authored.viewport.time = 0;
-    h.authored.document.animation_camera = {0, 0, 6, {40, 0, 0}};
-    take(project::key_camera(h.authored, 0, {0, 0, 6, {}}), "Key opening camera shot");
-    take(project::key_property(h.authored, {project::camera_animation_object, "target"},
-                               1.F, vng::Vec3{40, 0, 0}, vng::timeline::Interpolation::hold),
+    // An actual camera timeline must drive independent Play; a static pose is
+    // not sufficient. The instance itself looks at the mesh, so only the keyed
+    // cut at one second can turn it away.
+    h.authored.viewport.editor_camera = {0, 0, 6, {}};
+    take(project::key_camera(h.authored, camera, 0, {0, 0, 6, {}}), "Key opening camera shot");
+    take(project::key_camera(h.authored, camera, 1, {0, 0, 6, {40, 0, 0}}, vng::timeline::Interpolation::hold),
          "Key held camera cut");
     ++h.authored.document.revision;
     h.send_snapshot();
-    h.until("camera timeline opening preview", [&] {
+    h.until("camera timeline snapshot", [&] {
         return h.matching_frame(h.authored.document.revision);
     });
-    check(bright_pixels(*h.session.latest_frame()) > 100,
-          "Pilot preview ignored camera timeline at the opening timestamp");
     take(h.session.send("play\n1"), "Play camera timeline independently");
     h.until("independent playback reaches held camera cut", [&] {
         return h.playing && h.matching_frame(h.authored.document.revision) &&
@@ -670,48 +636,21 @@ void animation_camera_test(Harness& h) {
           "Independent playback did not evaluate its camera timeline cut");
     take(h.session.send("play\n0"), "Stop camera timeline playback");
     const auto final_play_frame = h.session.latest_frame()->info.frame_id;
-    h.until("restore embedded camera timeline playhead", [&] {
+    h.until("restore embedded editor view", [&] {
         return !h.playing && h.matching_frame(h.authored.document.revision) &&
                h.session.latest_frame()->info.frame_id > final_play_frame;
     });
     check(bright_pixels(*h.session.latest_frame()) > 100,
-          "Stopping independent playback did not restore the embedded timeline camera");
-
-    const auto before_compact = h.query_stats();
-    for (const auto target : {vng::Vec3{40,0,0},vng::Vec3{0,0,0}}) {
-        const auto base_revision = h.authored.document.revision;
-        take(project::key_camera(h.authored,0,{0,0,6,target}), "Edit opening camera key");
-        ++h.authored.document.revision;
-        const auto edit = project::capture_animation_camera_edit(base_revision,h.authored.document);
-        const auto payload = project::encode_animation_camera_edit(edit);
-        check(payload.has_value(), "Compact camera track packet did not encode");
-        check(payload->substr(0,8)==std::string{"VNGACAM\4",8} && payload->size()<512,
-              "Animated camera movement did not produce a bounded version2 packet");
-        take(h.session.send("animation_camera\n"+*payload), "Send compact camera tracks");
-        h.until("compact camera tracks acknowledgement and rendered shot", [&] {
-            return h.acknowledged_revision==h.authored.document.revision &&
-                   h.matching_frame(h.authored.document.revision);
-        });
-        const auto& frame=*h.session.latest_frame();
-        check(frame.info.view_camera[3]==target.x,
-              "Rendered camera pose does not contain the edited key's target");
-        check(target.x==0 ? bright_pixels(frame)>100 : bright_pixels(frame)==0,
-              "Version2 camera key changed metadata but not the actual rendered shot");
-    }
-    const auto after_compact = h.query_stats();
-    for (const auto counter : {"scene_encode_calls","scene_decode_calls","mesh_update_calls",
-                               "full_mesh_uploads","vertex_updates","vertex_bytes_uploaded"})
-        check(after_compact.at(counter)==before_compact.at(counter),
-              std::string{"Compact camera tracks unnecessarily changed "}+counter);
+          "Stopping independent playback did not restore the editor view");
 
     original.document.revision = h.authored.document.revision + 1;
     h.authored = std::move(original);
     h.send_snapshot();
-    h.until("restored scene after split-camera regression", [&] {
+    h.until("restored scene after scene-camera regression", [&] {
         return h.matching_frame(h.authored.document.revision);
     });
-    std::cout << "Split cameras passed: authored independent Play view, isolated inspection "
-                 "navigation, live authored camera updates, and reversible pilot toggle.\n";
+    std::cout << "Scene camera passed: Play looks through the camera instance, follows authored moves "
+                 "and keyed cuts, and ignores editor navigation.\n";
 }
 
 void timeline_test(Harness& h) {
@@ -826,6 +765,7 @@ void imported_blueprint_test(Harness& h) {
         ~TemporaryDirectory() { std::error_code ignored; std::filesystem::remove_all(path, ignored); }
     } files;
     auto initial = project::State{.document = {.revision = h.authored.document.revision + 1, .mesh = h.authored.document.mesh}};
+    initial.viewport.sequence = h.authored.viewport.sequence + 1; // Newer than any view request already sent.
     initial.viewport.selected_object = 1;
     initial.viewport.editor_camera = {.yaw = 0, .pitch = 0, .distance = 6};
     project::instance_transform(initial, 1)->position = {-1.2F, 0, 0};
@@ -941,6 +881,7 @@ void imported_position_test(Harness& h) {
     // Exercise the asset that exposed the regression: its full scene payload
     // exceeds 3 MB, but every unkeyed move must still be exactly 48 bytes.
     auto initial = project::State{.document = {.revision = h.authored.document.revision + 1, .mesh = h.authored.document.mesh}};
+    initial.viewport.sequence = h.authored.viewport.sequence + 1; // Newer than any view request already sent.
     initial.viewport.editor_camera = {.yaw = 25, .pitch = 25, .distance = 10};
     initial.document.keyframe_names[3] = "Editable pose";
     project::mesh_settings(initial, 1)->visible = false;
@@ -1614,7 +1555,7 @@ void integration_test() {
     viewport_resolution_test(h);
     native_play_test(h);
     camera_and_selection_test(h);
-    animation_camera_test(h);
+    scene_camera_test(h);
     timeline_test(h);
     fps_settings_test(h);
     imported_blueprint_test(h);

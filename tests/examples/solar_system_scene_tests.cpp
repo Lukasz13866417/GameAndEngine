@@ -63,7 +63,7 @@ TEST_CASE("Solar system scene holds every actor and only the starting keyframe",
     const auto* earth=project::find_instance(state,shot::earth);
     REQUIRE(earth); CHECK(earth->blueprint==shot::earth_blueprint); CHECK(earth->transform.scale==shot::earth_radius);
     REQUIRE(project::validate_animation(state));
-    CHECK(project::has_camera_animation(state));
+    CHECK(state.document.timeline.find({shot::camera,"position"}));
     REQUIRE(state.document.keyframe_names.size()==1);
     CHECK(state.document.keyframe_names.begin()->first==0);
     for(const auto& track:state.document.timeline.tracks()) {
@@ -71,12 +71,12 @@ TEST_CASE("Solar system scene holds every actor and only the starting keyframe",
         CHECK(track.keys.front().time==0);
     }
     CHECK(state.document.timeline_duration==shot::duration);
-    CHECK(state.viewport.editor_camera==project::evaluate_camera(state,0));
+    CHECK(state.viewport.editor_camera==*project::evaluate_camera(state,0));
 }
 
 TEST_CASE("Camera starts beside Earth, looking away from the sun with Earth at the side","[solar_system][scene]") {
     const auto state=scene();
-    const auto pose=project::evaluate_camera(state,0);
+    const auto pose=*project::evaluate_camera(state,0);
     const auto eye=eye_of(pose);
     const auto forward=normalize(sub(pose.target,eye));
     const auto from_earth=length(sub(eye,shot::earth_center));
@@ -102,7 +102,7 @@ TEST_CASE("Camera starts beside Earth, looking away from the sun with Earth at t
 
 TEST_CASE("Belt is far but in view and the fleet waits thirty percent of the way back","[solar_system][scene]") {
     const auto state=scene();
-    const auto pose=project::evaluate_camera(state,0);
+    const auto pose=*project::evaluate_camera(state,0);
     const auto eye=eye_of(pose);
     const auto forward=normalize(sub(pose.target,eye));
     const auto belt=centroid(state,shot::is_rock),fleet=centroid(state,is_ship);
@@ -138,5 +138,5 @@ TEST_CASE("Solar system scene survives a save and load","[solar_system][scene]")
     CHECK(decoded->document.instances==state.document.instances);
     CHECK(decoded->document.timeline==state.document.timeline);
     CHECK(decoded->document.world_bounds==state.document.world_bounds);
-    CHECK(project::evaluate_camera(*decoded,0)==project::evaluate_camera(state,0));
+    CHECK(*project::evaluate_camera(*decoded,0)==*project::evaluate_camera(state,0));
 }

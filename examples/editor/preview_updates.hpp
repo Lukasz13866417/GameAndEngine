@@ -1,6 +1,5 @@
 #pragma once
 #include "edits.hpp"
-#include "camera_edits.hpp"
 #include "playback.hpp"
 #include "position_edits.hpp"
 #include "rotation_edits.hpp"
@@ -30,12 +29,6 @@ public:
     void changed();
     void changed(const DocumentChanges&);
     void changed(std::span<const vng::u32> vertices, vng::u32 blueprint = 1);
-    // Authored animation-camera pose. Private navigation is sent through
-    // ViewportRequest and can never be overwritten by this ordered edit.
-    void camera_changed();
-    // Replaces only the camera tracks (including removals), plus base pose.
-    // Coalesces current track values behind the same authored-revision ACK slot.
-    void camera_tracks_changed();
     void playback_changed();
     // Coalesce by target, not the last edit kind. Mixed changes and different
     // objects/blueprints remain one atomic value patch behind an ACK.
@@ -62,8 +55,6 @@ private:
         DocumentChanges changes{.full = true};
         bool rejected{};
         bool known{}; // Includes intentional revision-only/no-op acknowledgements.
-        bool camera{};
-        bool camera_tracks{};
         bool playback{};
         bool selection{};
     };

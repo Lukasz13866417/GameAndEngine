@@ -63,7 +63,7 @@ public:
         if (mesh.active() || editing_.active(EditGesture::vertices) || editing_.active(EditGesture::mesh_transform)) return ViewportTool::components;
         if (mesh_part.dragging() || editing_.active(EditGesture::mesh_draft)) return ViewportTool::mesh_part;
         if (pivot.dragging()) return ViewportTool::pivot;
-        if (navigation.dragging() || walk.moving() || editing_.active(EditGesture::camera)) return ViewportTool::navigation;
+        if (navigation.dragging() || walk.moving()) return ViewportTool::navigation;
         if (selection_box.active() || editing_.active(EditGesture::vertices)) return ViewportTool::selection;
         return ViewportTool::none;
     }

@@ -787,8 +787,7 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
 }
 resources::Result<void> Runtime::render_frame(opengl::Device& device, const State& state,
                                               Extent2D extent, std::optional<f32> time) {
-    auto rendered = draw(device, state, camera(preview_camera_pose(state, time.value_or(state.viewport.time)),
-                                               state.viewport.mode), extent, false, time);
+    auto rendered = draw(device, state, camera(state), extent, false, time);
     if (!rendered)
         return std::unexpected(rendered.error());
     return {};
@@ -911,8 +910,7 @@ resources::Result<gfx::ImageData> Runtime::render(opengl::Device& device, const 
                                                   Extent2D extent, bool diagnostic,
                                                   std::optional<f32> time) {
     const auto sampled_time = time.value_or(state.viewport.time);
-    return render(device,RenderRequest{state,camera(preview_camera_pose(state, sampled_time), state.viewport.mode),
-                                      extent,sampled_time,diagnostic});
+    return render(device,RenderRequest{state,camera(state),extent,sampled_time,diagnostic});
 }
 resources::Result<void> Runtime::render_frame(opengl::Device& device, const RenderRequest& request) {
     auto rendered=draw(device,request.state,request.camera,request.extent,false,request.time,request.annotations);

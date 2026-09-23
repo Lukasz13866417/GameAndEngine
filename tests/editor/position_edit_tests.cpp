@@ -251,7 +251,6 @@ TEST_CASE("Position edits retain mixed property and geometry targets",
     const std::array<u32, 1> vertex{0};
     bool full{};
     SECTION("another position object") { updates.position_changed(2); }
-    SECTION("camera") { updates.camera_changed(); }
     SECTION("legacy playback") { updates.playback_changed(); full = true; }
     SECTION("geometry") { updates.changed(vertex); }
     SECTION("structural edit") { updates.changed(); full = true; }

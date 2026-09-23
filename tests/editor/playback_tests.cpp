@@ -95,21 +95,16 @@ TEST_CASE("Continuous timeline scrubbing coalesces to the latest playhead") {
     updates.acknowledge(1, 102);
     REQUIRE(updates.ready(1, 102));
 }
-TEST_CASE("Mixed unsent playback and vertex or camera edits become a full snapshot") {
+TEST_CASE("Mixed unsent playback and vertex edits become a full snapshot") {
     for (const bool playback_first : {false, true}) {
-        for (const bool camera : {false, true}) {
+        {
             auto state = source();
             PreviewUpdates updates;
             updates.accepted(1, 1);
             const auto other = [&] {
                 ++state.document.revision;
-                if (camera) {
-                    state.viewport.editor_camera.yaw = 3;
-                    updates.camera_changed();
-                } else {
-                    REQUIRE(state.document.mesh.set_position(0, {2, 0, 0}));
-                    updates.changed(std::array<u32, 1>{0});
-                }
+                REQUIRE(state.document.mesh.set_position(0, {2, 0, 0}));
+                updates.changed(std::array<u32, 1>{0});
             };
             const auto seek = [&] {
                 ++state.document.revision;

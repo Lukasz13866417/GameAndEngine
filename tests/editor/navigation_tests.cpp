@@ -1,3 +1,4 @@
+#include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/navigation.hpp"
 #include "../../examples/editor/camera_walk.hpp"
 #include "../../examples/editor/ui_scale.hpp"
@@ -352,33 +353,22 @@ TEST_CASE("Viewport Shift MMB pans in the camera plane at pivot depth", "[editor
     CHECK(state.viewport.editor_camera.target.y == Catch::Approx(30 * scale * .52));
 }
 
-TEST_CASE("Pilot mode routes navigation into the animation camera without losing the editor view",
+TEST_CASE("Navigation moves the private editor view and never a scene camera",
           "[editor][navigation][camera]") {
     auto state = scene();
     state.viewport.editor_camera = {-20, 5, 3, {1, 2, 3}};
-    state.document.animation_camera = {70, 20, 12, {-3, 1, 2}};
-    const auto original_animation = state.document.animation_camera;
+    const auto camera = ensure_camera(state, {70, 20, 12, {-3, 1, 2}});
+    REQUIRE(camera);
+    const auto scene_camera = *find_instance(state, *camera);
+    const auto editor_pose = state.viewport.editor_camera;
     NavigationTool tool;
     REQUIRE(update(tool, state, {wheel(1)}));
-    CHECK(state.document.animation_camera == original_animation);
-    const auto editor_pose = state.viewport.editor_camera;
-    state.viewport.pilot_camera = true;
-    REQUIRE(&view_camera(state) == &state.document.animation_camera);
     REQUIRE(update(tool, state,
         {event(Kind::pointer_down), event(Kind::pointer_up, {530, 360})}));
-    CHECK(state.viewport.editor_camera == editor_pose);
-    CHECK(state.document.animation_camera != original_animation);
-    CHECK(state.document.animation_camera.yaw == Catch::Approx(61));
-    const auto authored_snapshot = camera(state).snapshot({800, 600});
-    REQUIRE(authored_snapshot);
-    state.viewport.pilot_camera = false;
-    REQUIRE(&view_camera(state) == &state.viewport.editor_camera);
-    const auto editor_snapshot = camera(state).snapshot({800, 600});
-    REQUIRE(editor_snapshot);
-    CHECK(editor_snapshot->position != authored_snapshot->position);
-    CHECK(state.viewport.editor_camera == editor_pose);
+    CHECK(state.viewport.editor_camera != editor_pose);
+    CHECK(*find_instance(state, *camera) == scene_camera);
+    CHECK(state.document.timeline.tracks().empty());
 }
-
 TEST_CASE("Pan follows rotated camera axes and logical viewport size", "[editor][navigation]") {
     auto state = scene();
     state.viewport.editor_camera.yaw = 90;

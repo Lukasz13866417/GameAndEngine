@@ -56,7 +56,7 @@ inline vng::content::Result<bool> bake_mesh_camera(EditingSession& editing,Camer
     using namespace vng;
     const auto& state=editing.state();
     const auto* mesh=editable_mesh(state);
-    if(state.viewport.mode!=ViewMode::mesh||state.viewport.pilot_camera||!mesh||!mesh->size())
+    if(state.viewport.mode!=ViewMode::mesh||!mesh||!mesh->size())
         return std::unexpected(example::mesh_frame::error("Camera baking needs a mesh-edit view"));
     const auto id=state.viewport.inspected_mesh;
     auto baked=mesh_camera_bake(mesh_placement(state,id,true),mesh->center(),state.viewport.editor_camera,options);

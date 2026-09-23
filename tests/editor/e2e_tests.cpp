@@ -206,7 +206,7 @@ private:
     std::vector<std::byte> drag_pixels_;
     u64 input_frame_{};
     bool selection_dirty_{};
-    project::CameraPose animation_camera_{}, visit_start_{};
+    project::CameraPose camera_pose_{}, visit_start_{};
     u32 camera_{};
     project::CameraPose zoom_before_{};
     project::WorldBounds bounds_before_{}, bounds_after_{};
@@ -224,7 +224,7 @@ private:
     std::vector<project::SceneInstance> group_before_;
     std::vector<u64> keyframe_widget_ids_;
     project::SceneValues insertion_pose_;
-    project::CameraPose insertion_camera_;
+    std::optional<project::CameraPose> insertion_camera_;
 
     const ui::WidgetSnapshot* node(u64 id) const {
         const auto found = std::ranges::find(tree_.widgets, id, &ui::WidgetSnapshot::id);
@@ -825,13 +825,13 @@ void Driver::earth_workflow() {
         require(o.mesh_tools->transform_mode()==project::GizmoMode::rotate,"Whole mesh defaults to rotation");
         const auto* toggle=find({Role::checkbox,"Mesh-centered camera",{}});
         require(toggle&&toggle->bounds.x<o.viewport.x+30&&toggle->bounds.y<o.viewport.y+70,"Mesh camera toggle is not at the top left");
-        *before_centered_navigation=project::view_camera(o.state);
+        *before_centered_navigation=o.state.viewport.editor_camera;
         click_at(center(toggle->bounds));return true;
     });
     add("Mesh-centered camera toggles without moving the view or authoring geometry",[this,before_centered_navigation,before_whole](const Observation& o) {
         const auto* toggle=find({Role::checkbox,"Mesh-centered camera",{}});
         require(toggle&&toggle->checked.value_or(false),"Mesh-centered toggle did not turn on");
-        require(project::view_camera(o.state)==*before_centered_navigation,"Toggle jumped the camera");
+        require(o.state.viewport.editor_camera==*before_centered_navigation,"Toggle jumped the camera");
         require(project::editable_mesh(o.state)->document()==*before_whole,"Camera toggle authored mesh geometry");
         checkpoint(o,"earth-whole-mesh-navigation");
         pointer(input::EventKind::pointer_move,{o.viewport.x+o.viewport.width*.65F,o.viewport.y+o.viewport.height*.5F});
@@ -856,7 +856,7 @@ void Driver::earth_workflow() {
             require(o.dragging,"Transform disappeared before camera navigation");
             require(project::mesh_placement(o.state,static_cast<project::BlueprintId>(3),true)!=Mat4::identity(),"Camera toggle focus blocked mesh rotation");
             *held_placement=project::mesh_placement(o.state,static_cast<project::BlueprintId>(3),true);
-            *held_camera=project::view_camera(o.state);
+            *held_camera=o.state.viewport.editor_camera;
             pointer(input::EventKind::pointer_down,pointer_,2,modifiers);return true;
         });
         add("Drag and release camera without transforming the blueprint",[this,modifiers](const Observation& o) {
@@ -868,7 +868,7 @@ void Driver::earth_workflow() {
         wait("Camera preview updates while transform and baseline survive",[this,held_placement,held_camera](const Observation& o) {
             if(!ready(o))return false;
             require(o.dragging,"Camera movement ended the active transform");
-            require(project::view_camera(o.state)!=*held_camera,"Camera remained blocked by gizmo capture");
+            require(o.state.viewport.editor_camera!=*held_camera,"Camera remained blocked by gizmo capture");
             require(project::mesh_placement(o.state,static_cast<project::BlueprintId>(3),true)==*held_placement,"Camera navigation also transformed the mesh");
             pointer(input::EventKind::pointer_move,pointer_);return true;
         });
@@ -947,7 +947,7 @@ void Driver::earth_workflow() {
     click(button("Bake to mesh draft"));
     wait("Camera view becomes an unpublished mesh placement",[this,before_whole,original](const Observation& o) {
         if(!ready(o))return false;
-        require(project::view_camera(o.state).yaw==project::CameraPose{}.yaw&&project::view_camera(o.state).pitch==project::CameraPose{}.pitch,"Baked camera rotation was not reset");
+        require(o.state.viewport.editor_camera.yaw==project::CameraPose{}.yaw&&o.state.viewport.editor_camera.pitch==project::CameraPose{}.pitch,"Baked camera rotation was not reset");
         require(project::mesh_placement(o.state,static_cast<project::BlueprintId>(3),true)!=Mat4::identity(),"Camera bake changed no mesh placement");
         require(project::editable_mesh(o.state)->document()==*before_whole,"Camera bake rebuilt vertex buffers");
         require(project::mesh_geometry(o.state,static_cast<project::BlueprintId>(3))->document()==*original,"Camera bake published without Apply");
@@ -2333,7 +2333,7 @@ void Driver::rotation_workflow() {
     add("MMB starts free rotation without moving the camera",[this,free_before,free_camera,free_center](const Observation& o) {
         if(!ready(o)||!o.rotation_gizmo||!o.gizmo_visible)return false;
         *free_before=*project::instance_transform(o.state,imported_);
-        *free_camera=project::view_camera(o.state);
+        *free_camera=o.state.viewport.editor_camera;
         *free_center=project::selection_center(project::instance_centers(o.state,imported_,std::array{imported_}));
         rotation_start_={o.viewport.x+o.viewport.width*.7F,o.viewport.y+o.viewport.height*.3F};
         rotation_end_={rotation_start_.x+90,rotation_start_.y+55};
@@ -2345,7 +2345,7 @@ void Driver::rotation_workflow() {
     });
     add("MMB changes orientation immediately and preserves the center",[this,free_before,free_camera,free_center](const Observation& o) {
         require(o.frame==input_frame_+1 && o.dragging,"MMB rotation waited for the worker");
-        require(project::view_camera(o.state)==*free_camera,"MMB also moved the camera");
+        require(o.state.viewport.editor_camera==*free_camera,"MMB also moved the camera");
         require(project::instance_transform(o.state,imported_)->rotation!=free_before->rotation,"MMB did not rotate the ship");
         const auto center=project::selection_center(project::instance_centers(o.state,imported_,std::array{imported_}));
         for(unsigned c=0;c<3;++c)require(std::abs(center[c]-(*free_center)[c])<.0001F,"MMB moved the rotation center");
@@ -2359,7 +2359,7 @@ void Driver::rotation_workflow() {
     wait("One undo restores the MMB transform",[this,free_before,free_camera](const Observation& o) {
         if(!ready(o))return false;
         require(*project::instance_transform(o.state,imported_)==*free_before,"MMB undo did not restore the entire transform");
-        require(project::view_camera(o.state)==*free_camera,"MMB changed the viewing camera");return true;
+        require(o.state.viewport.editor_camera==*free_camera,"MMB changed the viewing camera");return true;
     });
     click(dropdown("Gizmo"));
     click(option("Move", "Gizmo"));
@@ -3294,7 +3294,6 @@ void Driver::workflow() {
     wait("Load restores the saved scene", [this](const Observation& o) {
         if (!ready(o) || o.dirty || position(o, imported_) != saved_position_) return false;
         require(o.state.document.mesh_assets.size() == 1, "Load lost the imported mesh blueprint");
-        animation_camera_ = o.state.document.animation_camera;
         return true;
     });
     click(dropdown("View"));
@@ -3311,9 +3310,8 @@ void Driver::workflow() {
         key(input::Key::enter);
         return true;
     });
-    wait("Editor camera changes independently of saved animation shot", [this](const Observation& o) {
+    wait("Editor camera changes without touching the saved scene", [this](const Observation& o) {
         if (!ready(o) || o.state.viewport.editor_camera.distance != 20) return false;
-        require(o.state.document.animation_camera == animation_camera_, "Editor camera field changed the animation shot");
         require(!o.dirty, "Private editor navigation dirtied the saved scene");
         visible_pixels(o);
         checkpoint(o, "07-reloaded-scene-camera-navigation");
@@ -3395,11 +3393,11 @@ void Driver::workflow() {
         pointer(input::EventKind::pointer_down, drag_start_, 2);
         pointer(input::EventKind::pointer_move, {drag_start_.x + 60, drag_start_.y + 20}, 2);
         pointer(input::EventKind::pointer_up, {drag_start_.x + 60, drag_start_.y + 20}, 2);
-        animation_camera_ = pose;
+        camera_pose_ = pose;
         return true;
     });
     add("Navigation is blocked while inspecting", [this](const Observation& o) {
-        require(o.state.viewport.editor_camera == animation_camera_, "Inspecting camera was moved by navigation");
+        require(o.state.viewport.editor_camera == camera_pose_, "Inspecting camera was moved by navigation");
         return true;
     });
     click(button("Back"));
@@ -3409,7 +3407,7 @@ void Driver::workflow() {
     click(button("0 s | Keyframe"));
     click(button("Enter"));
     wait("Enter starts from the camera pose with authoring controls", [this](const Observation& o) {
-        if (!ready(o) || o.state.viewport.editor_camera != animation_camera_) return false;
+        if (!ready(o) || o.state.viewport.editor_camera != camera_pose_) return false;
         require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
             return widget.role == Role::button && widget.text == "Save this camera" && widget.visible;
         }), "Enter did not offer Save this camera");
@@ -3423,9 +3421,9 @@ void Driver::workflow() {
         return true;
     });
     wait("Roaming inside an entered camera stays private until saved", [this](const Observation& o) {
-        if (!ready(o) || o.state.viewport.editor_camera == animation_camera_) return false;
+        if (!ready(o) || o.state.viewport.editor_camera == camera_pose_) return false;
         const auto* camera = project::find_instance(o.state, camera_);
-        require(project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time)) == animation_camera_,
+        require(project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time)) == camera_pose_,
                 "Navigation authored the camera without Save");
         return true;
     });

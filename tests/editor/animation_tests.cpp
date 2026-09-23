@@ -49,79 +49,74 @@ TEST_CASE("Animation property bridge enumerates stable typed properties for both
           "[editor][animation]") {
     auto state = scene();
     const auto properties = animation_properties(state);
-    REQUIRE(properties.size() == 21);
+    REQUIRE(properties.size() == 16);
     const std::vector<std::string> names{"position", "rotation", "scale", "axis_scale", "brightness", "visible", "wireframe",
-                                         "position", "rotation", "scale", "axis_scale", "radius", "displacement", "bloom", "white_spots", "visible",
-                                         "yaw", "pitch", "distance", "target", "zoom"};
+                                         "position", "rotation", "scale", "axis_scale", "radius", "displacement", "bloom", "white_spots", "visible"};
     for (std::size_t i = 0; i < properties.size(); ++i) {
         CHECK(properties[i].target.property == names[i]);
-        CHECK(properties[i].target.object == (i < 7 ? 1 : i < 16 ? 2 : camera_animation_object));
-        CHECK(properties[i].layer == (i < 7 ? "Mesh" : i < 16 ? "Sun" : "Camera"));
+        CHECK(properties[i].target.object == (i < 7 ? 1 : 2));
+        CHECK(properties[i].layer == (i < 7 ? "Mesh" : "Sun"));
         CHECK_FALSE(properties[i].label.empty());
         REQUIRE(key_property(state, properties[i].target, 2, properties[i].base_value));
     }
-    CHECK(state.document.timeline.tracks().size() == 21);
+    CHECK(state.document.timeline.tracks().size() == 16);
     CHECK(validate_animation(state));
     CHECK(evaluate_scene(state, 1) == evaluate_scene(state, -1));
 }
 
-TEST_CASE("Camera tracks interpolate shots and hold cuts without touching the private view",
+TEST_CASE("Scene camera keys interpolate shots and hold cuts without touching the private view",
           "[editor][animation][camera]") {
     auto state = scene();
-    const auto authored = state.document.animation_camera;
     const auto inspection = state.viewport.editor_camera;
     const auto* geometry = std::get<std::vector<f32>>(
         state.document.mesh.document().vertex_fields[0].values).data();
-    const CameraPose opening{0, 10, 12, {1, 2, 3}, 1}, follow{30, 20, 8, {3, 4, 5}, 3};
-    REQUIRE(key_camera(state, 0, opening));
-    REQUIRE(key_camera(state, 4, follow));
+    const CameraPose opening{0, 10, 12, {1, 2, 3}, 1}, follow{30, 20, 8, {3, 4, 5}, 3}, cut{-40, 5, 9, {8, 9, 10}, 1};
+    const auto id = ensure_camera(state, opening);
+    REQUIRE(id);
+    REQUIRE(key_camera(state, *id, 0, opening));
+    REQUIRE(key_camera(state, *id, 4, follow));
     const auto middle = evaluate_camera(state, 2);
-    CHECK(middle.yaw == Catch::Approx(15));
-    CHECK(middle.pitch == Catch::Approx(15));
-    CHECK(middle.distance == Catch::Approx(10));
-    CHECK(middle.zoom == Catch::Approx(2));
-    CHECK(middle.target == Vec3{2, 3, 4});
-    REQUIRE(key_property(state, {camera_animation_object, "target"}, 6,
-                         Vec3{8, 9, 10}, Interpolation::hold));
-    CHECK(evaluate_camera(state, 5.99F).target == follow.target);
-    CHECK(evaluate_camera(state, 6).target == Vec3{8, 9, 10});
-    CHECK(preview_camera_pose(state, 2) == inspection);
-    state.viewport.pilot_camera = true;
-    CHECK(preview_camera_pose(state, 2) == middle);
+    REQUIRE(middle);
+    CHECK(middle->yaw == Catch::Approx(15));
+    CHECK(middle->pitch == Catch::Approx(15));
+    CHECK(middle->distance == Catch::Approx(10));
+    CHECK(middle->zoom == Catch::Approx(2));
+    const auto* camera_instance = find_instance(state, *id);
+    const auto eye = [&](f32 time) { return evaluate_transform(state, *camera_instance, time).position; };
+    for (unsigned c = 0; c < 3; ++c) CHECK(eye(2)[c] == Catch::Approx((eye(0)[c] + eye(4)[c]) * .5F));
+    REQUIRE(key_camera(state, *id, 6, cut, Interpolation::hold));
+    CHECK(evaluate_camera(state, 5.99F)->yaw == Catch::Approx(follow.yaw));
+    CHECK(evaluate_camera(state, 6)->yaw == Catch::Approx(cut.yaw));
+    for (unsigned c = 0; c < 3; ++c) CHECK(evaluate_camera(state, 6)->target[c] == Catch::Approx(cut.target[c]).margin(1e-4));
+    // The editor preview always looks through the private view, never the scene camera.
     state.viewport.time = 2;
-    const auto sampled=camera(state).snapshot({800,600});
-    const auto expected=camera(middle,ViewMode::scene).snapshot({800,600});
-    REQUIRE(sampled); REQUIRE(expected);
-    CHECK(sampled->position==expected->position);
-    state.viewport.pilot_camera = false;
-    const auto private_camera=camera(state).snapshot({800,600});
-    const auto expected_private=camera(inspection,ViewMode::scene).snapshot({800,600});
-    REQUIRE(private_camera); REQUIRE(expected_private);
-    CHECK(private_camera->position==expected_private->position);
+    const auto preview = camera(state).snapshot({800, 600});
+    const auto expected = camera(inspection, ViewMode::scene).snapshot({800, 600});
+    REQUIRE(preview); REQUIRE(expected);
+    CHECK(preview->position == expected->position);
     CHECK(state.viewport.editor_camera == inspection);
-    CHECK(state.document.animation_camera == authored);
     CHECK(state.document.revision == 1);
     CHECK(std::get<std::vector<f32>>(state.document.mesh.document().vertex_fields[0].values).data() == geometry);
     const auto decoded = decode(serialized(state));
     REQUIRE(decoded);
     CHECK(evaluate_camera(*decoded, 2) == middle);
-    CHECK(object_name(state, camera_animation_object) == "Animation camera");
 }
 
 TEST_CASE("Editing an animated camera is atomic and preserves an authored camera cut",
           "[editor][animation][camera]") {
     auto state = scene();
-    REQUIRE(key_camera(state, 0, {0, 0, 8, {}}));
-    REQUIRE(key_property(state, {camera_animation_object, "yaw"}, 5, 80.F, Interpolation::hold));
-    REQUIRE(key_camera(state, 5, {70, 12, 10, {1, 2, 3}}));
-    CHECK(evaluate_camera(state, 4.99F).yaw == 0.F);
-    CHECK(evaluate_camera(state, 5).yaw == 70.F);
+    const auto id = ensure_camera(state, {0, 0, 8, {}});
+    REQUIRE(id);
+    REQUIRE(key_camera(state, *id, 0, {0, 0, 8, {}}));
+    REQUIRE(key_camera(state, *id, 5, {70, 12, 10, {1, 2, 3}}, Interpolation::hold));
+    CHECK(evaluate_camera(state, 4.99F)->yaw == Catch::Approx(0));
+    CHECK(evaluate_camera(state, 5)->yaw == Catch::Approx(70));
     const auto before = state.document.timeline;
-    CHECK_FALSE(key_camera(state, 7, {25, 12, camera_min_distance * .5F, {}}));
+    CHECK_FALSE(key_camera(state, *id, 7, {25, 12, camera_min_distance * .5F, {}}));
     CHECK(state.document.timeline == before);
-    CHECK_FALSE(key_property(state, {camera_animation_object, "yaw"}, 1, Vec3{}));
-    CHECK_FALSE(key_property(state, {camera_animation_object, "pitch"}, 1, 90.F));
-    CHECK_FALSE(key_property(state, {camera_animation_object, "target"}, 1, Vec3{camera_target_limit + 1, 0, 0}));
+    CHECK_FALSE(key_property(state, {*id, "focus"}, 1, Vec3{}));
+    CHECK_FALSE(key_property(state, {*id, "zoom"}, 1, camera_max_zoom * 2));
+    CHECK_FALSE(key_property(state, {*id, "position"}, 1, Vec3{camera_target_limit * 4, 0, 0}));
     CHECK(state.document.timeline == before);
 }
 

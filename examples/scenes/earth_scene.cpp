@@ -28,7 +28,7 @@ vng::content::Result<editor_example::State> author_scene(const std::filesystem::
     state.viewport.inspected_mesh=blueprint_id;
     auto camera=project::ensure_camera(state,{45,8,3.7F,{},1},"Turntable camera");
     if(!camera)return std::unexpected(camera.error());
-    state.viewport.editor_camera=project::evaluate_camera(state,0);
+    state.viewport.editor_camera=*project::evaluate_camera(state,0);
     return state;
 }
 }

@@ -3,10 +3,6 @@
 #include "project.hpp"
 
 namespace editor_example {
-// Scene instances use u32 identities. Keep the camera in a separate, nonzero
-// timeline identity domain (zero is the UI's "all objects" selection).
-inline constexpr vng::u64 camera_animation_object = vng::u64{1} << 32;
-inline constexpr std::array<std::string_view, 5> camera_track_properties{"yaw", "pitch", "distance", "target", "zoom"};
 // The example's bridge maps stable scene properties onto the neutral timeline.
 // base_value is authored state, not the current animation sample. UI layers are
 // organizational labels; they do not change evaluation order or dependencies.
@@ -41,23 +37,18 @@ struct SceneValues {
 // Placement queries must not copy an instance's editable boundary or settings.
 [[nodiscard]] InstanceTransform evaluate_transform(const State&, const SceneInstance&, vng::f32 time);
 [[nodiscard]] bool evaluate_visibility(const State&, const SceneInstance&, vng::f32 time);
-// The simulation camera: the active scene camera instance when the scene has
-// cameras, otherwise the legacy document shot kept for older scenes.
-[[nodiscard]] CameraPose evaluate_camera(const State&, vng::f32 time);
+// The simulation camera: the pose of the active scene camera instance, or
+// nothing when the scene has no camera. The editor's own view is never this.
+[[nodiscard]] std::optional<CameraPose> evaluate_camera(const State&, vng::f32 time);
 // The camera instance marked active at this time, else the first camera; null
 // when the scene has none.
 [[nodiscard]] const SceneInstance* active_camera(const State&, vng::f32 time);
-[[nodiscard]] bool has_camera_animation(const State&);
 // Scene authoring helpers: create the scene's first camera at a pose (returns
 // the existing active camera untouched when one exists), and key one camera's
 // placement and lens at a timestamp.
 [[nodiscard]] vng::content::Result<vng::u32> ensure_camera(State&, const CameraPose&, std::string name = "Camera");
 [[nodiscard]] vng::content::Result<void> key_camera(State&, vng::u32 camera, vng::f32 time, const CameraPose&,
     vng::timeline::Interpolation = vng::timeline::Interpolation::linear);
-// Private editor navigation is never sampled from authored camera tracks.
-[[nodiscard]] CameraPose preview_camera_pose(const State&, vng::f32 time);
-// Updates the entire shot at one timestamp, transactionally, without copying meshes.
-[[nodiscard]] vng::content::Result<void> key_camera(State&, vng::f32 time, const CameraPose&);
 [[nodiscard]] vng::content::Result<void> validate_animation(const State&);
 [[nodiscard]] vng::content::Result<void> validate_animation(
     std::span<const AnimationProperty>, const vng::timeline::Timeline&, vng::f32 duration,

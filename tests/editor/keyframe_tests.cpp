@@ -176,7 +176,7 @@ TEST_CASE(
     CHECK(keyframe_times(state) == std::vector<f32>{0, 3, 6, 8});
     CHECK(state.document.keyframe_names.contains(3));
     const auto values = keyframe_values(state, 3);
-    REQUIRE(values.size() == 21);
+    REQUIRE(values.size() == 16);
     CHECK(std::ranges::all_of(values, [](const auto& field) { return field.keyed; }));
     CHECK(std::get<Vec3>(values[0].value) == previous.model_transform.position);
     const auto visible = std::ranges::find_if(values, [](const auto& field) {
@@ -208,13 +208,15 @@ TEST_CASE(
 TEST_CASE("Keyframe snapshots include sparse tracks camera and authored initial state",
           "[editor][keyframe]") {
     auto state = scene();
+    const auto camera_id = ensure_camera(state, {0, 0, 8, {}});
+    REQUIRE(camera_id);
     const auto initial = evaluate_scene(state, 0);
     // Imported sparse tracks can have no key at zero. Inserting before their
     // first timestamp uses the same authored fallback as normal evaluation.
     REQUIRE(state.document.timeline.set({1,"position"}, {4, Vec3{8,2,1}}));
     REQUIRE(add_keyframe(state, 2));
     CHECK(evaluate_scene(state, 2) == initial);
-    REQUIRE(key_camera(state, 4, {.yaw=30, .pitch=20, .distance=8, .target={1,2,3}}));
+    REQUIRE(key_camera(state, *camera_id, 4, {.yaw=30, .pitch=20, .distance=8, .target={1,2,3}}));
     REQUIRE(key_property(state, {2,"radius"}, 8, 3.F));
     state.document.keyframe_names[5] = "Sparse named pose";
     const auto preceding = evaluate_scene(state, 6);
@@ -235,7 +237,7 @@ TEST_CASE("Keyframe snapshots include sparse tracks camera and authored initial 
     CHECK(state.document.timeline == before);
 }
 
-TEST_CASE("Fleet key insertion and camera gestures batch timeline work", "[editor][keyframe][performance]") {
+TEST_CASE("Fleet key insertion and camera saves batch timeline work", "[editor][keyframe][performance]") {
     auto state = scene();
     const auto prototype = state.document.instances.front();
     for (u32 id=3; id<=105; ++id) {
@@ -245,6 +247,8 @@ TEST_CASE("Fleet key insertion and camera gestures batch timeline work", "[edito
         state.document.instances.push_back(std::move(instance));
     }
     state.document.next_instance_id = 106;
+    const auto camera = ensure_camera(state, {0, 0, 8, {}});
+    REQUIRE(camera);
     const auto properties = animation_properties(state);
     for (const auto& property : properties)
         for (f32 time : {0.F,2.F,4.F,6.F,8.F,10.F})
@@ -258,19 +262,18 @@ TEST_CASE("Fleet key insertion and camera gestures batch timeline work", "[edito
     REQUIRE(editing.undo());
     CHECK(editing.state().document.timeline == original);
     editing.select_keyframe(editing.state().viewport.time);
-    REQUIRE(editing.begin_camera());
-    auto pose = evaluate_camera(editing.state(), editing.state().viewport.time);
+    auto pose = *evaluate_camera(editing.state(), editing.state().viewport.time);
+    constexpr int saves = 32; // Each save is one history entry; stay inside the undo depth.
     const auto camera_start = std::chrono::steady_clock::now();
-    for (int i=0; i<100; ++i) {
-        pose.yaw += .1F;
-        REQUIRE(editing.camera(pose));
+    for (int i=0; i<saves; ++i) {
+        pose.yaw += 1.F;
+        REQUIRE(editing.set_camera(*camera, pose));
     }
     const auto camera_end = std::chrono::steady_clock::now();
-    REQUIRE(editing.commit());
-    REQUIRE(editing.undo());
+    for (int i=0; i<saves; ++i) REQUIRE(editing.undo());
     CHECK(editing.state().document.timeline == original);
     const auto insert_ms = std::chrono::duration<double,std::milli>(inserted-start).count();
-    const auto camera_ms = std::chrono::duration<double,std::milli>(camera_end-camera_start).count()/100;
+    const auto camera_ms = std::chrono::duration<double,std::milli>(camera_end-camera_start).count()/saves;
     std::cout << "Fleet (" << properties.size() << " properties): insert " << insert_ms
               << " ms, camera update " << camera_ms << " ms\n";
     CHECK(insert_ms < 1000); // Generous CI ceilings: catch repeated whole-timeline work.

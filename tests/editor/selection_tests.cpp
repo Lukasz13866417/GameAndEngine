@@ -360,7 +360,6 @@ TEST_CASE("The bundled animated cube remains pickable and has a gizmo at its vis
     // The bundled scene is editable. Picking this whole animation requires a
     // stable inspection pose, independently of the user's saved shot camera.
     state.viewport.editor_camera = CameraPose{};
-    state.viewport.pilot_camera = false;
     state.viewport.selected_object = 1;
     REQUIRE(state.document.timeline.find({1, "position"}));
     editor::Inspector inspector{{1, 4, state.document.revision}};

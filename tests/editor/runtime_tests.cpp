@@ -1116,9 +1116,12 @@ TEST_CASE("Authored fleet reveal occludes the formation before revealing it with
     auto state = std::move(*loaded);
     REQUIRE(state.document.instances.size() >= 12);
     REQUIRE(state.document.mesh_assets.size() >= 3);
-    REQUIRE(has_camera_animation(state));
+    // The file predates camera instances; its animated shot loads as one.
+    const auto* shot = active_camera(state, 0);
+    REQUIRE(shot);
+    CHECK(shot->name == "Animation camera");
+    REQUIRE(state.document.timeline.find({shot->id, "position"}));
     state.viewport.mode = ViewMode::scene;
-    state.viewport.pilot_camera = true;
     auto window = test::create_hidden_opengl_window(extent.width, extent.height, "authored fleet reveal");
     if (!window) { std::cerr << window.error().message << '\n'; std::exit(77); }
     auto access = window->make_current();
@@ -1129,15 +1132,16 @@ TEST_CASE("Authored fleet reveal occludes the formation before revealing it with
     INFO((runtime ? "runtime ready" : runtime.error().message));
     REQUIRE(runtime);
     const auto render = [&](f32 time) {
-        auto image = runtime->render(*device, state, extent, false, time);
+        const auto view = camera(*evaluate_camera(state, time), ViewMode::scene);
+        auto image = runtime->render(*device, {state, view, extent, time, false});
         INFO((image ? "rendered" : image.error().message));
         REQUIRE(image);
         return std::move(*image);
     };
     const auto fleet_visible = [&](bool visible) {
         for (auto& instance : state.document.instances)
-            if (instance.id > 2)
-                std::get<MeshSettings>(instance.settings).visible = visible;
+            if (auto* mesh = std::get_if<MeshSettings>(&instance.settings); mesh && instance.id > 2)
+                mesh->visible = visible;
     };
     const auto changed_pixels = [](const gfx::ImageData& a, const gfx::ImageData& b) {
         std::size_t count{};
@@ -1162,12 +1166,7 @@ TEST_CASE("Authored fleet reveal occludes the formation before revealing it with
     CHECK(visible_pixels > 400);
     CHECK(changed_pixels(opening, reveal) > 2000);
 
-    // The convenience path must sample the authored camera just like explicit
-    // production rendering, rather than accidentally using the inspection view.
-    auto explicit_camera = camera(evaluate_camera(state, 26), ViewMode::scene);
-    auto explicit_image = runtime->render(*device, {state, explicit_camera, extent, 26, false});
-    REQUIRE(explicit_image);
-    CHECK(reveal.pixels == explicit_image->pixels);
+    const auto explicit_camera = camera(*evaluate_camera(state, 26), ViewMode::scene);
     state.viewport.selected_object = 3; // BASTION / flagship, a carrier instance.
     auto diagnostic = runtime->render(*device, {state, explicit_camera, extent, 26, true});
     REQUIRE(diagnostic);

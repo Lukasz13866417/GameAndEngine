@@ -1,7 +1,6 @@
 #include "editor/effects.hpp"
 #include "editor/animation.hpp"
 #include "editor/edits.hpp"
-#include "editor/camera_edits.hpp"
 #include "editor/playback.hpp"
 #include "editor/position_edits.hpp"
 #include "editor/rotation_edits.hpp"
@@ -13,7 +12,6 @@
 #include "editor/settings.hpp"
 #include "editor/viewport_session.hpp"
 #include "editor/document_patch.hpp"
-#include "editor/animation_camera_edit.hpp"
 #include "support/glfw_opengl_session.hpp"
 
 #include <vng/editor/preview.hpp>
@@ -64,18 +62,11 @@ std::string message(const vng::resources::Diagnostic& error) {
 struct CameraScope {
     project::State& state;
     project::CameraPose original;
-    bool original_pilot;
     CameraScope(project::State& state, const std::optional<project::CameraPose>& pose)
-        : state(state), original(state.viewport.editor_camera), original_pilot(state.viewport.pilot_camera) {
-        if (pose) {
-            state.viewport.editor_camera = *pose;
-            state.viewport.pilot_camera = false;
-        }
+        : state(state), original(state.viewport.editor_camera) {
+        if (pose) state.viewport.editor_camera = *pose;
     }
-    ~CameraScope() {
-        state.viewport.editor_camera = original;
-        state.viewport.pilot_camera = original_pilot;
-    }
+    ~CameraScope() { state.viewport.editor_camera = original; }
 };
 
 // A worker owns the realization of the editor's authored snapshot, never the
@@ -144,12 +135,11 @@ public:
             set_play(false);
         }
         if (playing_ && state_) {
-            if (!play_camera_override_)
-                play_camera_ = project::evaluate_camera(*state_, static_cast<vng::f32>(play_time_));
+            if (!play_camera_override_) play_camera_ = scene_camera(static_cast<vng::f32>(play_time_));
             CameraScope view{*state_, play_camera_};
             if (navigation_.update(*state_, {}, input.logical_size, input.events, input.events,
                                    input.focused && !input.overflow && !input.framebuffer.empty())) {
-                play_camera_ = project::view_camera(*state_);
+                play_camera_ = state_->viewport.editor_camera;
                 play_camera_override_ = true;
             }
         } else
@@ -290,26 +280,6 @@ public:
                     send("resync\n" + decoded.error().message);
                 else
                     accept_vertices(*decoded);
-            } else if (packet.starts_with("animation_camera\n")) {
-                auto decoded=project::decode_animation_camera_edit(packet.substr(17));
-                if (!decoded) send("resync\n"+decoded.error());
-                else if (!state_) send("resync\nPreview has no document");
-                else if (auto applied=project::apply_animation_camera_edit(state_->document,*decoded);!applied)
-                    send("resync\n"+applied.error());
-                else {
-                    if (playing_) {
-                        play_camera_=state_->document.animation_camera;
-                        play_camera_override_=false;
-                    }
-                    rebuild_inspector(); dirty_=true; render_blocked_=false;
-                    revision(); announce(false);
-                }
-            } else if (packet.starts_with("camera\n")) {
-                auto decoded = project::decode_camera_edit(std::string_view(packet).substr(7));
-                if (!decoded)
-                    send("resync\n" + decoded.error().message);
-                else
-                    accept_camera(*decoded);
             } else if (packet.starts_with("position\n")) {
                 auto decoded = project::decode_position_edit(std::string_view(packet).substr(9));
                 if (!decoded)
@@ -388,14 +358,12 @@ public:
         if (!playing_ && (runtime_->readback_pending() || pending_image_)) return;
         const auto time = static_cast<vng::f32>(playing_ ? play_time_ : preview_time_);
         if (!playing_) {
-            const bool animated = state_->viewport.pilot_camera && project::has_camera_animation(*state_);
-            zoom_.target(project::preview_camera_pose(*state_, time),
-                         state_->viewport.smooth_zoom && !animated);
+            zoom_.target(state_->viewport.editor_camera, state_->viewport.smooth_zoom);
             zoom_.advance(std::chrono::duration<double>(now - view_clock_).count());
         }
         view_clock_ = now;
         const auto rendered_pose = playing_
-            ? (play_camera_override_ ? *play_camera_ : project::evaluate_camera(*state_, time))
+            ? (play_camera_override_ ? *play_camera_ : scene_camera(time))
             : zoom_.pose();
         const auto rendered_camera = project::camera(rendered_pose,state_->viewport.mode,settings_.maximum_viewing_distance);
         render_trace_ = active_trace_;
@@ -506,7 +474,6 @@ private:
         if (play != playing_ || restart) discard_transfers();
         if (play && (!playing_ || restart)) {
             navigation_.cancel();
-            play_camera_ = state_->document.animation_camera;
             play_camera_override_ = false;
             diagnostic_ = false;
             play_time_ = preview_time_;
@@ -633,9 +600,11 @@ private:
         const bool reset_preview_time = !state_ || candidate.viewport.time != state_->viewport.time;
         const bool reset_simulation_clock =
             reset_preview_time || (state_ && candidate.viewport.paused != state_->viewport.paused);
+        const auto play_time = static_cast<vng::f32>(play_time_);
         const bool reset_play_camera =
             playing_ && state_ &&
-            (candidate.document.animation_camera != state_->document.animation_camera || candidate.viewport.mode != state_->viewport.mode);
+            (project::evaluate_camera(candidate, play_time) != project::evaluate_camera(*state_, play_time) ||
+             candidate.viewport.mode != state_->viewport.mode);
         if (!runtime_) {
             auto created = project::Runtime::create(device_, candidate);
             if (!created) {
@@ -660,11 +629,7 @@ private:
             *state_ = std::move(candidate);
         }
         rebuild_inspector();
-        if (reset_play_camera) {
-            navigation_.cancel();
-            play_camera_ = state_->document.animation_camera;
-            play_camera_override_ = false;
-        }
+        if (reset_play_camera) follow_scene_camera();
         if (reset_preview_time) {
             preview_time_ = state_->viewport.time;
         }
@@ -695,8 +660,7 @@ private:
             }
         }
         const bool was_settled = zoom_.settled();
-        zoom_.target(project::preview_camera_pose(*state_, after.time),
-                     after.smooth_zoom && !(after.pilot_camera && project::has_camera_animation(*state_)));
+        zoom_.target(after.editor_camera, after.smooth_zoom);
         if (was_settled) view_clock_ = Clock::now();
         if (before.time != after.time || before.paused != after.paused) {
             preview_time_ = after.time;
@@ -713,7 +677,7 @@ private:
             announce(false);
         }
         if (before.mode != after.mode || before.inspected_mesh != after.inspected_mesh)
-            zoom_.target(project::preview_camera_pose(*state_, after.time), false);
+            zoom_.target(after.editor_camera, false);
         dirty_ = true;
         render_blocked_ = false;
     }
@@ -737,28 +701,16 @@ private:
         announce(false);
     }
 
-    void accept_camera(const project::CameraEdit& edit) {
-        if (!state_ || !runtime_) {
-            send("resync\nPreview has no authored snapshot");
-            return;
-        }
-        const auto previous_animation_camera = state_->document.animation_camera;
-        if (auto applied = project::apply_camera_edit(*state_, edit); !applied) {
-            send("resync\n" + applied.error().message);
-            return;
-        }
-        if (playing_ && previous_animation_camera != state_->document.animation_camera) {
-            navigation_.cancel();
-            play_camera_ = state_->document.animation_camera;
-            play_camera_override_ = false;
-        }
-        // No mesh decode/upload, even for a large scene. Refresh stamps so
-        // inspector actions still target the accepted authored revision.
-        rebuild_inspector();
-        dirty_ = true;
-        render_blocked_ = false;
-        revision();
-        announce(false);
+    // Independent Play looks through the scene camera; a scene without one
+    // keeps the editor's view rather than inventing a pose.
+    project::CameraPose scene_camera(vng::f32 time) const {
+        return project::evaluate_camera(*state_, time).value_or(state_->viewport.editor_camera);
+    }
+    // An authored change to the scene camera hands the Play view back to it,
+    // discarding any navigation the viewer did inside Play.
+    void follow_scene_camera() {
+        navigation_.cancel();
+        play_camera_override_ = false;
     }
 
     void accept_selection(const project::SelectionEdit& edit) {
@@ -881,6 +833,8 @@ private:
 
     void accept_patch(const project::DocumentPatch& patch) {
         if (!state_ || !runtime_) { send("resync\nPreview has no document"); return; }
+        const auto play_time = static_cast<vng::f32>(play_time_);
+        const auto camera_before = playing_ ? project::evaluate_camera(*state_, play_time) : std::nullopt;
         auto before = project::capture_patch(patch.base_revision, *state_, project::changes_of(patch));
         if (!before) { send("resync\n" + before.error().message); return; }
         // An inverse uses the same validated revision interval during rollback;
@@ -934,12 +888,7 @@ private:
             }
         }
         ++document_patches_;
-        if (playing_ && std::ranges::any_of(patch.properties, [](const auto& property) {
-                return property.target.object == project::camera_animation_object;
-            })) {
-            play_camera_ = state_->document.animation_camera;
-            play_camera_override_ = false;
-        }
+        if (playing_ && project::evaluate_camera(*state_, play_time) != camera_before) follow_scene_camera();
         rebuild_inspector(); dirty_ = true; render_blocked_ = false;
         revision(); announce(false);
     }

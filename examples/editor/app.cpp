@@ -347,11 +347,11 @@ int run(const Options& options) {
     camera_menu.label("CAMERA SETTINGS").height(28);
     auto close_camera = camera_menu.button("Close camera settings").height(32);
     bool camera_open{};
-    NumberControl yaw{camera_menu, "Orbit", -180, 180, preview_camera_pose(state,view_state.time).yaw};
-    NumberControl pitch{camera_menu, "Elevation", -camera_max_pitch, camera_max_pitch, preview_camera_pose(state,view_state.time).pitch};
-    NumberControl orbit_distance{camera_menu, "Orbit distance", camera_min_distance, camera_max_distance, preview_camera_pose(state,view_state.time).distance};
+    NumberControl yaw{camera_menu, "Orbit", -180, 180, view_state.editor_camera.yaw};
+    NumberControl pitch{camera_menu, "Elevation", -camera_max_pitch, camera_max_pitch, view_state.editor_camera.pitch};
+    NumberControl orbit_distance{camera_menu, "Orbit distance", camera_min_distance, camera_max_distance, view_state.editor_camera.distance};
     orbit_distance.slider_range(settings.orbit_distance.minimum, settings.orbit_distance.maximum);
-    NumberControl optical_zoom{camera_menu, "Zoom", camera_min_zoom, camera_max_zoom, preview_camera_pose(state,view_state.time).zoom};
+    NumberControl optical_zoom{camera_menu, "Zoom", camera_min_zoom, camera_max_zoom, view_state.editor_camera.zoom};
     optical_zoom.slider_range(camera_min_zoom, 10.F);
     auto move_camera_scroll = camera_menu.checkbox("Scroll moves camera").value(settings.scroll_moves_camera);
     auto walk_button = camera_menu.button("Walk camera");
@@ -507,7 +507,7 @@ int run(const Options& options) {
         refresh_vertex();
         pause.text(view_state.paused ? "Play (in editor)" : "Pause (in editor)");
         weld.value(view_state.weld);
-        const auto pose = preview_camera_pose(state, view_state.time);
+        const auto pose = view_state.editor_camera;
         if (reset_camera) {
             yaw.reset(pose.yaw);
             pitch.reset(pose.pitch);
@@ -783,7 +783,7 @@ int run(const Options& options) {
     };
     auto camera_changed = [&] {
         viewport_changed();
-        const auto pose = preview_camera_pose(state, view_state.time);
+        const auto pose = view_state.editor_camera;
         yaw.value(pose.yaw);
         pitch.value(pose.pitch);
         orbit_distance.value(pose.distance); optical_zoom.slider_range(camera_min_zoom, std::max(10.F, pose.zoom)).value(pose.zoom);
@@ -795,19 +795,6 @@ int run(const Options& options) {
         else if (*result) status.text(cancel ? "World bounds edit cancelled" : "World bounds updated");
         if (cancel) bounds_tool.cancel();
         bounds_panel.sync(state.document.world_bounds);
-    };
-    auto finish_camera = [&](bool cancel) {
-        if (!editing.active(EditGesture::camera)) return;
-        auto result = viewport_interaction.finish(ViewportTool::navigation, cancel);
-        if (!result) { status.text(result.error().message); return; }
-        if (cancel) {
-            navigation.cancel();
-            camera_changed();
-            const auto pose = preview_camera_pose(state, view_state.time);
-            yaw.reset(pose.yaw); pitch.reset(pose.pitch); orbit_distance.reset(pose.distance); optical_zoom.slider_range(camera_min_zoom, std::max(10.F, pose.zoom)).reset(pose.zoom);
-            status.text("Camera edit cancelled");
-        }
-        show_timeline();
     };
     // Navigation always moves the private editor view. Authoring a camera is
     // explicit: Enter a camera, look around, then Save this camera.
@@ -833,7 +820,7 @@ int run(const Options& options) {
     };
     auto playback_changed = [&] {
         viewport_changed();
-        const auto pose = preview_camera_pose(state, view_state.time);
+        const auto pose = view_state.editor_camera;
         yaw.value(pose.yaw);
         pitch.value(pose.pitch);
         orbit_distance.value(pose.distance); optical_zoom.slider_range(camera_min_zoom, std::max(10.F, pose.zoom)).value(pose.zoom);
@@ -948,7 +935,6 @@ int run(const Options& options) {
     };
     const auto cancel_viewport = [&] {
         if(viewport_interaction.pivot.dragging())rotation_pivot.cancel();
-        const bool camera = editing.active(EditGesture::camera);
         const auto object = editing.active_object();
         auto cancelled = viewport_interaction.cancel();
         if (!cancelled) { status.text(cancelled.error().message); return; }
@@ -956,11 +942,6 @@ int run(const Options& options) {
         bounds_panel.sync(state.document.world_bounds);
         if (const auto* instance = find_instance(state, object))
             inspector.reset_number("transform", "scale", evaluate_instance(state, *instance, view_state.time).transform.scale);
-        if (camera) {
-            camera_changed();
-            const auto pose = preview_camera_pose(state, view_state.time);
-            yaw.reset(pose.yaw); pitch.reset(pose.pitch); orbit_distance.reset(pose.distance); optical_zoom.slider_range(camera_min_zoom, std::max(10.F, pose.zoom)).reset(pose.zoom);
-        }
         if (*cancelled) { show_timeline(); refresh_vertex(); }
     };
     auto launch = [&](u64 generation) {
@@ -1222,7 +1203,7 @@ int run(const Options& options) {
                 if (!playing && !view_state.paused && image_revision == state.document.revision &&
                     presented_info.view_sequence == view_state.sequence) {
                     view_state.time = static_cast<f32>(latest->info.time);
-                    const auto pose = preview_camera_pose(state, view_state.time);
+                    const auto pose = view_state.editor_camera;
                     if (!yaw.editing()) yaw.value(pose.yaw);
                     if (!pitch.editing()) pitch.value(pose.pitch);
                     if (!orbit_distance.editing()) orbit_distance.value(pose.distance);
@@ -1262,7 +1243,6 @@ int run(const Options& options) {
         }
         viewport_interaction.begin_frame();
         const bool viewport_gesture = viewport_interaction.busy() || timeline.dragging();
-        const bool camera_numeric_active = editing.active(EditGesture::camera) && !navigation.dragging() && !walk.moving();
         const bool settings_was_open = settings_panel.visible();
         const bool import_was_open = import_dialog.visible();
         const bool open_was_open = open_dialog.visible();
@@ -1309,7 +1289,7 @@ int run(const Options& options) {
         for(auto splitter:section_splitters) splitter.enabled(lists_enabled);
         instance_flyout.enabled(lists_enabled); blueprint_flyout.enabled(lists_enabled);
         show_instances.enabled(lists_enabled); show_blueprints.enabled(lists_enabled);
-        show_camera.enabled(!editing.awaiting_remote() && (!viewport_gesture || camera_numeric_active));
+        show_camera.enabled(!editing.awaiting_remote() && !viewport_gesture);
         files.enabled(!dialog_was_open);
         log_panel.enabled(!dialog_was_open);
         blueprint_mesh_panel.sync();
@@ -1330,7 +1310,7 @@ int run(const Options& options) {
             blueprint_mesh_panel.enabled(!dialog_was_open && !viewport_gesture && !mode_pending && !editing.busy());
         };
         update_pose_controls();
-        scene_panel.enabled(!dialog_was_open && !editing.awaiting_remote() && (!viewport_gesture || camera_numeric_active));
+        scene_panel.enabled(!dialog_was_open && !editing.awaiting_remote() && !viewport_gesture);
         bounds_panel.sync(state.document.world_bounds);
         bounds_panel.available(view_state.mode == ViewMode::scene, !viewport_gesture && !playing && !mode_pending && view_state.paused);
         scene_list.enabled(!viewport_gesture);
@@ -1486,7 +1466,7 @@ int run(const Options& options) {
         auto shortcuts=edit_shortcuts(shortcut_events,shortcut_raw.events,
             shortcut_raw.focused && !shortcut_raw.overflow && !dialog_was_open && !mode_pending && !editing.awaiting_remote() &&
             !viewport_gesture && !playing && !logs_visible);
-        const bool viewport_drag=viewport_interaction.busy() && !camera_numeric_active &&
+        const bool viewport_drag=viewport_interaction.busy() &&
             !(editing.active(EditGesture::scale) && !scaling.dragging() && !instance_transform.active());
         const auto& gesture_raw=viewport_drag ? viewport_raw : raw;
         const bool scale_cancelled=editing.active(EditGesture::scale) && !instance_transform.active() && (gesture_raw.overflow || !gesture_raw.focused ||
@@ -1496,12 +1476,6 @@ int run(const Options& options) {
             }));
         if(scale_cancelled) finish_scale(true);
         yaw.poll(); pitch.poll(); orbit_distance.poll(); optical_zoom.poll();
-        const bool camera_cancelled = editing.active(EditGesture::camera) &&
-            (gesture_raw.overflow || !gesture_raw.focused || std::ranges::any_of(gesture_raw.events, [](const auto& event) {
-                return event.kind == input::EventKind::focus_lost ||
-                    (event.kind == input::EventKind::key_down && event.key == input::Key::escape);
-            }));
-        if (camera_cancelled) finish_camera(true);
         for (const auto* control : {&yaw, &pitch, &orbit_distance, &optical_zoom})
             if (!control->status().empty()) status.text(control->status());
         ui_keyboard_capture = input->capturesKeyboard;
@@ -1974,10 +1948,10 @@ int run(const Options& options) {
                 }
             }
         }
-        if (!dialog_was_open && !modal_visible() && !editing.awaiting_remote() && !camera_cancelled &&
-            !inspecting() && (!viewport_gesture || camera_numeric_active) &&
+        if (!dialog_was_open && !modal_visible() && !editing.awaiting_remote() &&
+            !inspecting() && !viewport_gesture &&
             (yaw.changedValue() || pitch.changedValue() || orbit_distance.changedValue() || optical_zoom.changedValue())) {
-            const auto before = preview_camera_pose(state, view_state.time);
+            const auto before = view_state.editor_camera;
             auto after = before;
             after.yaw = yaw.value(); after.pitch = pitch.value();
             after.distance = before.distance;
@@ -2019,12 +1993,7 @@ int run(const Options& options) {
             !raw.overflow) {
             if (auto action = timeline.poll(input->unhandled(), raw.events)) {
                 if (action->kind == TimelineAction::Kind::select_object) {
-                    if (action->object == camera_animation_object) {
-                        // The legacy shot row stands in for the scene camera.
-                        if (const auto* camera = active_camera(state, view_state.time))
-                            select_scene_instance(camera->id, action->selection_mode);
-                        else timeline.focus_object(camera_animation_object);
-                    } else select_scene_instance(static_cast<u32>(action->object), action->selection_mode);
+                    select_scene_instance(static_cast<u32>(action->object), action->selection_mode);
                 } else {
                     regions.deselect();
                     delete_target = DeleteTarget::keyframe;
@@ -2134,9 +2103,8 @@ int run(const Options& options) {
                 return event.kind == input::EventKind::pointer_down && !camera_panel.contains(event.position);
             });
         const bool viewport_enabled = viewport_ready && !toolbar_blocks_viewport && !list_blocks_viewport && !camera_overlay_blocks;
-        const auto previous_camera = preview_camera_pose(state, view_state.time);
+        const auto previous_camera = view_state.editor_camera;
         if (walk_button.clicked() && viewport_enabled && !inspecting()) {
-            finish_camera(false);
             walk.active(!walk.active());
             status.text(walk.active() ? "Walk: WASD / Q down / E up / Shift fast / middle drag turns / Escape exits" : "Walk mode off");
         }
@@ -2155,8 +2123,7 @@ int run(const Options& options) {
             (mesh_tools.mode()==MeshSelectMode::whole || !mesh_tools.selected().empty());
         navigation.orbit_enabled(walk.active() || !(free_object_rotation || free_mesh_rotation || regions.free_rotation_selected()));
         const bool navigated = viewport_interaction.update(ViewportTool::navigation, [&](bool available) {
-            const bool enabled=available && viewport_enabled && !inspecting() &&
-                !camera_cancelled && !camera_numeric_active;
+            const bool enabled=available && viewport_enabled && !inspecting();
             const bool pointer_moved=navigation.update(navigated_camera, view_state.mode, view_state.smooth_zoom,
                               {viewport.x, viewport.y}, {viewport.width, viewport.height},
                               viewport_input->unhandled(), viewport_raw.events,
@@ -2171,10 +2138,7 @@ int run(const Options& options) {
             return pointer_moved || walked;
         });
         walk_button.text(walk.active() ? "Stop walking" : "Walk camera");
-        if (navigation.cancelled()) finish_camera(true);
-        else if (navigated) {
-            camera_edited(previous_camera, navigated_camera);
-        }
+        if (navigated && !navigation.cancelled()) camera_edited(previous_camera, navigated_camera);
         viewport_interaction.gizmo_input.route(viewport_interaction.transforming(),
             navigation_was_dragging || navigation.handledPointer(),tool_menu_input,viewport_raw.pointer,
             viewport_raw.events,viewport_input->unhandled(),dt,
@@ -2186,7 +2150,7 @@ int run(const Options& options) {
         const auto arrow_step=viewport_interaction.gizmo_input.arrow_step();
         if (scroll_trace.enabled())
             scroll_trace.input(viewport_raw.events, viewport_input->unhandled(), viewport, navigation_was_dragging,
-                previous_camera, preview_camera_pose(state, view_state.time), view_state.sequence,
+                previous_camera, view_state.editor_camera, view_state.sequence,
                 {{"modal", dialog_was_open || modal_visible()}, {"independent-play", playing},
                  {"mode-transition", mode_pending}, {"debug-link-off", !debug_link.value()},
                  {"callback-pending", editing.awaiting_remote()}, {"worker-unresponsive", unresponsive},
@@ -2196,10 +2160,6 @@ int run(const Options& options) {
                  {"wrong-view", !matches_view(presented_info, state)},
                  {"vertex-drag", editing.active(EditGesture::vertices)}, {"translation-drag", translation.dragging() || editing.active(EditGesture::move)},
                  {"rotation-drag", rotation.active()}});
-        if (editing.active(EditGesture::camera) && !navigation.dragging() && !walk.moving() && !yaw.isPressed() && !pitch.isPressed() &&
-            !orbit_distance.isPressed() && !optical_zoom.isPressed()) {
-            finish_camera(false);
-        }
         if (viewport_tab && viewport_enabled && !navigation.handledPointer()) {
             interaction.value(interaction.value() == InteractionMode::objects
                                   ? InteractionMode::vertices

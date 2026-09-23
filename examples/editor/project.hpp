@@ -119,7 +119,6 @@ struct Document {
         {1, BlueprintId::mesh, "Mesh", MeshSettings{}, {{1.7F, 0, 0}, {}, .7F}},
         {2, BlueprintId::sun, "Sun", SunSettings{}, {{-1.6F, 0, 0}, {}, 1}}};
     vng::u32 next_instance_id{3};
-    CameraPose animation_camera{};
     EnvironmentSettings environment{};
     WorldBounds world_bounds{};
     vng::timeline::Timeline timeline{};
@@ -136,8 +135,8 @@ struct ViewportState {
     vng::u32 selected_object{2}, selected_vertex{};
     bool weld{true}, paused{true};
     vng::f32 time{0};
+    // The editor's private view. The simulation camera is a scene instance.
     CameraPose editor_camera{};
-    bool pilot_camera{};
     bool smooth_zoom{};
     bool show_regions{}, show_world_bounds{}; // Private preview decoration, never an authored pose.
     bool gizmo_only{}; // Hide the active instance surface in editor preview only.
@@ -224,15 +223,10 @@ void place_camera(SceneInstance&, const CameraPose&);
 [[nodiscard]] vng::content::Result<vng::u32> instantiate(State&, BlueprintId);
 [[nodiscard]] vng::content::Result<void> erase_instance(State&, vng::u32);
 [[nodiscard]] vng::content::Result<std::string> encode(const State&);
-// Authored scene serialization excludes the private inspection camera and pilot mode.
+// Authored scene serialization excludes the private editor camera.
 [[nodiscard]] vng::content::Result<std::string> encode_scene(const State&);
 [[nodiscard]] vng::content::Result<State> decode(std::string_view);
-[[nodiscard]] inline CameraPose& view_camera(State& state) noexcept {
-    return state.viewport.pilot_camera ? state.document.animation_camera : state.viewport.editor_camera;
-}
-[[nodiscard]] inline const CameraPose& view_camera(const State& state) noexcept {
-    return state.viewport.pilot_camera ? state.document.animation_camera : state.viewport.editor_camera;
-}
+// The editor preview's camera: always the private editor view.
 [[nodiscard]] vng::gfx::Camera camera(const State&);
 // Zero preserves automatic clipping for standalone demos; editor preferences
 // supply an explicit far plane, independent of the orbit pivot or optical zoom.

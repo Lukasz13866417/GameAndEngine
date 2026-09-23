@@ -41,7 +41,10 @@ int example::run_scene_demo(int argc, char** argv,const SceneDemo& demo) {
     auto scene = source.load(options->scene_path);
     if (!scene) return report_failure(scene.error());
     scene->viewport.mode = project::ViewMode::scene;
-    scene->viewport.pilot_camera = true;
+    if (!project::has_camera(*scene)) {
+        std::cerr << options->scene_path.string() << " has no scene camera; add one in the editor (Blueprints > Camera)\n";
+        return 1;
+    }
     if (!options->bloom) {
         scene->document.environment.bloom_strength = 0;
         auto tracks = std::vector<timeline::Track>(scene->document.timeline.tracks().begin(),
@@ -89,7 +92,7 @@ int example::run_scene_demo(int argc, char** argv,const SceneDemo& demo) {
         if (restart && !previous_r) elapsed = 0;
         previous = now; previous_space = space; previous_r = restart;
         const auto time = std::clamp(options->fixed_time.value_or(elapsed),0.F,scene->document.timeline_duration);
-        const auto camera = project::camera(project::evaluate_camera(*scene,time),project::ViewMode::scene);
+        const auto camera = project::camera(*project::evaluate_camera(*scene,time),project::ViewMode::scene);
         if (auto rendered = runtime->render_frame(device,{*scene,camera,*extent,time}); !rendered)
             return report_failure(rendered.error());
         if (auto presented = runtime->present(device); !presented) return report_failure(presented.error());

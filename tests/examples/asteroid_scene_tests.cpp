@@ -58,7 +58,7 @@ TEST_CASE("Asteroid shot stays an ordinary editable scene with shared rock bluep
     CHECK_FALSE(project::find_instance(state,2));
     CHECK(state.document.timeline_duration==belt::duration);
     REQUIRE(project::validate_animation(state));
-    CHECK(project::has_camera_animation(state));
+    CHECK(state.document.timeline.find({belt::camera,"position"}));
     std::set<u32> identities;
     std::map<project::BlueprintId,unsigned> uses;
     for(const auto& instance:state.document.instances) {
@@ -74,7 +74,7 @@ TEST_CASE("Asteroid shot stays an ordinary editable scene with shared rock bluep
     const auto geometry=project::instance_mesh(state,belt::first_rock)->document();
     project::instance_transform(state,belt::first_rock)->scale=2.F;
     CHECK(project::instance_mesh(state,belt::first_rock)->document()==geometry);
-    REQUIRE(project::key_camera(state,25,{15,8,30,{1,2,-70}}));
+    REQUIRE(project::key_camera(state,belt::camera,25,{15,8,30,{1,2,-70}}));
     const auto encoded=project::encode_scene(state);
     REQUIRE(encoded);
     CHECK(encoded->size()<16*1024*1024);
@@ -82,7 +82,7 @@ TEST_CASE("Asteroid shot stays an ordinary editable scene with shared rock bluep
     REQUIRE(decoded);
     CHECK(decoded->document.instances==state.document.instances);
     CHECK(decoded->document.timeline==state.document.timeline);
-    CHECK(project::evaluate_camera(*decoded,25)==project::evaluate_camera(state,25));
+    CHECK(*project::evaluate_camera(*decoded,25)==*project::evaluate_camera(state,25));
     CHECK(project::instance_mesh(*decoded,belt::first_rock)->document()==geometry);
 }
 TEST_CASE("The entire lead ship and camera clear tumbling rocks between authored keys", "[asteroid][scene]") {
@@ -98,7 +98,7 @@ TEST_CASE("The entire lead ship and camera clear tumbling rocks between authored
     float camera_clearance=1000,ship_clearance=1000;
     u32 nearest_camera{},nearest_ship{};
     for(float time=0;time<=belt::duration;time+=.125F) {
-        const auto eye=project::camera(project::evaluate_camera(state,time),project::ViewMode::scene).position();
+        const auto eye=project::camera(*project::evaluate_camera(state,time),project::ViewMode::scene).position();
         const auto ship=project::evaluate_instance(state,hero,time);
         for(const auto& instance:state.document.instances) {
             if(!belt::is_rock(instance)) continue;
@@ -183,7 +183,7 @@ TEST_CASE("Expanded belt and armada fit their bounds and the pathfinder stops fa
             radius=std::max(radius,length(mesh->position(vertex))*transform.scale);
         for(float time:{0.F,belt::stop_time,belt::duration}) {
             const auto value=project::evaluate_instance(state,instance,time);
-            const auto pose=project::evaluate_camera(state,time);
+            const auto pose=*project::evaluate_camera(state,time);
             const auto eye=project::camera(pose,project::ViewMode::scene).position();
             // In particular, distant ships must already be inside the far
             // plane at the start; clipping must not manufacture the reveal.
@@ -214,17 +214,17 @@ TEST_CASE("Expanded belt and armada fit their bounds and the pathfinder stops fa
         CHECK(next<speed); speed=next;
     }
     CHECK(speed<.4F);
-    CHECK(project::evaluate_camera(state,belt::stop_time)==project::evaluate_camera(state,belt::duration));
+    CHECK(*project::evaluate_camera(state,belt::stop_time)==*project::evaluate_camera(state,belt::duration));
 }
 
 TEST_CASE("The tracking camera keeps the gentler flight fully framed after entry", "[asteroid][scene]") {
     auto state=scene();
     state.viewport.mode=project::ViewMode::scene;
     state.viewport.selected_object=belt::hero;
-    state.viewport.pilot_camera=true;
     for(float time=0;time<=belt::duration;time+=.5F) {
         state.viewport.time=time;
-        const auto vertices=project::project_vertices(state,{1280,800});
+        const auto view=project::camera(*project::evaluate_camera(state,time),project::ViewMode::scene);
+        const auto vertices=project::project_vertices(state,{1280,800},&view);
         INFO("framing at "<<time<<" seconds");
         REQUIRE_FALSE(vertices.empty());
         CHECK(std::ranges::all_of(vertices,[](const auto& p) {
@@ -233,7 +233,7 @@ TEST_CASE("The tracking camera keeps the gentler flight fully framed after entry
         float left=1, right=0;
         for(const auto& p:vertices) if(p) { left=std::min(left,p->x); right=std::max(right,p->x); }
         CHECK(right-left>.1F);
-        const auto eye=project::camera(project::evaluate_camera(state,time),project::ViewMode::scene).position();
+        const auto eye=project::camera(*project::evaluate_camera(state,time),project::ViewMode::scene).position();
         const auto ship=project::evaluate_instance(state,*project::find_instance(state,belt::hero),time);
         CHECK(length(sub(eye,ship.transform.position))<12.F);
     }

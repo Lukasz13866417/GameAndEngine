@@ -50,6 +50,8 @@ public:
     // topology, attribute, or unrelated-vertex scans on the interaction path.
     vng::resources::Result<void> update_positions(vng::opengl::Device&, BlueprintId,
                                                  std::span<const VertexPosition>);
+    // The State-only overloads render through the editor camera, camera(state).
+    // Pass a RenderRequest to look through a scene camera or any other view.
     vng::resources::Result<void> render_frame(vng::opengl::Device&, const State&, vng::Extent2D,
                                               std::optional<vng::f32> time = {});
     vng::resources::Result<void> render_frame(vng::opengl::Device&, const RenderRequest&);

@@ -188,8 +188,7 @@ vng::content::Result<VertexEdit> vertex_edit(const State& before, const State& a
         before.viewport.selected_object != after.viewport.selected_object ||
         before.viewport.selected_vertex != after.viewport.selected_vertex || before.viewport.weld != after.viewport.weld ||
         before.viewport.paused != after.viewport.paused || before.viewport.time != after.viewport.time ||
-        before.viewport.editor_camera != after.viewport.editor_camera || before.document.animation_camera != after.document.animation_camera ||
-        before.viewport.pilot_camera != after.viewport.pilot_camera || before.document.timeline != after.document.timeline ||
+        before.viewport.editor_camera != after.viewport.editor_camera || before.document.timeline != after.document.timeline ||
         before.document.timeline_duration != after.document.timeline_duration || before.document.keyframe_names != after.document.keyframe_names)
         return invalid("Position-only edit cannot represent changed scene settings or selection");
     const auto target = mesh_target(after);

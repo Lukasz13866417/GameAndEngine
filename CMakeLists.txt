@@ -110,7 +110,7 @@ if(VNG_BUILD_EDITOR)
     target_link_libraries(vng_editor PUBLIC vng_content vng_spatial)
     vng_target_defaults(vng_editor)
     add_library(vng_editor_project STATIC examples/editor/project.cpp examples/editor/edits.cpp examples/editor/effects.cpp examples/editor/effect_presets.cpp
-        examples/editor/preview_updates.cpp examples/editor/camera_edits.cpp
+        examples/editor/preview_updates.cpp
         examples/editor/navigation.cpp examples/editor/selection.cpp examples/editor/blueprint_gizmos.cpp examples/editor/vertex_drag.cpp
         examples/editor/scene_file.cpp examples/editor/animation.cpp examples/editor/playback.cpp
         examples/editor/keyframes.cpp examples/editor/settings.cpp examples/editor/position_edits.cpp
@@ -120,7 +120,7 @@ if(VNG_BUILD_EDITOR)
     target_sources(vng_editor_project PRIVATE examples/editor/blueprint_mesh_controls.cpp)
     target_sources(vng_editor_project PRIVATE examples/editor/editing_session.cpp examples/editor/session_operations.cpp
         examples/editor/regions.cpp examples/editor/region_geometry.cpp examples/editor/region_edits.cpp
-        examples/editor/region_instances.cpp examples/editor/camera_instances.cpp)
+        examples/editor/region_instances.cpp examples/editor/camera_instances.cpp examples/editor/legacy_camera.cpp)
     target_include_directories(vng_editor_project PUBLIC examples)
     vng_target_defaults(vng_editor_project)
     if(TARGET vng_ui)
@@ -281,7 +281,7 @@ if(VNG_BUILD_TESTS)
     add_test(NAME vng_timeline_tests COMMAND vng_timeline_tests)
     if(VNG_BUILD_EDITOR)
         add_executable(vng_editor_tests tests/editor/inspector_tests.cpp tests/editor/project_tests.cpp
-            tests/editor/edit_tests.cpp tests/editor/update_tests.cpp tests/editor/camera_edit_tests.cpp
+            tests/editor/edit_tests.cpp tests/editor/update_tests.cpp
             tests/editor/navigation_tests.cpp tests/editor/selection_tests.cpp tests/editor/vertex_drag_tests.cpp
             tests/editor/viewport_shortcut_tests.cpp tests/editor/file_shortcut_tests.cpp
             tests/editor/scene_file_tests.cpp tests/editor/animation_tests.cpp tests/editor/playback_tests.cpp

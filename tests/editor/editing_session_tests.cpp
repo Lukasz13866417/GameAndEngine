@@ -1,6 +1,6 @@
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/instance_controls.hpp"
-#include "../../examples/editor/animation_camera_edit.hpp"
+#include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/preview_updates.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <array>
@@ -43,6 +43,9 @@ TEST_CASE("Only paused keyframe poses allow instance and scene camera authoring"
     auto initial = scene();
     REQUIRE(key_property(initial, {1, "scale"}, 0, 1.F));
     REQUIRE(key_property(initial, {1, "scale"}, 4, 2.F));
+    const auto camera = ensure_camera(initial, {0, 0, 8, {}});
+    REQUIRE(camera);
+    const CameraPose moved{30, 10, 6, {1, 0, 0}};
     EditingSession session{initial}; session.select_keyframe(session.state().viewport.time);
     for (const auto time : {2.F, 4.F, 6.F}) {
         session.viewport().time = time;
@@ -50,7 +53,7 @@ TEST_CASE("Only paused keyframe poses allow instance and scene camera authoring"
         CHECK_FALSE(session.begin_move(1));
         CHECK_FALSE(session.begin_rotation(1));
         CHECK_FALSE(session.begin_scale(1));
-        CHECK_FALSE(session.begin_camera());
+        CHECK_FALSE(session.set_camera(*camera, moved));
         CHECK_FALSE(session.begin_remote(7));
         CHECK_FALSE(session.set_transform(1, {0, 30, 0}, 2));
         CHECK_FALSE(session.dirty());
@@ -68,7 +71,7 @@ TEST_CASE("Only paused keyframe poses allow instance and scene camera authoring"
     REQUIRE(session.begin_scale(1)); REQUIRE(session.scale(3)); REQUIRE(session.commit());
     CHECK(evaluate_scene(session.state(), 2).model_transform.scale == 3);
     session.viewport().paused = false;
-    CHECK_FALSE(session.begin_move(1)); CHECK_FALSE(session.begin_camera());
+    CHECK_FALSE(session.begin_move(1)); CHECK_FALSE(session.set_camera(*camera, moved));
     session.viewport().paused = true;
     session.viewport().time = 0;
     session.select_keyframe(0);
@@ -133,7 +136,10 @@ TEST_CASE("Alignment strength uses the original positions and keeps both anchors
 TEST_CASE("Opening a scene does not grant pose edit permission at time zero",
           "[editor][session][keyframe][startup]") {
     Temp temp;
-    EditingSession session{scene()};
+    auto opened = scene();
+    const auto camera = ensure_camera(opened, {0, 0, 8, {}});
+    REQUIRE(camera);
+    EditingSession session{opened};
     const auto revision = session.state().document.revision;
     const auto initial = session.state().document.instances;
     const auto locked = [&] {
@@ -141,7 +147,7 @@ TEST_CASE("Opening a scene does not grant pose edit permission at time zero",
         CHECK_FALSE(session.begin_move(1));
         CHECK_FALSE(session.begin_rotation(1));
         CHECK_FALSE(session.begin_scale(1));
-        CHECK_FALSE(session.begin_camera());
+        CHECK_FALSE(session.set_camera(*camera, {30, 10, 6, {1, 0, 0}}));
         CHECK_FALSE(session.begin_remote(7));
         CHECK_FALSE(session.set_transform(1, {0, 30, 0}, 2));
     };
@@ -482,8 +488,6 @@ TEST_CASE("Returning animated gestures to their sampled starting value restores 
     REQUIRE(key_property(initial,{1,"position"},4,Vec3{4,0,0}));
     REQUIRE(key_property(initial,{1,"rotation"},0,Vec3{}));
     REQUIRE(key_property(initial,{1,"rotation"},4,Vec3{4,0,0}));
-    REQUIRE(key_property(initial,{camera_animation_object,"yaw"},0,0.F));
-    REQUIRE(key_property(initial,{camera_animation_object,"yaw"},4,40.F));
     initial.viewport.time=2;
     initial.document.keyframe_names[2] = "Editable pose";
     EditingSession s{std::move(initial)}; s.select_keyframe(s.state().viewport.time);
@@ -491,10 +495,6 @@ TEST_CASE("Returning animated gestures to their sampled starting value restores 
     REQUIRE(s.begin_scale(1)); REQUIRE(s.scale(2)); REQUIRE(s.scale(1)); REQUIRE_FALSE(*s.commit());
     REQUIRE(s.begin_rotation(1)); REQUIRE(s.rotate({4,0,0})); REQUIRE(s.rotate({2,0,0})); REQUIRE_FALSE(*s.commit());
     REQUIRE(s.begin_move(1,{})); REQUIRE(s.move({4,0,0})); REQUIRE(s.move({2,0,0})); REQUIRE_FALSE(*s.commit());
-    auto pose = evaluate_camera(s.state(),2);
-    REQUIRE(s.begin_camera()); REQUIRE_FALSE(*s.camera(pose)); REQUIRE_FALSE(*s.commit());
-    REQUIRE(s.begin_camera()); auto changed=pose; changed.yaw+=3;
-    REQUIRE(s.camera(changed)); REQUIRE(s.camera(pose)); REQUIRE_FALSE(*s.commit());
     CHECK(s.state().document.timeline == tracks);
     CHECK_FALSE(s.can_undo()); CHECK_FALSE(s.dirty());
     REQUIRE(s.begin_scale(1)); s.viewport().time=3;

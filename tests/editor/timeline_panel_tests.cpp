@@ -49,7 +49,7 @@ struct Fixture {
     State source = state();
     Fixture() {
         source.viewport.time = 3;
-        const std::array<u64, 3> selected{1, 2, camera_animation_object};
+        const std::array<u64, 2> selected{1, 2};
         panel.selected_objects(selected);
         pump();
         panel.show(source);
@@ -301,7 +301,7 @@ TEST_CASE("Keyframe objects are identifier-only groups with manual and selection
     std::vector<u64> ids;
     for (const auto& widget : tree->widgets) ids.push_back(widget.id);
     CHECK(f.has("Mesh / Mesh")); CHECK(f.has("Sun / effect / Sun"));
-    CHECK(f.has("Animation camera"));
+    CHECK_FALSE(f.has("Animation camera")); // Cameras are ordinary instances, not a special row.
     CHECK_FALSE(f.has("Position")); CHECK_FALSE(f.has("Radius")); CHECK_FALSE(f.has("Key"));
 
     f.panel.selected_objects(std::array<u64, 1>{1}); f.pump();
@@ -413,7 +413,7 @@ TEST_CASE("Scene keyframes are added at the cursor and immediately inspected",
     CHECK(f.has("KEYFRAME / 4.5 seconds"));
     CHECK(f.has("Mesh / Mesh"));
     CHECK(f.has("Sun / effect / Sun"));
-    CHECK(f.source.document.timeline.tracks().size() == 21);
+    CHECK(f.source.document.timeline.tracks().size() == 16);
     const auto before = f.source.document.timeline;
     f.add();
     CHECK(f.source.document.timeline == before);

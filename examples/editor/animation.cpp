@@ -125,17 +125,6 @@ std::vector<AnimationProperty> animation_properties(const State& state) {
             properties.push_back({{id, "visible"}, "Visible", name, region->visible, {}, {}});
         }
     }
-    const auto& camera = state.document.animation_camera;
-    properties.insert(properties.end(), {
-        {{camera_animation_object, "yaw"}, "Orbit (deg)", "Camera", camera.yaw, -180, 180},
-        {{camera_animation_object, "pitch"}, "Elevation (deg)", "Camera", camera.pitch,
-            -camera_max_pitch, camera_max_pitch},
-        {{camera_animation_object, "distance"}, "Distance", "Camera", camera.distance,
-            camera_min_distance, camera_max_distance},
-        {{camera_animation_object, "target"}, "Look-at target", "Camera", camera.target,
-            -camera_target_limit, camera_target_limit},
-        {{camera_animation_object, "zoom"}, "Optical zoom", "Camera", camera.zoom,
-            camera_min_zoom, camera_max_zoom}});
     for (auto& property : properties) {
         if (const auto* track = state.document.timeline.find(property.target)) {
             if (!track->label.empty())
@@ -179,28 +168,10 @@ const SceneInstance* active_camera(const State& state, f32 time) {
     return first;
 }
 
-CameraPose evaluate_camera(const State& state, f32 time) {
-    if (const auto* camera = active_camera(state, time))
-        return camera_pose(evaluate_instance(state, *camera, time));
-    auto pose = state.document.animation_camera;
-    sample(pose.yaw, state.document.timeline, camera_animation_object, "yaw", time);
-    sample(pose.pitch, state.document.timeline, camera_animation_object, "pitch", time);
-    sample(pose.distance, state.document.timeline, camera_animation_object, "distance", time);
-    sample(pose.target, state.document.timeline, camera_animation_object, "target", time);
-    sample(pose.zoom, state.document.timeline, camera_animation_object, "zoom", time);
-    return pose;
-}
-
-bool has_camera_animation(const State& state) {
-    if (has_camera(state)) {
-        for (const auto& track : state.document.timeline.tracks())
-            if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<u32>(track.target.object)))
-                return true;
-        return false;
-    }
-    for (const auto property : camera_track_properties)
-        if (state.document.timeline.find({camera_animation_object, std::string(property)})) return true;
-    return false;
+std::optional<CameraPose> evaluate_camera(const State& state, f32 time) {
+    const auto* camera = active_camera(state, time);
+    if (!camera) return {};
+    return camera_pose(evaluate_instance(state, *camera, time));
 }
 
 content::Result<u32> ensure_camera(State& state, const CameraPose& pose, std::string name) {
@@ -238,25 +209,6 @@ content::Result<void> key_camera(State& state, u32 id, f32 time, const CameraPos
     return edit_property_keys(state, time, keys);
 }
 
-CameraPose preview_camera_pose(const State& state, f32 time) {
-    return state.viewport.pilot_camera && state.viewport.mode == ViewMode::scene
-        ? evaluate_camera(state, time) : state.viewport.editor_camera;
-}
-
-content::Result<void> key_camera(State& state, f32 time, const CameraPose& pose) {
-    std::vector<PropertyKey> keys;
-    for (const auto& [property, value] : std::array<std::pair<std::string_view, timeline::Value>, 5>{
-             {{"yaw", pose.yaw}, {"pitch", pose.pitch}, {"distance", pose.distance},
-              {"target", pose.target}, {"zoom", pose.zoom}}}) {
-        const timeline::Target target{camera_animation_object, std::string(property)};
-        auto incoming = timeline::Interpolation::linear;
-        if (const auto* track = state.document.timeline.find(target))
-            if (const auto key = std::ranges::find(track->keys, time, &timeline::Keyframe::time);
-                key != track->keys.end()) incoming = key->incoming;
-        keys.push_back({target, value, incoming, true});
-    }
-    return edit_property_keys(state, time, keys);
-}
 InstanceTransform evaluate_transform(const State& state, const SceneInstance& source, f32 time) {
     auto result = source.transform;
     sample(result.position, state.document.timeline, source.id, "position", time);

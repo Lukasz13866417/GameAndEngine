@@ -234,7 +234,7 @@ content::Result<void> EditingSession::begin(EditGesture kind, DocumentChanges sc
     if (scope.empty()) return invalid("An edit gesture needs at least one target");
     auto before = capture(scope);
     if (!before) return std::unexpected(before.error());
-    gesture_ = Gesture{kind, std::move(*before), std::move(objects), {}, {}, {}, {}, false};
+    gesture_ = Gesture{kind, std::move(*before), std::move(objects), {}, {}, {}, false};
     for (const auto& property : std::get<DocumentPatch>(gesture_->before.value).properties)
         gesture_->sampled.push_back(state_.document.timeline.sample(property.target, state_.viewport.time).value_or(property.base));
     return {};
@@ -293,13 +293,6 @@ content::Result<void> EditingSession::begin_vertices(BlueprintId blueprint, std:
     if (auto begun = begin(EditGesture::vertices, std::move(scope)); !begun) return begun;
     gesture_->blueprint = blueprint;
     return {};
-}
-content::Result<void> EditingSession::begin_camera() {
-    DocumentChanges scope;
-    for (auto property : camera_track_properties) scope.properties.insert({camera_animation_object, std::string(property)});
-    auto begun = begin(EditGesture::camera, std::move(scope));
-    if (begun) gesture_->camera_origin = evaluate_camera(state_, state_.viewport.time);
-    return begun;
 }
 content::Result<bool> EditingSession::updated(const Checkpoint& before_update) {
     if (auto capacity = check_track_growth(before_update); !capacity) {
@@ -504,20 +497,6 @@ content::Result<bool> EditingSession::vertices(std::span<const VertexPosition> p
         return std::unexpected(moved.error());
     }
     state_.document.revision = edit.base_revision;
-    return updated(*before);
-}
-content::Result<bool> EditingSession::camera(const CameraPose& pose) {
-    if (!active(EditGesture::camera)) return invalid("Begin a camera gesture first");
-    if (auto ready = writable(); !ready) return std::unexpected(ready.error());
-    if (pose == evaluate_camera(state_, state_.viewport.time)) return false;
-    auto before = capture(gesture_->before.scope);
-    if (!before) return std::unexpected(before.error());
-    if (!valid_camera_pose(pose)) return invalid("Invalid animation camera pose");
-    if (pose == gesture_->camera_origin) {
-        if (auto restored = restore(gesture_->before, false); !restored) return std::unexpected(restored.error());
-    } else if (has_camera_animation(state_) || state_.viewport.time > 0) {
-        if (auto keyed = key_camera(state_, state_.viewport.time, pose); !keyed) return std::unexpected(keyed.error());
-    } else state_.document.animation_camera = pose;
     return updated(*before);
 }
 content::Result<bool> EditingSession::commit() {

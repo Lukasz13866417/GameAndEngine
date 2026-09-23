@@ -220,34 +220,31 @@ TEST_CASE("Successful loading establishes the filename and failed loading preser
     no_temporaries(temporary.path);
 }
 
-TEST_CASE("Scene files persist the animation camera while editor navigation remains private",
+TEST_CASE("Scene files persist scene cameras while editor navigation remains private",
           "[editor][file][camera]") {
     TemporaryDirectory temporary;
     SceneFile file;
     auto state = scene();
-    state.document.animation_camera = {65, -23, 7, {2, -1, 3}};
+    const auto camera = ensure_camera(state, {65, -23, 7, {2, -1, 3}});
+    REQUIRE(camera);
     state.viewport.editor_camera = {-20, 5, 3, {4, 2, 1}};
-    state.viewport.pilot_camera = true;
     const auto path = temporary.path / "camera.vscene";
     REQUIRE(file.save_as(path, state));
     auto loaded = file.load(path);
     REQUIRE(loaded);
-    CHECK(loaded->document.animation_camera == state.document.animation_camera);
-    CHECK(loaded->viewport.editor_camera == state.document.animation_camera);
-    CHECK_FALSE(loaded->viewport.pilot_camera);
+    CHECK(*find_instance(*loaded, *camera) == *find_instance(state, *camera));
+    CHECK(loaded->viewport.editor_camera == *evaluate_camera(*loaded, 0));
     const auto before_navigation = bytes(path);
     state.viewport.editor_camera = {-75, -30, 15, {1, 5, 2}};
-    state.viewport.pilot_camera = false;
     REQUIRE(file.save(state));
     CHECK(bytes(path) == before_navigation);
-    state.document.animation_camera.yaw = 80;
+    find_instance(state, *camera)->transform.rotation.y = 80;
     REQUIRE(file.save(state));
     loaded = file.load(path);
     REQUIRE(loaded);
-    CHECK(loaded->document.animation_camera == state.document.animation_camera);
-    CHECK(loaded->viewport.editor_camera == state.document.animation_camera);
+    CHECK(find_instance(*loaded, *camera)->transform.rotation.y == 80);
+    CHECK(evaluate_camera(*loaded, 0)->yaw == 80);
 }
-
 TEST_CASE("Failed encoding and failed temporary writes leave the original scene intact",
           "[editor][file]") {
     TemporaryDirectory temporary;

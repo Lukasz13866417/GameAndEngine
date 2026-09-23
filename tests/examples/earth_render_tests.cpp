@@ -16,7 +16,8 @@ TEST_CASE("Earth renders in one instanced batch with matching diagnostic geometr
     auto window=test::create_hidden_opengl_window(320,240,"Earth acceptance");
     if(!window){std::cerr<<window.error().message<<'\n';std::exit(77);}
     auto token=window->make_current();REQUIRE(token);auto device=opengl::Device::create(*token);REQUIRE(device);
-    auto state=earth::author_scene(VNG_EARTH_ASSETS);REQUIRE(state);state->viewport.pilot_camera=true;
+    // author_scene frames the editor view through its static turntable camera.
+    auto state=earth::author_scene(VNG_EARTH_ASSETS);REQUIRE(state);
     auto runtime=project::Runtime::create(*device,*state);INFO((runtime?"ready":runtime.error().message));REQUIRE(runtime);
     constexpr Extent2D extent{320,240};
     auto first=runtime->render(*device,*state,extent,false,0);REQUIRE(first);
