@@ -264,7 +264,7 @@ TEST_CASE("Instance budgets guard additions atomically without restricting load 
     CHECK_FALSE(s.instance_limit(0)); CHECK_FALSE(s.instance_limit(max_scene_instances+1));
 }
 
-TEST_CASE("Track budget applies atomically to adding keyframes and camera gestures", "[editor][session][settings][timeline]") {
+TEST_CASE("Track budget applies atomically to adding keyframes and saving cameras", "[editor][session][settings][timeline]") {
     EditingSession s{scene()}; s.select_keyframe(s.state().viewport.time);
     const auto properties = animation_properties(s.state()).size();
     REQUIRE(s.timeline_track_limit(static_cast<unsigned>(properties - 1)));
@@ -278,19 +278,20 @@ TEST_CASE("Track budget applies atomically to adding keyframes and camera gestur
     CHECK(s.state().document.timeline.tracks().size() == properties);
 
     auto initial = scene();
-    REQUIRE(key_property(initial, {camera_animation_object,"yaw"}, 0, 0.F));
-    EditingSession camera_session{initial}; camera_session.select_keyframe(camera_session.state().viewport.time);
+    const auto camera = ensure_camera(initial, {0, 0, 8, {}});
+    REQUIRE(camera);
+    initial.viewport.time = 2;
+    initial.document.keyframe_names[2] = "Shot";
+    EditingSession camera_session{initial}; camera_session.select_keyframe(2);
     REQUIRE(camera_session.timeline_track_limit(1));
-    REQUIRE(camera_session.begin_camera());
-    auto pose = evaluate_camera(initial, initial.viewport.time); pose.yaw = 30;
-    CHECK_FALSE(camera_session.camera(pose)); // Camera authoring keys all five camera properties.
+    const CameraPose pose{30, 5, 6, {1, 0, 0}, 2};
+    CHECK_FALSE(camera_session.set_camera(*camera, pose)); // Saving away from zero keys four camera properties.
     CHECK(camera_session.state().document.timeline == initial.document.timeline);
     CHECK(camera_session.state().document.revision == initial.document.revision);
     CHECK_FALSE(camera_session.dirty()); CHECK_FALSE(camera_session.take_changes());
-    REQUIRE(camera_session.cancel());
-    REQUIRE(camera_session.timeline_track_limit(5));
-    REQUIRE(camera_session.begin_camera()); REQUIRE(camera_session.camera(pose)); REQUIRE(camera_session.commit());
-    CHECK(camera_session.state().document.timeline.tracks().size() == 5);
+    REQUIRE(camera_session.timeline_track_limit(4));
+    REQUIRE(camera_session.set_camera(*camera, pose));
+    CHECK(camera_session.state().document.timeline.tracks().size() == 4);
 }
 
 TEST_CASE("Native callbacks cannot bypass the session track preference", "[editor][session][settings][timeline][remote]") {

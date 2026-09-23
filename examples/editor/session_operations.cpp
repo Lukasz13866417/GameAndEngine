@@ -328,6 +328,9 @@ content::Result<bool> EditingSession::set_camera(u32 id, const CameraPose& pose)
     if (!turned) return fail(turned.error().message);
     DocumentChanges lens_changes;
     if (auto adjusted = apply_lens(state_, lens_changes, id, lens_before, lens); !adjusted) return fail(adjusted.error().message);
+    // Saving a camera away from time zero keys four properties; like every
+    // other authoring path it may not grow the timeline past the user's budget.
+    if (auto capacity = check_track_growth(*before); !capacity) return fail(capacity.error().message);
     if (!*moved) changes.properties.erase({id, "position"});
     if (!*turned) changes.properties.erase({id, "rotation"});
     for (const auto property : {"zoom", "focus"})
@@ -358,6 +361,10 @@ content::Result<bool> EditingSession::set_active_camera(u32 id) {
         content::Diagnostic error;
         error.message = activated.error().message;
         return std::unexpected(std::move(error));
+    }
+    if (auto capacity = check_track_growth(*before); !capacity) {
+        if (auto restored = restore(*before, false); !restored) return std::unexpected(restored.error());
+        return std::unexpected(capacity.error());
     }
     if (applied.properties.empty()) return false;
     before->scope = applied;
