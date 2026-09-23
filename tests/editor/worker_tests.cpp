@@ -557,8 +557,39 @@ void scene_camera_test(Harness& h) {
     h.authored.viewport.time = 0;
     h.authored.document.timeline = {};
     h.authored.document.keyframe_names.clear();
+    // Without a scene camera, Play holds the editor's view from when it started.
+    h.authored.viewport.editor_camera = {0, 0, 6, {}};
+    ++h.authored.document.revision;
+    h.send_snapshot();
+    h.until("camera-less scene", [&] { return h.matching_frame(h.authored.document.revision); });
+    const auto still_frame = h.session.latest_frame()->info.frame_id;
+    take(h.session.send("play\n1"), "Play a scene without a camera");
+    h.until("camera-less Play frame", [&] {
+        return h.playing && h.matching_frame(h.authored.document.revision) &&
+               h.session.latest_frame()->info.frame_id > still_frame;
+    });
+    check(bright_pixels_any_extent(*h.session.latest_frame()) > 100,
+          "Camera-less Play did not start from the editor view");
+    h.authored.viewport.editor_camera = {0, 0, 6, {40, 0, 0}};
+    ++h.authored.viewport.sequence;
+    const auto away = project::encode_viewport_request({h.authored.document.revision, h.authored.viewport});
+    check(bool(away), "Encode editor navigation during Play");
+    take(h.session.send_latest("view\n" + *away), "Navigate the editor view during Play");
+    h.until("Play frame after editor navigation", [&] {
+        const auto& frame = h.session.latest_frame();
+        return frame && h.playing && frame->info.view_sequence == h.authored.viewport.sequence;
+    });
+    check(bright_pixels_any_extent(*h.session.latest_frame()) > 100,
+          "Camera-less Play followed the editor's live navigation");
+    const auto held_frame = h.session.latest_frame()->info.frame_id;
+    take(h.session.send("play\n0"), "Stop camera-less Play");
+    h.until("camera-less Play stopped", [&] {
+        return !h.playing && h.session.latest_frame()->info.frame_id > held_frame;
+    });
+
     // The editor view sees the mesh; the scene camera deliberately looks away.
     h.authored.viewport.editor_camera = {0, 0, 6, {}};
+    ++h.authored.viewport.sequence;
     const auto camera = take(project::ensure_camera(h.authored, {0, 0, 6, {40, 0, 0}}), "Add a scene camera");
     ++h.authored.document.revision;
     h.send_snapshot();

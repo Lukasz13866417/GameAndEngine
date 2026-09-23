@@ -474,9 +474,13 @@ private:
         if (play != playing_ || restart) discard_transfers();
         if (play && (!playing_ || restart)) {
             navigation_.cancel();
-            play_camera_override_ = false;
             diagnostic_ = false;
             play_time_ = preview_time_;
+            // Capture the starting view: the scene camera, or the editor's view
+            // held for a scene without one, never its later navigation.
+            const auto scene_view = project::evaluate_camera(*state_, static_cast<vng::f32>(play_time_));
+            play_camera_ = scene_view.value_or(state_->viewport.editor_camera);
+            play_camera_override_ = !scene_view;
             simulation_clock_ = Clock::now();
             window_.cancel_close();
             window_.show();
@@ -701,16 +705,25 @@ private:
         announce(false);
     }
 
-    // Independent Play looks through the scene camera; a scene without one
-    // keeps the editor's view rather than inventing a pose.
+    // Independent Play looks through the scene camera. A scene without one
+    // plays from the view Play last showed (the editor's view when it started).
     project::CameraPose scene_camera(vng::f32 time) const {
-        return project::evaluate_camera(*state_, time).value_or(state_->viewport.editor_camera);
+        return project::evaluate_camera(*state_, time).value_or(play_camera_.value_or(state_->viewport.editor_camera));
+    }
+    std::optional<project::CameraPose> camera_during_play() const {
+        if (!playing_ || !state_) return {};
+        return project::evaluate_camera(*state_, static_cast<vng::f32>(play_time_));
     }
     // An authored change to the scene camera hands the Play view back to it,
-    // discarding any navigation the viewer did inside Play.
+    // discarding any navigation the viewer did inside Play. Without a scene
+    // camera, Play holds its current view instead of the editor's live one.
     void follow_scene_camera() {
         navigation_.cancel();
-        play_camera_override_ = false;
+        play_camera_override_ = !camera_during_play() && play_camera_.has_value();
+    }
+    // Call after any authored change, with camera_during_play() from before it.
+    void scene_camera_changed(const std::optional<project::CameraPose>& before) {
+        if (playing_ && camera_during_play() != before) follow_scene_camera();
     }
 
     void accept_selection(const project::SelectionEdit& edit) {
@@ -737,10 +750,12 @@ private:
             send("resync\nPreview has no authored snapshot");
             return;
         }
+        const auto camera_before = camera_during_play();
         if (auto applied = project::apply_position_edit(*state_, edit); !applied) {
             send("resync\n" + applied.error().message);
             return;
         }
+        scene_camera_changed(camera_before);
         // This protocol owns one validated position property, including its
         // optional animation track. Geometry, other settings and playback
         // clocks are untouched; no full-scene encode or GPU update is needed.
@@ -754,9 +769,11 @@ private:
 
     void accept_scale(const project::ScaleEdit& edit) {
         if (!state_ || !runtime_) { send("resync\nPreview has no authored snapshot"); return; }
+        const auto camera_before = camera_during_play();
         if (auto applied=project::apply_scale_edit(*state_,edit); !applied) {
             send("resync\n" + applied.error().message); return;
         }
+        scene_camera_changed(camera_before);
         ++scale_edits_;
         rebuild_inspector();
         dirty_=true;
@@ -769,10 +786,12 @@ private:
             send("resync\nPreview has no authored snapshot");
             return;
         }
+        const auto camera_before = camera_during_play();
         if (auto applied = project::apply_rotation_edit(*state_, edit); !applied) {
             send("resync\n" + applied.error().message);
             return;
         }
+        scene_camera_changed(camera_before);
         // The instance transform/its own animation track are the only writes.
         // Keep mesh allocations, playback clocks and unrelated tracks intact.
         ++rotation_edits_;
@@ -833,8 +852,7 @@ private:
 
     void accept_patch(const project::DocumentPatch& patch) {
         if (!state_ || !runtime_) { send("resync\nPreview has no document"); return; }
-        const auto play_time = static_cast<vng::f32>(play_time_);
-        const auto camera_before = playing_ ? project::evaluate_camera(*state_, play_time) : std::nullopt;
+        const auto camera_before = camera_during_play();
         auto before = project::capture_patch(patch.base_revision, *state_, project::changes_of(patch));
         if (!before) { send("resync\n" + before.error().message); return; }
         // An inverse uses the same validated revision interval during rollback;
@@ -888,7 +906,7 @@ private:
             }
         }
         ++document_patches_;
-        if (playing_ && project::evaluate_camera(*state_, play_time) != camera_before) follow_scene_camera();
+        scene_camera_changed(camera_before);
         rebuild_inspector(); dirty_ = true; render_blocked_ = false;
         revision(); announce(false);
     }
@@ -901,6 +919,7 @@ private:
         (void)controls_->take_changes();
         const auto base_revision = state_->document.revision;
         const auto previous_stamp = inspector_->schema().stamp;
+        const auto camera_before = camera_during_play();
         auto applied = inspector_->dispatch(event);
         if (!applied) {
             // ProjectControls stages/validates only its affected instance and
@@ -913,6 +932,7 @@ private:
             return;
         }
         state_->document.revision = inspector_->schema().stamp.revision;
+        scene_camera_changed(camera_before);
         const auto changes = controls_->take_changes();
         auto patch = project::capture_patch(base_revision, *state_, changes);
         if (!patch) throw std::runtime_error(patch.error().message);
