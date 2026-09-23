@@ -14,8 +14,9 @@ class PlayCamera {
 public:
     // The authored camera data a Play view depends on, in scene order: each
     // camera's placement, focus, zoom and active flag, and the keys of those
-    // properties. Names, frustum visibility and scale do not move the view.
-    // Compare two to detect an authored camera change.
+    // properties. Names, frustum visibility, scale and roll (rotation z, which
+    // camera_pose ignores) do not move the view. Compare two to detect an
+    // authored camera change.
     struct Camera {
         vng::u32 id{};
         vng::Vec3 position{}, rotation{};
@@ -37,13 +38,18 @@ public:
         Cameras result;
         for (const auto& instance : state.document.instances)
             if (const auto* lens = std::get_if<CameraSettings>(&instance.settings))
-                result.cameras.push_back({instance.id, instance.transform.position, instance.transform.rotation,
+                result.cameras.push_back({instance.id, instance.transform.position, without_roll(instance.transform.rotation),
                                           lens->focus, lens->zoom, lens->active});
         for (const auto& track : state.document.timeline.tracks()) {
             const auto& property = track.target.property;
             if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<vng::u32>(track.target.object)) &&
                 (property == "position" || property == "rotation" || property == "focus" || property == "zoom" || property == "active"))
-                result.keys.push_back({track.target, track.keys});
+            {
+                auto keys = track.keys;
+                if (property == "rotation")
+                    for (auto& key : keys) key.value = without_roll(std::get<vng::Vec3>(key.value));
+                result.keys.push_back({track.target, std::move(keys)});
+            }
         }
         return result;
     }
@@ -73,6 +79,7 @@ public:
     [[nodiscard]] bool held() const noexcept { return held_; }
 
 private:
+    static vng::Vec3 without_roll(vng::Vec3 rotation) { return {rotation.x, rotation.y, 0}; }
     CameraPose view_{};
     bool held_{};
 };

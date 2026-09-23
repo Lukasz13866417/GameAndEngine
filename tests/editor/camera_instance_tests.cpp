@@ -227,8 +227,9 @@ TEST_CASE("Independent Play follows the scene camera until navigated, and any ca
     CHECK_FALSE(play.authored(before, state));
     CHECK(play.view(state, 6) == looked);
     before = PlayCamera::cameras(state);
-    find_instance(state, camera)->name = "Renamed"; // Neither changes what the camera sees.
+    find_instance(state, camera)->name = "Renamed"; // None of these changes what the camera sees.
     camera_settings(state, camera)->visible = false;
+    find_instance(state, camera)->transform.rotation.z = 25;
     CHECK_FALSE(play.authored(before, state));
     CHECK(play.held());
 
