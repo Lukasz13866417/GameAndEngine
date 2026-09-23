@@ -899,14 +899,8 @@ content::Result<State> decode(std::string_view source) {
         s.viewport.show_regions = v.get_or<bool>("show_regions", false);
         s.viewport.show_world_bounds = v.get_or<bool>("show_world_bounds", false);
         s.viewport.gizmo_only = v.get_or<bool>("gizmo_only", false);
-        // Before version 5 every scene had a document-level shot: its own
-        // `animation_camera`, or in the oldest files the single `view` camera.
         std::optional<LegacyCameraShot> legacy;
-        if (version < 5) {
-            legacy.emplace(LegacyCameraShot{s.viewport.editor_camera, {}});
-            for (const auto member : r.members())
-                if (member.name == "animation_camera") legacy->pose = read_camera(member.value);
-        }
+        if (version < 5) legacy = read_legacy_camera_shot(r, s.viewport.editor_camera);
         // Legacy scenes had a playhead but no duration; retain their current
         // view instead of placing a saved time outside the new timeline ruler.
         s.document.timeline_duration = std::max(10.F, s.viewport.time);
@@ -916,10 +910,11 @@ content::Result<State> decode(std::string_view source) {
         if (legacy)
             if (auto migrated = migrate_legacy_camera(s, *legacy); !migrated) r.fail(migrated.error().message);
         // Scene files don't persist the editor view; open looking through the
-        // scene's camera where it starts, as the old shot did.
+        // scene's active camera where it starts. Its derived pivot can lie
+        // outside the editor camera's range; then keep a valid default.
         if (!has_editor_camera) {
-            if (legacy) s.viewport.editor_camera = legacy->pose;
-            else if (const auto pose = evaluate_camera(s, 0)) s.viewport.editor_camera = *pose;
+            if (const auto pose = evaluate_camera(s, 0); pose && valid_camera_pose(*pose)) s.viewport.editor_camera = *pose;
+            else if (legacy) s.viewport.editor_camera = legacy->pose;
         }
         if (auto valid = validate_state(s); !valid)
             r.fail(valid.error().message);

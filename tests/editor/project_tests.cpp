@@ -8,6 +8,12 @@
 #include <catch2/catch_approx.hpp>
 
 #include <array>
+#include <vng/content/document.hpp>
+#include <variant>
+#include <filesystem>
+#include <iomanip>
+#include <fstream>
+#include <sstream>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -855,8 +861,11 @@ TEST_CASE("Scene serialization saves scene cameras but excludes the editor view"
 
 namespace {
 // A version 4 file: the camera was a document-level shot with its own tracks.
-std::string legacy_scene(const project::State& value, std::string_view shot, std::string_view camera_tracks = {}) {
-    auto text = replace_value(encoded(value), "editor_project", "4");
+std::string legacy_scene(const project::State& value, std::string_view shot, std::string_view camera_tracks = {},
+                         bool with_view = true) {
+    auto scene = with_view ? project::encode(value) : project::encode_scene(value);
+    REQUIRE(scene);
+    auto text = replace_value(std::move(*scene), "editor_project", "4");
     if (!shot.empty()) text.insert(text.find("world_bounds = "), "animation_camera = { " + std::string(shot) + " };\n");
     const auto tracks = text.find("    tracks = [\n");
     REQUIRE(tracks != std::string::npos);
@@ -875,6 +884,311 @@ std::vector<const project::SceneInstance*> cameras(const project::State& value) 
     return result;
 }
 } // namespace
+
+namespace {
+// The old camera's exact semantics, read straight from a pre-version-5 file:
+// each component samples its own track and falls back to the base shot where
+// it is untracked or before its first key.
+struct LegacyReference {
+    project::CameraPose base;
+    vng::timeline::Timeline tracks;
+    project::CameraPose at(f32 time) const {
+        auto pose = base;
+        const auto take = [&](auto& field, std::string_view property) {
+            if (const auto value = tracks.sample({vng::u64{1} << 32, std::string(property)}, time))
+                field = std::get<std::remove_cvref_t<decltype(field)>>(*value);
+        };
+        take(pose.yaw, "yaw"); take(pose.pitch, "pitch"); take(pose.distance, "distance");
+        take(pose.target, "target"); take(pose.zoom, "zoom");
+        return pose;
+    }
+    std::vector<f32> key_times() const {
+        std::vector<f32> times;
+        for (const auto& track : tracks.tracks()) for (const auto& key : track.keys) times.push_back(key.time);
+        std::ranges::sort(times);
+        return times;
+    }
+};
+LegacyReference legacy_reference(std::string_view text) {
+    auto document = vng::content::parse_document(text, {.limits = {.max_source_bytes = 256U << 20U,
+        .max_decoded_bytes = 512U << 20U, .max_string_bytes = 256U << 20U}});
+    REQUIRE(document);
+    auto reference = document->read([](vng::content::Reader& r) {
+        LegacyReference result;
+        for (const auto member : r.members()) {
+            if (member.name == "view" && member.value.get_or<f32>("distance", 0) > 0)
+                result.base = {member.value.get<f32>("yaw"), member.value.get<f32>("pitch"), member.value.get<f32>("distance"),
+                               member.value.get_or<Vec3>("camera_target", {}), member.value.get_or<f32>("zoom", 1)};
+        }
+        for (const auto member : r.members())
+            if (member.name == "animation_camera")
+                result.base = {member.value.get<f32>("yaw"), member.value.get<f32>("pitch"), member.value.get<f32>("distance"),
+                               member.value.get_or<Vec3>("camera_target", {}), member.value.get_or<f32>("zoom", 1)};
+        std::vector<vng::timeline::Track> tracks;
+        for (const auto track : r.child("timeline").child("tracks").elements()) {
+            if (track.get<u64>("object") != (vng::u64{1} << 32)) continue;
+            const auto property = track.get<std::string>("property");
+            vng::timeline::Track decoded{{vng::u64{1} << 32, property}, {}, {}, {}};
+            for (const auto key : track.child("keys").elements()) {
+                const auto incoming = key.get<std::string>("incoming") == "hold" ? vng::timeline::Interpolation::hold
+                                                                                  : vng::timeline::Interpolation::linear;
+                if (property == "target") decoded.keys.push_back({key.get<f32>("time"), key.get<Vec3>("value"), incoming});
+                else decoded.keys.push_back({key.get<f32>("time"), key.get<f32>("value"), incoming});
+            }
+            tracks.push_back(std::move(decoded));
+        }
+        REQUIRE(result.tracks.replace(std::move(tracks)));
+        return result;
+    });
+    REQUIRE(reference);
+    return std::move(*reference);
+}
+struct Deviation { f32 eye{}, target{}, yaw{}, pitch{}, distance{}, zoom{}; };
+// Worst differences between the migrated camera and the old one over [start, end].
+Deviation deviation(const project::State& loaded, const LegacyReference& reference, f32 start, f32 end, f32 step) {
+    Deviation worst;
+    const auto* camera = project::active_camera(loaded, start);
+    REQUIRE(camera);
+    for (f32 time = start; time <= end + step * .5F; time += step) {
+        const auto expected = reference.at(time);
+        auto probe = *camera;
+        project::place_camera(probe, expected);
+        const auto eye = project::evaluate_transform(loaded, *camera, time).position;
+        const auto actual = *project::evaluate_camera(loaded, time);
+        const auto length = [](Vec3 v) { return std::hypot(v.x, v.y, v.z); };
+        worst.eye = std::max(worst.eye, length({eye.x - probe.transform.position.x, eye.y - probe.transform.position.y,
+                                                eye.z - probe.transform.position.z}) / expected.distance);
+        worst.target = std::max(worst.target, length({actual.target.x - expected.target.x, actual.target.y - expected.target.y,
+                                                      actual.target.z - expected.target.z}) / expected.distance);
+        worst.yaw = std::max(worst.yaw, std::abs(std::remainder(actual.yaw - expected.yaw, 360.F)));
+        worst.pitch = std::max(worst.pitch, std::abs(actual.pitch - expected.pitch));
+        worst.distance = std::max(worst.distance, std::abs(actual.distance - expected.distance) / expected.distance);
+        worst.zoom = std::max(worst.zoom, std::abs(actual.zoom - expected.zoom));
+    }
+    return worst;
+}
+std::string number(f32 value) {
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::setprecision(9) << value;
+    return out.str();
+}
+// One legacy track in file syntax, with f32 or Vec3 values.
+struct LegacyKey { f32 time; std::variant<f32, Vec3> value; bool hold{}; };
+std::string legacy_track(std::string_view property, const std::vector<LegacyKey>& keys) {
+    std::string text = "        { object = 4294967296; property = \"" + std::string(property) + "\"; keys = [\n";
+    for (const auto& key : keys) {
+        text += "            { time = " + number(key.time) + "; value = ";
+        if (const auto* scalar = std::get_if<f32>(&key.value)) text += number(*scalar);
+        else {
+            const auto& v = std::get<Vec3>(key.value);
+            text += "[" + number(v.x) + "," + number(v.y) + "," + number(v.z) + "]";
+        }
+        text += std::string("; incoming = \"") + (key.hold ? "hold" : "linear") + "\"; },\n";
+    }
+    return text + "        ]; },\n";
+}
+} // namespace
+
+TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interpolation",
+          "[editor][project][camera][legacy]") {
+    auto value = state();
+    value.document.timeline_duration = 60;
+    const std::string shot = "yaw = 0; pitch = 0; distance = 10; zoom = 1; camera_target = [0,0,0];";
+    const auto load = [&](const std::string& tracks) {
+        const auto text = legacy_scene(value, shot, tracks);
+        auto loaded = project::decode(text);
+        INFO((loaded ? "legacy scene loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        return std::pair{std::move(*loaded), legacy_reference(text)};
+    };
+    const auto keys_of = [](const project::State& loaded, std::string_view property) {
+        const auto* camera = project::active_camera(loaded, 0);
+        const auto* track = loaded.document.timeline.find({camera->id, std::string(property)});
+        return track ? track->keys.size() : 0;
+    };
+
+    SECTION("A quarter orbit keeps its arc and keeps looking at its target") {
+        const auto [loaded, reference] = load(legacy_track("yaw", {{0, 0.F, true}, {4, 90.F}}));
+        const auto* camera = project::active_camera(loaded, 0);
+        const auto eye = project::evaluate_transform(loaded, *camera, 2).position;
+        CHECK(eye.x == Catch::Approx(7.0710678).margin(.006));
+        CHECK(eye.z == Catch::Approx(7.0710678).margin(.006));
+        const auto worst = deviation(loaded, reference, 0, 4, .01F);
+        CHECK(worst.eye < 6e-4F); // Relative to the orbit distance: under a pixel.
+        CHECK(worst.target < 6e-4F);
+        CHECK(worst.yaw < 1e-3F);
+    }
+    SECTION("A held yaw cut stays a cut while zoom still ramps") {
+        const auto [loaded, reference] = load(legacy_track("yaw", {{0, 0.F}, {4, 90.F, true}}) +
+                                              legacy_track("zoom", {{0, 1.F}, {4, 3.F}}));
+        CHECK(project::evaluate_camera(loaded, 3.99F)->yaw == Catch::Approx(0).margin(1e-3));
+        CHECK(project::evaluate_camera(loaded, 4)->yaw == Catch::Approx(90));
+        CHECK(project::evaluate_camera(loaded, 2)->zoom == Catch::Approx(2));
+        const auto worst = deviation(loaded, reference, 0, 6, .01F);
+        CHECK(worst.yaw < 1e-3F);
+        CHECK(worst.zoom < 1e-5F);
+        CHECK(worst.eye < 1e-5F);
+    }
+    SECTION("A held zoom key neither freezes rotation nor takes other times") {
+        const auto [loaded, reference] = load(legacy_track("yaw", {{0, 0.F}, {4, 90.F}}) +
+                                              legacy_track("zoom", {{0, 1.F}, {2.5F, 2.F, true}, {4, 3.F}}));
+        CHECK(project::evaluate_camera(loaded, 1)->yaw == Catch::Approx(22.5));
+        CHECK(project::evaluate_camera(loaded, 3)->yaw == Catch::Approx(67.5));
+        CHECK(project::evaluate_camera(loaded, 2.49F)->zoom == Catch::Approx(1));
+        CHECK(project::evaluate_camera(loaded, 2.5F)->zoom == Catch::Approx(2));
+        CHECK(keys_of(loaded, "zoom") == 3);
+        CHECK(keys_of(loaded, "rotation") == 2); // Only yaw's own times.
+        const auto worst = deviation(loaded, reference, 0, 6, .01F);
+        CHECK(worst.yaw < 1e-3F);
+        CHECK(worst.zoom < 1e-5F);
+    }
+    SECTION("A cut in yaw while pitch still moves keeps both") {
+        const auto [loaded, reference] = load(legacy_track("yaw", {{0, 0.F}, {4, 90.F, true}}) +
+                                              legacy_track("pitch", {{0, 0.F}, {4, 40.F}}));
+        CHECK(project::evaluate_camera(loaded, 2)->yaw == Catch::Approx(0).margin(1e-3));
+        CHECK(project::evaluate_camera(loaded, 2)->pitch == Catch::Approx(20));
+        CHECK(project::evaluate_camera(loaded, 3.9F)->pitch == Catch::Approx(39));
+        CHECK(project::evaluate_camera(loaded, 4)->yaw == Catch::Approx(90));
+        CHECK(project::evaluate_camera(loaded, 4)->pitch == Catch::Approx(40));
+        // Only the millisecond before the cut differs: the moving component waits there.
+        const auto before = deviation(loaded, reference, 0, 3.998F, .002F);
+        CHECK(before.yaw < 1e-3F);
+        CHECK(before.pitch < 1e-3F);
+        CHECK(deviation(loaded, reference, 4, 8, .01F).pitch < 1e-3F);
+    }
+    SECTION("A component's first key is a cut from the base shot") {
+        const auto [loaded, reference] = load(legacy_track("yaw", {{0, 10.F}, {4, 50.F}}) +
+                                              legacy_track("pitch", {{2, 30.F}, {6, 10.F}}));
+        CHECK(project::evaluate_camera(loaded, 1.99F)->pitch == Catch::Approx(0).margin(1e-3));
+        CHECK(project::evaluate_camera(loaded, 2)->pitch == Catch::Approx(30));
+        // Yaw keeps moving into pitch's cut, so it waits only in the millisecond before it.
+        for (const auto worst : {deviation(loaded, reference, 0, 1.998F, .002F), deviation(loaded, reference, 2, 8, .01F)}) {
+            CHECK(worst.eye < 6e-4F);
+            CHECK(worst.pitch < 1e-3F);
+            CHECK(worst.yaw < 1e-3F);
+        }
+    }
+    SECTION("Full-size tracks at staggered times still load within the timeline limits") {
+        std::vector<LegacyKey> yaw, pitch;
+        for (int i = 0; i < 4096; ++i) {
+            const auto t = static_cast<f32>(i) * .01F;
+            yaw.push_back({t, 30 * std::sin(t)});
+            pitch.push_back({t + .005F, 10 * std::cos(t + .005F)});
+        }
+        value.document.timeline_duration = 50;
+        const auto [loaded, reference] = load(legacy_track("yaw", yaw) + legacy_track("pitch", pitch));
+        std::size_t total{};
+        for (const auto& track : loaded.document.timeline.tracks()) {
+            CHECK(track.keys.size() <= vng::timeline::max_keys_per_track);
+            total += track.keys.size();
+        }
+        CHECK(total <= vng::timeline::max_total_keys);
+        const auto worst = deviation(loaded, reference, 0, 40.9F, .013F);
+        CHECK(worst.yaw < .05F);
+        CHECK(worst.pitch < .05F);
+    }
+}
+
+TEST_CASE("Legacy files load the way they were saved, or are rejected like before",
+          "[editor][project][camera][legacy]") {
+    auto value = state();
+    const std::string shot = "yaw = 72; pitch = -32; distance = 14; zoom = 2; camera_target = [1,-2,3];";
+    SECTION("Scene files without a saved view open through the migrated camera") {
+        auto loaded = project::decode(legacy_scene(value, shot, {}, false));
+        REQUIRE(loaded);
+        REQUIRE(project::has_camera(*loaded));
+        CHECK(near(loaded->viewport.editor_camera, {72, -32, 14, {1, -2, 3}, 2}));
+        CHECK(loaded->viewport.editor_camera == *project::evaluate_camera(*loaded, 0));
+    }
+    SECTION("Scene files that already had a camera open through it, not the unused shot") {
+        auto with_camera = value;
+        REQUIRE(project::ensure_camera(with_camera, {10, 5, 8, {1, 1, 1}}));
+        auto loaded = project::decode(legacy_scene(with_camera, shot, {}, false));
+        REQUIRE(loaded);
+        CHECK(near(loaded->viewport.editor_camera, {10, 5, 8, {1, 1, 1}}));
+    }
+    SECTION("Invalid shots and keys are still rejected") {
+        CHECK_FALSE(project::decode(legacy_scene(value, "yaw = 181; pitch = 0; distance = 8;")));
+        CHECK_FALSE(project::decode(legacy_scene(value, "yaw = 0; pitch = 89.6; distance = 8;")));
+        CHECK_FALSE(project::decode(legacy_scene(value, "yaw = 0; pitch = 0; distance = 0;")));
+        CHECK_FALSE(project::decode(legacy_scene(value, shot, legacy_track("pitch", {{0, 0.F}, {2, 89.6F}}))));
+        CHECK_FALSE(project::decode(legacy_scene(value, shot, legacy_track("distance", {{0, 8.F}, {2, 0.F}}))));
+        CHECK(project::decode(legacy_scene(value, shot, legacy_track("pitch", {{0, 0.F}, {2, 89.F}}))));
+    }
+    SECTION("An eye beyond the coordinate range is clamped instead of failing the load") {
+        auto loaded = project::decode(legacy_scene(value, "yaw = 90; pitch = 0; distance = 10; camera_target = [999999,0,0];"));
+        INFO((loaded ? "loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        const auto* camera = project::active_camera(*loaded, 0);
+        REQUIRE(camera);
+        CHECK(camera->transform.position.x == project::scene_coordinate_limit);
+    }
+    SECTION("A scene with no identity left for a camera still loads, without one") {
+        auto text = replace_value(legacy_scene(value, shot), "next_instance_id", "4294967295");
+        auto loaded = project::decode(text);
+        INFO((loaded ? "loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        CHECK_FALSE(project::has_camera(*loaded));
+    }
+}
+
+TEST_CASE("A camera whose pivot lies beyond the editor camera's range still reopens",
+          "[editor][project][camera]") {
+    auto value = state();
+    const auto camera = project::ensure_camera(value, {0, 0, 8, {}});
+    REQUIRE(camera);
+    auto* instance = project::find_instance(value, *camera);
+    instance->transform = {{-600000, 0, 0}, {0, 90, 0}, 1};
+    std::get<project::CameraSettings>(instance->settings).focus = 600000;
+    const auto saved = project::encode_scene(value);
+    REQUIRE(saved);
+    auto loaded = project::decode(*saved);
+    INFO((loaded ? "reopened" : loaded.error().message));
+    REQUIRE(loaded);
+    CHECK(project::valid_camera_pose(loaded->viewport.editor_camera));
+    CHECK(*project::find_instance(*loaded, *camera) == *instance);
+}
+
+TEST_CASE("Every shipped editor scene loads with a scene camera", "[editor][project][camera][legacy]") {
+    const auto assets = std::filesystem::path(__FILE__).parent_path() / "../../examples/assets";
+    unsigned scenes{};
+    for (const auto& entry : std::filesystem::directory_iterator(assets)) {
+        if (entry.path().extension() != ".vscene") continue;
+        std::ifstream file(entry.path(), std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(file), {}};
+        if (text.find("editor_project = ") == std::string::npos) continue; // Spaceflight-demo scenes.
+        INFO(entry.path().filename().string());
+        auto loaded = project::decode(text);
+        INFO((loaded ? "loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        CHECK(project::has_camera(*loaded));
+        CHECK(project::evaluate_camera(*loaded, 0));
+        ++scenes;
+    }
+    CHECK(scenes >= 6);
+}
+
+TEST_CASE("The shipped fleet reveal keeps its authored camera path within a pixel",
+          "[editor][project][camera][legacy]") {
+    const auto path = std::filesystem::path(__FILE__).parent_path() / "../../examples/assets/fleet_reveal.vscene";
+    std::ifstream file(path, std::ios::binary);
+    REQUIRE(file);
+    const std::string text{std::istreambuf_iterator<char>(file), {}};
+    auto loaded = project::decode(text);
+    INFO((loaded ? "fleet reveal loaded" : loaded.error().message));
+    REQUIRE(loaded);
+    const auto reference = legacy_reference(text);
+    const auto times = reference.key_times();
+    REQUIRE_FALSE(times.empty());
+    const auto worst = deviation(*loaded, reference, 0, times.back(), .01F);
+    CHECK(worst.eye < 6e-4F);
+    CHECK(worst.target < 6e-4F);
+    CHECK(worst.yaw < 1e-3F);
+    CHECK(worst.pitch < 1e-3F);
+    CHECK(worst.distance < 1e-5F);
+    CHECK(worst.zoom < 1e-5F);
+}
 
 TEST_CASE("Legacy scene shots load as an active camera instance with the same pose and keys",
           "[editor][project][camera][legacy]") {
