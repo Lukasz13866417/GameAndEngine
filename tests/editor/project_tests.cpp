@@ -1148,6 +1148,32 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         std::cout << "12288 legacy keys migrated in " << seconds << " s\n";
         CHECK(seconds < 1.5);
     }
+    SECTION("A tracking shot through the origin is refined where its eye passes it") {
+        const std::string tracking = "yaw = 0; pitch = 60; distance = 1; zoom = 10; camera_target = [0,0,0];";
+        const auto text = legacy_scene(value, tracking,
+            legacy_track("target", {{0, Vec3{-1000, 0, 0}}, {10, Vec3{1000, 0, 0}}}) + legacy_track("yaw", {{0, 0.F}, {10, 6.F}}));
+        auto loaded = project::decode(text);
+        REQUIRE(loaded);
+        CHECK(deviation(*loaded, legacy_reference(text), 4, 6, .005F).seen < 6e-4F);
+        // A sweep from far on one side to far on the other, through the origin.
+        const std::string sweep = "yaw = 0; pitch = 0; distance = 1; zoom = 1; camera_target = [0,0,0];";
+        const auto far_text = legacy_scene(value, sweep,
+            legacy_track("yaw", {{0, -10.F}, {10, 10.F}}) + legacy_track("distance", {{0, 1.F}, {10, 2.F}}) +
+            legacy_track("target", {{0, Vec3{-100000, 0, 0}}, {10, Vec3{100000, 0, 0}}}));
+        auto swept = project::decode(far_text);
+        REQUIRE(swept);
+        const auto eye = project::evaluate_transform(*swept, *project::active_camera(*swept, 5), 5).position;
+        CHECK(std::hypot(eye.x, eye.y, eye.z - 1.5F) < 1e-3F);
+        CHECK(deviation(*swept, legacy_reference(far_text), 4.99F, 5.01F, .0005F).seen < 6e-4F);
+    }
+    SECTION("An orbit far from the origin keeps half a pixel where floats allow it") {
+        const std::string far = "yaw = 0; pitch = 30; distance = 10; zoom = 2; camera_target = [10000,0,0];";
+        const auto text = legacy_scene(value, far, legacy_track("yaw", {{0, 0.F}, {10, 90.F}}));
+        auto loaded = project::decode(text);
+        REQUIRE(loaded);
+        // Half a pixel is 2.6 float steps of the eye here; the float reference itself jitters by one.
+        CHECK(deviation(*loaded, legacy_reference(text), 0, 10, .005F).seen < 8e-4F);
+    }
     SECTION("A legacy shot at the total key limit loads quickly") {
         std::vector<LegacyKey> pitch, distance, target, zoom;
         for (int i = 0; i < 4096; ++i) {

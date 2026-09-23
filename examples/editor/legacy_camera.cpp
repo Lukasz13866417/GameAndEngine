@@ -4,6 +4,8 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <numbers>
+#include <queue>
 #include <set>
 
 namespace editor_example {
@@ -26,6 +28,20 @@ Vec3 lerp(Vec3 from, Vec3 to, double ratio) {
 }
 f32 distance(Vec3 a, Vec3 b) {
     return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+// A position evaluated in double, so refinement measures the chord against
+// the ideal path rather than against float rounding noise.
+struct Precise { double x{}, y{}, z{}; };
+Vec3 rounded(Precise p) { return {static_cast<f32>(p.x), static_cast<f32>(p.y), static_cast<f32>(p.z)}; }
+double gap(Precise a, Vec3 from, Vec3 to, double ratio) {
+    const auto along = [ratio](f32 a0, f32 b0) { return a0 + (static_cast<double>(b0) - a0) * ratio; };
+    return std::hypot(a.x - along(from.x, to.x), a.y - along(from.y, to.y), a.z - along(from.z, to.z));
+}
+// Two units in the last place of the largest coordinate: stored keys round
+// to float, so no split can bring a chord closer than that.
+double float_resolution(Precise p) {
+    const auto magnitude = static_cast<f32>(std::max({std::abs(p.x), std::abs(p.y), std::abs(p.z), 1e-30}));
+    return 2.0 * (std::nextafter(magnitude, std::numeric_limits<f32>::infinity()) - magnitude);
 }
 
 // One component of the old shot with its own keys and interpolation, sampled
@@ -87,43 +103,41 @@ struct Shot {
 // its source components has a key. Between breakpoints it is continuous; at a
 // breakpoint it may cut. `moves(a, b)` says whether any source component
 // changes between two neighbouring breakpoints (the derived value can return
-// to where it started, as a full orbit does). `tolerance(x, y)` is set for
-// properties that curve between breakpoints (the eye on an orbit): the error
-// allowed anywhere in [x, y). Others are linear there.
+// to where it started, as a full orbit does). Properties that curve between
+// breakpoints (the eye on an orbit) also give their ideal value in double
+// (`exact`) and the error allowed anywhere in [x, y) (`tolerance`); others are
+// linear there.
 struct Signal {
     std::vector<f32> breakpoints;
     std::function<Vec3(f32)> at, before;
     std::function<bool(f32, f32)> moves;
     std::function<f32(f32, f32)> tolerance;
+    std::function<Precise(f32)> exact;
 };
 
-// Refinement is bounded by the key room each attempt is given; this depth only
-// stops it where time itself cannot be split further.
-constexpr int max_depth = 24;
-
-// Adds keys strictly inside (x, y) until straight segments stay within
-// tolerance, giving up once `out` holds more than `limit` keys.
-void refine(const Signal& signal, f32 scale, f32 x, Vec3 vx, f32 y, Vec3 vy, int depth, std::size_t limit,
-            std::vector<Keyframe>& out) {
+// A stretch between two keys where the signal is continuous, with how far
+// its straight line strays from the ideal path relative to what is allowed
+// there (above 1: it needs another key). Zero when time cannot be split.
+struct Piece {
+    f32 x{}, y{};
+    Vec3 vx{}, vy{};
+    double excess{};
+    friend bool operator<(const Piece& a, const Piece& b) { return a.excess < b.excess; }
+};
+Piece piece(const Signal& signal, f32 x, Vec3 vx, f32 y, Vec3 vy) {
+    Piece result{x, y, vx, vy, 0};
     const f32 mid = x + (y - x) * .5F;
-    if (depth >= max_depth || out.size() > limit || !(x < mid && mid < y)) return;
-    f32 error{};
+    if (!(x < mid && mid < y)) return result;
+    const double allowed = signal.tolerance(x, y);
     for (const auto fraction : {.25F, .5F, .75F}) {
         const f32 t = x + (y - x) * fraction;
         if (!(x < t && t < y)) continue;
         const double ratio = (static_cast<double>(t) - x) / (static_cast<double>(y) - x);
-        error = std::max(error, distance(signal.at(t), lerp(vx, vy, ratio)));
+        const auto ideal = signal.exact(t);
+        // Never ask for more than float resolution where the error is measured.
+        result.excess = std::max(result.excess, gap(ideal, vx, vy, ratio) / std::max(allowed, float_resolution(ideal)));
     }
-    // Never ask for more than float resolution: below it the chord error is
-    // rounding noise that no further split reduces.
-    const auto magnitude = std::max({1.F, std::abs(vx.x), std::abs(vx.y), std::abs(vx.z),
-                                     std::abs(vy.x), std::abs(vy.y), std::abs(vy.z)});
-    const auto resolution = 8 * std::numeric_limits<f32>::epsilon() * magnitude;
-    if (error <= std::max(signal.tolerance(x, y) * scale, resolution)) return;
-    const auto vm = signal.at(mid);
-    refine(signal, scale, x, vx, mid, vm, depth + 1, limit, out);
-    out.push_back({mid, vm, Interpolation::linear});
-    refine(signal, scale, mid, vm, y, vy, depth + 1, limit, out);
+    return result;
 }
 
 // The latest representable time strictly between `after` and `cut`, close to the cut.
@@ -134,34 +148,49 @@ std::optional<f32> just_before(f32 cut, f32 after) {
     return time;
 }
 
-// Keys that reproduce the signal: exact at every breakpoint and cut, and within
-// tolerance*scale in between (scale 0 disables refinement). A cut in one
-// component while another still moves is kept as a key just before the cut
-// followed by a held key at it, so neither the cut nor the motion is lost.
-// Returns nothing when refinement at this scale would exceed `limit` keys.
-std::optional<std::vector<Keyframe>> keys_for(const Signal& signal, f32 scale, std::size_t limit) {
+// Keys that reproduce the signal: exact at every breakpoint and cut. A cut in
+// one component while another still moves is kept as a key just before the
+// cut followed by a held key at it, so neither the cut nor the motion is lost.
+// For a curving signal, keys are then added one at a time where the straight
+// line strays furthest beyond its tolerance, until every piece fits or `room`
+// keys are used; the budget goes where it helps most.
+std::vector<Keyframe> keys_for(const Signal& signal, std::size_t room) {
     std::vector<Keyframe> keys;
     const auto& times = signal.breakpoints;
     if (times.empty()) return keys;
-    const bool refinable = signal.tolerance && scale > 0;
+    const bool curves = signal.tolerance && signal.exact;
+    std::priority_queue<Piece> pieces;
+    const auto consider = [&](f32 x, Vec3 vx, f32 y, Vec3 vy) {
+        if (!curves) return;
+        if (auto candidate = piece(signal, x, vx, y, vy); candidate.excess > 1) pieces.push(candidate);
+    };
     keys.push_back({times.front(), signal.at(times.front()), Interpolation::hold});
     for (std::size_t i = 1; i < times.size(); ++i) {
         const f32 a = times[i - 1], b = times[i];
         const auto from = signal.at(a), left = signal.before(b), to = signal.at(b);
         if (left == to) {
-            if (refinable) refine(signal, scale, a, from, b, to, 0, limit, keys);
+            consider(a, from, b, to);
             keys.push_back({b, to, Interpolation::linear});
         } else if (const auto freeze = just_before(b, a); !signal.moves(a, b) || !freeze) {
             // Nothing moved before the cut, or there is no room to keep the motion.
             keys.push_back({b, to, Interpolation::hold});
         } else {
             const auto held = signal.at(*freeze);
-            if (refinable) refine(signal, scale, a, from, *freeze, held, 0, limit, keys);
+            consider(a, from, *freeze, held);
             keys.push_back({*freeze, held, Interpolation::linear});
             keys.push_back({b, to, Interpolation::hold});
         }
-        if (refinable && keys.size() > limit) return {};
     }
+    while (!pieces.empty() && keys.size() < room) {
+        const auto worst = pieces.top();
+        pieces.pop();
+        const f32 mid = worst.x + (worst.y - worst.x) * .5F;
+        const auto value = signal.at(mid);
+        keys.push_back({mid, value, Interpolation::linear});
+        consider(worst.x, worst.vx, mid, value);
+        consider(mid, value, worst.y, worst.vy);
+    }
+    std::ranges::sort(keys, {}, &Keyframe::time);
     return keys;
 }
 
@@ -292,23 +321,35 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
         const auto from = legacy.at(a), to = legacy.before(b);
         return from.yaw != to.yaw || from.pitch != to.pitch;
     };
+    // The eye of a pose, as place_camera computes it but in double, clamped
+    // into the scene's coordinate range.
+    const auto eye = [](const CameraPose& pose) {
+        constexpr double radians = std::numbers::pi / 180;
+        const double yaw = pose.yaw * radians, pitch = pose.pitch * radians;
+        const auto clamp = [](double v) { return std::clamp<double>(v, -scene_coordinate_limit, scene_coordinate_limit); };
+        return Precise{clamp(pose.target.x + std::sin(yaw) * std::cos(pitch) * pose.distance),
+                       clamp(pose.target.y + std::sin(pitch) * pose.distance),
+                       clamp(pose.target.z + std::cos(yaw) * std::cos(pitch) * pose.distance)};
+    };
     // The eye moves on an orbit, so it is refined to within about half a pixel.
     const Signal position{
         breakpoints({times_of(legacy.yaw), times_of(legacy.pitch), times_of(legacy.distance), times_of(legacy.target)}),
-        [&](f32 t) { return clamp_position(placed(legacy.at(t)).transform.position); },
-        [&](f32 t) { return clamp_position(placed(legacy.before(t)).transform.position); },
+        [&](f32 t) { return rounded(eye(legacy.at(t))); },
+        [&](f32 t) { return rounded(eye(legacy.before(t))); },
         orbit_moves,
         // Half a pixel at the tightest zoom and nearest distance in the piece:
         // a zoom key may fall inside it, since zoom does not move the eye.
         [&](f32 x, f32 y) {
             return 5e-4F * legacy.distance.range(x, y).first / std::max(1.F, legacy.zoom.range(x, y).second);
-        }};
+        },
+        [&](f32 t) { return eye(legacy.at(t)); }};
     // Rotation is {-pitch, yaw, 0}: linear wherever yaw and pitch are.
     const Signal rotation{
         breakpoints({times_of(legacy.yaw), times_of(legacy.pitch)}),
         [&](f32 t) { return placed(legacy.at(t)).transform.rotation; },
         [&](f32 t) { return placed(legacy.before(t)).transform.rotation; },
         turn_moves,
+        {},
         {}};
     // Focus and zoom are the old distance and zoom, key for key.
     const auto copy = [&](std::string_view property) {
@@ -321,16 +362,10 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     std::size_t other_keys{};
     for (const auto& existing : state.document.timeline.tracks()) other_keys += existing.keys.size();
     const auto budget = timeline::max_total_keys - std::min(timeline::max_total_keys, other_keys + focus_keys.size() + zoom_keys.size());
-    auto rotation_keys = *keys_for(rotation, 0, 0);
-    // Refine the eye as finely as the limits allow; each attempt stops early,
-    // and none is tried when even the unrefined keys do not fit.
+    auto rotation_keys = keys_for(rotation, 0);
+    // Refine the eye with whatever key room the limits leave.
     const auto room = std::min(timeline::max_keys_per_track, budget - std::min(budget, rotation_keys.size()));
-    auto position_keys = *keys_for(position, 0, 0);
-    if (position_keys.size() <= room) {
-        std::optional<std::vector<Keyframe>> refined;
-        for (f32 scale = 1; !refined && scale <= 1 << 20; scale *= 4) refined = keys_for(position, scale, room);
-        if (refined) position_keys = std::move(*refined);
-    }
+    auto position_keys = keys_for(position, room);
     if (position_keys.size() > room || rotation_keys.size() > timeline::max_keys_per_track) {
         auto rotation_target = std::min(rotation_keys.size(), timeline::max_keys_per_track);
         auto position_target = std::min(position_keys.size(), timeline::max_keys_per_track);
