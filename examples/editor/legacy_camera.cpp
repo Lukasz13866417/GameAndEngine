@@ -45,13 +45,16 @@ public:
     // between its keys, so only the ends and the keys inside matter.
     [[nodiscard]] std::pair<T, T> range(f32 x, f32 y) const requires std::same_as<T, f32> {
         T low = std::min(at(x), before(y)), high = std::max(at(x), before(y));
-        if (track_)
-            for (const auto& key : track_->keys)
-                if (x < key.time && key.time < y)
-                    for (const auto value : {before(key.time), at(key.time)}) {
-                        low = std::min(low, value);
-                        high = std::max(high, value);
-                    }
+        if (track_) {
+            const auto& keys = track_->keys;
+            const auto first = std::ranges::upper_bound(keys, x, {}, &Keyframe::time);
+            const auto last = std::ranges::lower_bound(keys, y, {}, &Keyframe::time);
+            for (auto key = first; key < last; ++key)
+                for (const auto value : {before(key->time), at(key->time)}) {
+                    low = std::min(low, value);
+                    high = std::max(high, value);
+                }
+        }
         return {low, high};
     }
 private:
@@ -111,7 +114,12 @@ void refine(const Signal& signal, f32 scale, f32 x, Vec3 vx, f32 y, Vec3 vy, int
         const double ratio = (static_cast<double>(t) - x) / (static_cast<double>(y) - x);
         error = std::max(error, distance(signal.at(t), lerp(vx, vy, ratio)));
     }
-    if (error <= signal.tolerance(x, y) * scale) return;
+    // Never ask for more than float resolution: below it the chord error is
+    // rounding noise that no further split reduces.
+    const auto magnitude = std::max({1.F, std::abs(vx.x), std::abs(vx.y), std::abs(vx.z),
+                                     std::abs(vy.x), std::abs(vy.y), std::abs(vy.z)});
+    const auto resolution = 8 * std::numeric_limits<f32>::epsilon() * magnitude;
+    if (error <= std::max(signal.tolerance(x, y) * scale, resolution)) return;
     const auto vm = signal.at(mid);
     refine(signal, scale, x, vx, mid, vm, depth + 1, limit, out);
     out.push_back({mid, vm, Interpolation::linear});
@@ -261,7 +269,8 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
                 return invalid("Invalid legacy animation camera key");
 
     // The placement a pose gives this camera, using the same conversion as Save this camera.
-    auto placed = [probe = *camera](const CameraPose& pose) mutable {
+    auto placed = [probe = SceneInstance{camera->id, camera->blueprint, {}, camera->settings, camera->transform}](
+                      const CameraPose& pose) mutable {
         place_camera(probe, pose);
         return probe;
     };
@@ -313,11 +322,15 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     for (const auto& existing : state.document.timeline.tracks()) other_keys += existing.keys.size();
     const auto budget = timeline::max_total_keys - std::min(timeline::max_total_keys, other_keys + focus_keys.size() + zoom_keys.size());
     auto rotation_keys = *keys_for(rotation, 0, 0);
-    // Refine the eye as finely as the limits allow; each attempt stops early.
+    // Refine the eye as finely as the limits allow; each attempt stops early,
+    // and none is tried when even the unrefined keys do not fit.
     const auto room = std::min(timeline::max_keys_per_track, budget - std::min(budget, rotation_keys.size()));
-    std::optional<std::vector<Keyframe>> refined;
-    for (f32 scale = 1; !refined && scale <= 1 << 20; scale *= 4) refined = keys_for(position, scale, room);
-    auto position_keys = refined ? std::move(*refined) : *keys_for(position, 0, 0);
+    auto position_keys = *keys_for(position, 0, 0);
+    if (position_keys.size() <= room) {
+        std::optional<std::vector<Keyframe>> refined;
+        for (f32 scale = 1; !refined && scale <= 1 << 20; scale *= 4) refined = keys_for(position, scale, room);
+        if (refined) position_keys = std::move(*refined);
+    }
     if (position_keys.size() > room || rotation_keys.size() > timeline::max_keys_per_track) {
         auto rotation_target = std::min(rotation_keys.size(), timeline::max_keys_per_track);
         auto position_target = std::min(position_keys.size(), timeline::max_keys_per_track);

@@ -1112,6 +1112,65 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         CHECK(deviation(*loaded, reference, 0, 9.9F, .005F).seen < 6e-4F);
         CHECK(deviation(*loaded, reference, 9.9F, 10, .0002F).seen < 6e-4F); // Where the eye is closest.
     }
+    SECTION("A fly-in from far away does not loosen the orbit that follows it") {
+        // Far out, half a pixel at zoom 40 is below float resolution; that
+        // piece must not force a looser tolerance on the rest of the track.
+        const std::string close_up = "yaw = 0; pitch = 20; distance = 1; zoom = 40; camera_target = [0,0,0];";
+        const auto text = legacy_scene(value, close_up,
+            legacy_track("target", {{0, Vec3{100000, 37000, -21000}, true}, {5, Vec3{0, 0, 0}}}) +
+            legacy_track("yaw", {{0, 0.F, true}, {10, 90.F}}));
+        auto loaded = project::decode(text);
+        REQUIRE(loaded);
+        CHECK(deviation(*loaded, legacy_reference(text), 5.01F, 10, .005F).seen < 6e-4F);
+    }
+    SECTION("A far, zoomed close-up does not coarsen an ordinary orbit before it") {
+        const auto [loaded, reference] = load(
+            legacy_track("yaw", {{0, 0.F, true}, {4, 90.F}, {5, 0.F, true}, {9, 90.F}}) +
+            legacy_track("pitch", {{0, 0.F, true}, {5, 15.F, true}}) +
+            legacy_track("target", {{0, Vec3{0, 0, 0}, true}, {5, Vec3{1000, 20, -500}, true}}) +
+            legacy_track("distance", {{0, 10.F, true}, {5, 5.F, true}}) +
+            legacy_track("zoom", {{0, 1.F, true}, {5, 200.F, true}}));
+        CHECK(deviation(loaded, reference, 0, 4, .005F).seen < 6e-4F);
+    }
+    SECTION("Full zoom and distance tracks do not slow the migration down") {
+        std::vector<LegacyKey> yaw, zoom, distance;
+        for (int i = 0; i < 4096; ++i) {
+            const auto t = static_cast<f32>(i) * .01F;
+            yaw.push_back({t, i % 2 ? 170.F : -170.F});
+            zoom.push_back({t, i % 2 ? 1.F : 900.F});
+            distance.push_back({t, i % 2 ? 1.F : 1000.F});
+        }
+        value.document.timeline_duration = 50;
+        const auto start = std::chrono::steady_clock::now();
+        const auto [loaded, reference] = load(legacy_track("yaw", yaw) + legacy_track("zoom", zoom) +
+                                              legacy_track("distance", distance));
+        const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "12288 legacy keys migrated in " << seconds << " s\n";
+        CHECK(seconds < 1.5);
+    }
+    SECTION("A legacy shot at the total key limit loads quickly") {
+        std::vector<LegacyKey> pitch, distance, target, zoom;
+        for (int i = 0; i < 4096; ++i) {
+            const auto t = .007F * static_cast<f32>(i);
+            pitch.push_back({t, i % 2 ? 80.F : -80.F});
+            distance.push_back({t + .00175F, i % 2 ? 1.F : 50.F, i % 4 == 0});
+            target.push_back({t + .0035F, Vec3{static_cast<f32>(i % 3), 0, 0}});
+            zoom.push_back({t + .00525F, i % 2 ? 1.F : 100.F});
+        }
+        value.document.timeline_duration = 31;
+        const auto start = std::chrono::steady_clock::now();
+        const auto text = legacy_scene(value, shot, legacy_track("pitch", pitch) + legacy_track("distance", distance) +
+                                                    legacy_track("target", target) + legacy_track("zoom", zoom));
+        auto loaded = project::decode(text);
+        const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        INFO((loaded ? "loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        std::cout << "16384 legacy keys migrated in " << seconds << " s\n";
+        CHECK(seconds < 1.5);
+        std::size_t total{};
+        for (const auto& track : loaded->document.timeline.tracks()) total += track.keys.size();
+        CHECK(total <= vng::timeline::max_total_keys);
+    }
     SECTION("Unsorted old keys follow the same order the old loader gave them") {
         const auto [loaded, reference] = load(legacy_track("yaw", {{4, 90.F}, {0, 0.F}}));
         CHECK(project::evaluate_camera(loaded, 2)->yaw == Catch::Approx(45));
