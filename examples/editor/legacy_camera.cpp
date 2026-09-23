@@ -69,21 +69,27 @@ struct Shot {
 
 // A Vec3 camera property as a function of time, with breakpoints where any of
 // its source components has a key. Between breakpoints it is continuous; at a
-// breakpoint it may cut. `tolerance` is set for properties that curve between
-// breakpoints (the eye on an orbit); others are linear there.
+// breakpoint it may cut. `moves(a, b)` says whether any source component
+// changes between two neighbouring breakpoints (the derived value can return
+// to where it started, as a full orbit does). `tolerance` is set for
+// properties that curve between breakpoints (the eye on an orbit); others are
+// linear there.
 struct Signal {
     std::vector<f32> breakpoints;
     std::function<Vec3(f32)> at, before;
+    std::function<bool(f32, f32)> moves;
     std::function<f32(f32)> tolerance;
 };
 
 // Up to 2^10 pieces between two old keys; beyond that the curve is left as is.
 constexpr int max_depth = 10;
 
-// Adds keys strictly inside (x, y) until straight segments stay within tolerance.
-void refine(const Signal& signal, f32 scale, f32 x, Vec3 vx, f32 y, Vec3 vy, int depth, std::vector<Keyframe>& out) {
+// Adds keys strictly inside (x, y) until straight segments stay within
+// tolerance, giving up once `out` holds more than `limit` keys.
+void refine(const Signal& signal, f32 scale, f32 x, Vec3 vx, f32 y, Vec3 vy, int depth, std::size_t limit,
+            std::vector<Keyframe>& out) {
     const f32 mid = x + (y - x) * .5F;
-    if (depth >= max_depth || !(x < mid && mid < y)) return;
+    if (depth >= max_depth || out.size() > limit || !(x < mid && mid < y)) return;
     f32 error{};
     for (const auto fraction : {.25F, .5F, .75F}) {
         const f32 t = x + (y - x) * fraction;
@@ -93,9 +99,9 @@ void refine(const Signal& signal, f32 scale, f32 x, Vec3 vx, f32 y, Vec3 vy, int
     }
     if (error <= signal.tolerance(mid) * scale) return;
     const auto vm = signal.at(mid);
-    refine(signal, scale, x, vx, mid, vm, depth + 1, out);
+    refine(signal, scale, x, vx, mid, vm, depth + 1, limit, out);
     out.push_back({mid, vm, Interpolation::linear});
-    refine(signal, scale, mid, vm, y, vy, depth + 1, out);
+    refine(signal, scale, mid, vm, y, vy, depth + 1, limit, out);
 }
 
 // The latest representable time strictly between `after` and `cut`, close to the cut.
@@ -110,37 +116,38 @@ std::optional<f32> just_before(f32 cut, f32 after) {
 // tolerance*scale in between (scale 0 disables refinement). A cut in one
 // component while another still moves is kept as a key just before the cut
 // followed by a held key at it, so neither the cut nor the motion is lost.
-std::vector<Keyframe> keys_for(const Signal& signal, f32 scale) {
+// Returns nothing when refinement at this scale would exceed `limit` keys.
+std::optional<std::vector<Keyframe>> keys_for(const Signal& signal, f32 scale, std::size_t limit) {
     std::vector<Keyframe> keys;
     const auto& times = signal.breakpoints;
     if (times.empty()) return keys;
+    const bool refinable = signal.tolerance && scale > 0;
     keys.push_back({times.front(), signal.at(times.front()), Interpolation::hold});
     for (std::size_t i = 1; i < times.size(); ++i) {
         const f32 a = times[i - 1], b = times[i];
         const auto from = signal.at(a), left = signal.before(b), to = signal.at(b);
-        const bool refinable = signal.tolerance && scale > 0;
         if (left == to) {
-            if (refinable) refine(signal, scale, a, from, b, to, 0, keys);
+            if (refinable) refine(signal, scale, a, from, b, to, 0, limit, keys);
             keys.push_back({b, to, Interpolation::linear});
-            continue;
-        }
-        const auto freeze = just_before(b, a);
-        if (left == from || !freeze) { // Nothing moved before the cut, or no room to keep the motion.
+        } else if (const auto freeze = just_before(b, a); !signal.moves(a, b) || !freeze) {
+            // Nothing moved before the cut, or there is no room to keep the motion.
             keys.push_back({b, to, Interpolation::hold});
-            continue;
+        } else {
+            const auto held = signal.at(*freeze);
+            if (refinable) refine(signal, scale, a, from, *freeze, held, 0, limit, keys);
+            keys.push_back({*freeze, held, Interpolation::linear});
+            keys.push_back({b, to, Interpolation::hold});
         }
-        const auto held = signal.at(*freeze);
-        if (refinable) refine(signal, scale, a, from, *freeze, held, 0, keys);
-        keys.push_back({*freeze, held, Interpolation::linear});
-        keys.push_back({b, to, Interpolation::hold});
+        if (refinable && keys.size() > limit) return {};
     }
     return keys;
 }
 
 // Last resort when the exact keys exceed a timeline limit: repeatedly drop the
-// interior key its neighbours reproduce best, so the scene still loads.
+// interior key its neighbours reproduce best, so the scene still loads. A
+// target of zero drops the track, leaving the camera's base value.
 void thin(std::vector<Keyframe>& keys, std::size_t target) {
-    target = std::max<std::size_t>(target, 1);
+    if (target == 0) { keys.clear(); return; }
     if (keys.size() <= target) return;
     const auto n = keys.size();
     std::vector<std::size_t> previous(n), next(n);
@@ -203,8 +210,8 @@ std::vector<AnimationProperty> legacy_camera_properties(const CameraPose& base) 
 }
 
 content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot& shot) {
+    if (has_camera(state)) return {}; // The shot was never used; it is dropped unread.
     if (!valid_camera_pose(shot.pose)) return invalid("Invalid legacy animation camera");
-    if (has_camera(state)) return {};
     // A scene already at the instance limit keeps loading, without a camera.
     if (state.document.instances.size() >= max_scene_instances || !state.document.next_instance_id ||
         state.document.next_instance_id == std::numeric_limits<u32>::max())
@@ -224,16 +231,18 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     camera->transform.position = clamp_position(camera->transform.position);
     if (shot.tracks.empty()) return {};
 
+    // The old decoder put these tracks through the timeline, which sorts keys
+    // and rejects duplicates or bad values; keep exactly those rules.
+    timeline::Timeline old;
+    if (auto normalized = old.replace(shot.tracks); !normalized) return invalid(normalized.error().message);
     const auto track = [&](std::string_view property) -> const timeline::Track* {
-        const auto found = std::ranges::find(shot.tracks, timeline::Target{legacy_camera_object, std::string(property)},
-                                             &timeline::Track::target);
-        return found == shot.tracks.end() ? nullptr : &*found;
+        return old.find({legacy_camera_object, std::string(property)});
     };
     const Shot legacy{{track("yaw"), shot.pose.yaw}, {track("pitch"), shot.pose.pitch},
                       {track("distance"), shot.pose.distance}, {track("zoom"), shot.pose.zoom},
                       {track("target"), shot.pose.target}};
-    for (const auto& old : shot.tracks)
-        for (const auto& key : old.keys)
+    for (const auto& source : old.tracks())
+        for (const auto& key : source.keys)
             if (!valid_camera_pose(legacy.at(key.time)) || !valid_camera_pose(legacy.before(key.time)))
                 return invalid("Invalid legacy animation camera key");
 
@@ -250,11 +259,22 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     const auto times_of = [](const auto& component) {
         return std::function<void(std::set<f32>&)>([&component](std::set<f32>& out) { component.times(out); });
     };
+    // Between breakpoints every component is linear, so it moves iff its
+    // values at the two ends differ.
+    const auto orbit_moves = [&](f32 a, f32 b) {
+        const auto from = legacy.at(a), to = legacy.before(b);
+        return from.yaw != to.yaw || from.pitch != to.pitch || from.distance != to.distance || from.target != to.target;
+    };
+    const auto turn_moves = [&](f32 a, f32 b) {
+        const auto from = legacy.at(a), to = legacy.before(b);
+        return from.yaw != to.yaw || from.pitch != to.pitch;
+    };
     // The eye moves on an orbit, so it is refined to within about half a pixel.
     const Signal position{
         breakpoints({times_of(legacy.yaw), times_of(legacy.pitch), times_of(legacy.distance), times_of(legacy.target)}),
         [&](f32 t) { return clamp_position(placed(legacy.at(t)).transform.position); },
         [&](f32 t) { return clamp_position(placed(legacy.before(t)).transform.position); },
+        orbit_moves,
         [&](f32 t) {
             const auto pose = legacy.at(t);
             return 5e-4F * pose.distance / std::max(1.F, pose.zoom);
@@ -264,6 +284,7 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
         breakpoints({times_of(legacy.yaw), times_of(legacy.pitch)}),
         [&](f32 t) { return placed(legacy.at(t)).transform.rotation; },
         [&](f32 t) { return placed(legacy.before(t)).transform.rotation; },
+        turn_moves,
         {}};
     // Focus and zoom are the old distance and zoom, key for key.
     const auto copy = [&](std::string_view property) {
@@ -276,21 +297,20 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     std::size_t other_keys{};
     for (const auto& existing : state.document.timeline.tracks()) other_keys += existing.keys.size();
     const auto budget = timeline::max_total_keys - std::min(timeline::max_total_keys, other_keys + focus_keys.size() + zoom_keys.size());
-    auto rotation_keys = keys_for(rotation, 0);
-    auto position_keys = keys_for(position, 1);
-    const auto fits = [&] {
-        return position_keys.size() <= timeline::max_keys_per_track && rotation_keys.size() <= timeline::max_keys_per_track &&
-            position_keys.size() + rotation_keys.size() <= budget;
-    };
-    for (f32 scale = 4; !fits() && scale <= 1 << 20; scale *= 4) position_keys = keys_for(position, scale);
-    if (!fits()) {
-        position_keys = keys_for(position, 0);
+    auto rotation_keys = *keys_for(rotation, 0, 0);
+    // Refine the eye as finely as the limits allow; each attempt stops early.
+    const auto room = std::min(timeline::max_keys_per_track, budget - std::min(budget, rotation_keys.size()));
+    std::optional<std::vector<Keyframe>> refined;
+    for (f32 scale = 1; !refined && scale <= 1 << 20; scale *= 4) refined = keys_for(position, scale, room);
+    auto position_keys = refined ? std::move(*refined) : *keys_for(position, 0, 0);
+    if (position_keys.size() > room || rotation_keys.size() > timeline::max_keys_per_track) {
         auto rotation_target = std::min(rotation_keys.size(), timeline::max_keys_per_track);
         auto position_target = std::min(position_keys.size(), timeline::max_keys_per_track);
         if (const auto wanted = rotation_target + position_target; wanted > budget) {
-            // Share what is left in proportion to what each track wanted.
-            rotation_target = std::max<std::size_t>(1, rotation_target * budget / wanted);
-            position_target = std::max<std::size_t>(1, budget - std::min(budget, rotation_target));
+            // Share what is left in proportion to what each track wanted; with
+            // no room at all a track is dropped rather than failing the load.
+            rotation_target = std::min(rotation_target, std::max<std::size_t>(budget ? 1 : 0, rotation_target * budget / wanted));
+            position_target = budget - rotation_target;
         }
         thin(rotation_keys, rotation_target);
         thin(position_keys, position_target);

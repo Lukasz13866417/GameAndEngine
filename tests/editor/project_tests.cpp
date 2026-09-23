@@ -8,6 +8,8 @@
 #include <catch2/catch_approx.hpp>
 
 #include <array>
+#include <chrono>
+#include <iostream>
 #include <vng/content/document.hpp>
 #include <variant>
 #include <filesystem>
@@ -1069,6 +1071,45 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
             CHECK(worst.yaw < 1e-3F);
         }
     }
+    SECTION("A turn that returns the eye to its start before another component's cut keeps its path") {
+        // Far from the origin the eye is bit-identical at both ends of a full turn.
+        const std::string far = "yaw = 0; pitch = 0; distance = 10; zoom = 1; camera_target = [100,0,0];";
+        const auto check = [&](const std::string& tracks) {
+            const auto text = legacy_scene(value, far, tracks);
+            auto loaded = project::decode(text);
+            REQUIRE(loaded);
+            const auto reference = legacy_reference(text);
+            const auto worst = deviation(*loaded, reference, 0, 3.998F, .002F);
+            CHECK(worst.eye < 6e-4F);
+            CHECK(worst.target < 6e-4F);
+            CHECK(worst.yaw < 1e-3F);
+        };
+        check(legacy_track("yaw", {{0, -180.F, true}, {4, 180.F}}) + legacy_track("pitch", {{0, 0.F, true}, {4, 30.F, true}}));
+        // An orbit plus a moving target can also end where it began.
+        check(legacy_track("yaw", {{0, 90.F, true}, {4, -90.F}}) +
+              legacy_track("target", {{0, Vec3{0, 0, 0}, true}, {4, Vec3{20, 0, 0}}}) +
+              legacy_track("pitch", {{0, 0.F, true}, {4, 30.F, true}}));
+    }
+    SECTION("Unsorted old keys follow the same order the old loader gave them") {
+        const auto [loaded, reference] = load(legacy_track("yaw", {{4, 90.F}, {0, 0.F}}));
+        CHECK(project::evaluate_camera(loaded, 2)->yaw == Catch::Approx(45));
+        CHECK(deviation(loaded, reference, 0, 6, .01F).eye < 6e-4F);
+    }
+    SECTION("Duplicate old key times are still rejected") {
+        CHECK_FALSE(project::decode(legacy_scene(value, shot, legacy_track("yaw", {{2, 0.F}, {2, 10.F}}))));
+    }
+    SECTION("Wild shots load quickly within the key limits") {
+        std::vector<LegacyKey> yaw;
+        for (int i = 0; i < 4096; ++i) yaw.push_back({static_cast<f32>(i) * .01F, i % 2 ? 170.F : -170.F});
+        value.document.timeline_duration = 50;
+        const auto start = std::chrono::steady_clock::now();
+        const auto [loaded, reference] = load(legacy_track("yaw", yaw));
+        const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        std::cout << "4096 wild keys migrated in " << seconds << " s\n";
+        CHECK(seconds < 5); // Generous ceiling: catches unbounded refinement, not a benchmark.
+        const auto* camera = project::active_camera(loaded, 0);
+        CHECK(loaded.document.timeline.find({camera->id, "position"})->keys.size() <= vng::timeline::max_keys_per_track);
+    }
     SECTION("Full-size tracks at staggered times still load within the timeline limits") {
         std::vector<LegacyKey> yaw, pitch;
         for (int i = 0; i < 4096; ++i) {
@@ -1244,6 +1285,30 @@ TEST_CASE("Legacy scene shots load as an active camera instance with the same po
         REQUIRE(cameras(*loaded).size() == 1);
         CHECK(near(*project::evaluate_camera(*loaded, 0), value.viewport.editor_camera));
         CHECK(loaded->viewport.editor_camera == value.viewport.editor_camera);
+    }
+    SECTION("An invalid shot is dropped unread when the scene already has cameras") {
+        auto with_camera = value;
+        REQUIRE(project::ensure_camera(with_camera, {10, 5, 8, {}}));
+        CHECK(project::decode(legacy_scene(with_camera, "yaw = 400; pitch = 0; distance = 8;")));
+    }
+    SECTION("A scene at the total key limit still loads its shot") {
+        auto full = value;
+        full.document.timeline_duration = 5000;
+        std::vector<vng::timeline::Track> tracks;
+        std::size_t keys{};
+        for (const auto* property : {"position", "rotation", "axis_scale", "scale"}) {
+            vng::timeline::Track track{{1, property}, {}, {}, {}};
+            const bool scalar = std::string_view(property) == "scale";
+            for (int i = 0; i < 4096 && keys + 1 < vng::timeline::max_total_keys; ++i, ++keys)
+                track.keys.push_back({static_cast<f32>(i), scalar ? vng::timeline::Value{1.F} : vng::timeline::Value{Vec3{1, 1, 1}},
+                                      vng::timeline::Interpolation::linear});
+            tracks.push_back(std::move(track));
+        }
+        REQUIRE(full.document.timeline.replace(std::move(tracks)));
+        auto loaded = project::decode(legacy_scene(full, shot_text, legacy_track("yaw", {{3, 40.F}})));
+        INFO((loaded ? "loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        CHECK(project::has_camera(*loaded));
     }
     SECTION("A scene that already has cameras never used its shot") {
         auto with_camera = value;

@@ -436,8 +436,10 @@ metadata and **Logs → Interaction timing** measurements/export.
   editor view and any camera visit are not saved. Opening a scene starts the editor
   view looking through its active camera at time zero. Files saved before scene
   cameras existed still load: their saved shot becomes an active **Animation
-  camera** instance with the same pose and keys, and the next save writes the
-  current format.
+  camera** instance that follows the same path, including its cuts. Where the
+  old camera swung along an orbit, extra keys keep the new path within about
+  half a pixel, so such scenes show more keyframes than before. The next save
+  writes the current format.
 - **Open scene...** (Ctrl+O) in the top toolbar browses for a `.vscene` and makes
   the chosen scene the current Save target; `--scene FILE` does the same at
   startup. The browser starts beside the current scene with it preselected, or in
@@ -789,9 +791,10 @@ The native window supports the same orbit/pan/zoom controls, even with the debug
 link off. By default it looks through the active scene camera at the independent
 playback time. Navigating in that window switches to a private pose and
 temporarily stops following the camera; restarting Play resumes it. Stop
-restores the editor's chosen view. Connected edits that move the scene camera
-also clear the private override. Editor-camera navigation does not disturb
-native Play.
+restores the editor's chosen view. Any connected edit to a scene camera, at
+whatever time it is keyed, also clears the private override. A scene without a
+camera plays from the editor's view as it was when Play started. Editor-camera
+navigation never steers native Play.
 
 **Debug link** is independent of Play:
 

@@ -26,7 +26,9 @@ struct LegacyCameraShot {
 [[nodiscard]] std::vector<AnimationProperty> legacy_camera_properties(const CameraPose& base);
 
 // Adds an active "Animation camera" that follows the shot, placed where the
-// shot's eye was (clamped to the scene's coordinate range if it lay beyond). Each new track comes
+// shot's eye was (clamped to the scene's coordinate range if it lay beyond).
+// The old tracks first go through the timeline's own sorting and validation,
+// exactly as the old loader did. Each new track comes
 // only from the old tracks it depends on: focus and zoom copy distance and zoom
 // key for key; rotation takes yaw and pitch key times; the eye, which moved on
 // an orbit, is refined between those times to within about half a pixel. A cut
