@@ -168,6 +168,12 @@ const SceneInstance* active_camera(const State& state, f32 time) {
     return first;
 }
 
+std::optional<CameraPose> look_through(const State& state, const SceneInstance& camera, f32 time) {
+    const auto pose = camera_pose(evaluate_instance(state, camera, time));
+    if (!valid_camera_pose(pose)) return {};
+    return pose;
+}
+
 std::optional<CameraPose> evaluate_camera(const State& state, f32 time) {
     const auto* camera = active_camera(state, time);
     if (!camera) return {};

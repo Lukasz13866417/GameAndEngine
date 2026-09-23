@@ -12,20 +12,39 @@ namespace editor_example {
 // editor navigation. Owned by the preview worker; no window or GPU state.
 class PlayCamera {
 public:
-    // The authored camera data a Play view depends on: every camera instance
-    // and its timeline tracks. Compare two to detect an authored camera change.
+    // The authored camera data a Play view depends on, in scene order: each
+    // camera's placement, focus, zoom and active flag, and the keys of those
+    // properties. Names, frustum visibility and scale do not move the view.
+    // Compare two to detect an authored camera change.
+    struct Camera {
+        vng::u32 id{};
+        vng::Vec3 position{}, rotation{};
+        vng::f32 focus{}, zoom{};
+        bool active{};
+        friend bool operator==(const Camera&, const Camera&) = default;
+    };
+    struct Keys {
+        vng::timeline::Target target;
+        std::vector<vng::timeline::Keyframe> keys;
+        friend bool operator==(const Keys&, const Keys&) = default;
+    };
     struct Cameras {
-        std::vector<SceneInstance> instances;
-        std::vector<vng::timeline::Track> tracks;
+        std::vector<Camera> cameras;
+        std::vector<Keys> keys;
         friend bool operator==(const Cameras&, const Cameras&) = default;
     };
     [[nodiscard]] static Cameras cameras(const State& state) {
         Cameras result;
         for (const auto& instance : state.document.instances)
-            if (std::holds_alternative<CameraSettings>(instance.settings)) result.instances.push_back(instance);
-        for (const auto& track : state.document.timeline.tracks())
-            if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<vng::u32>(track.target.object)))
-                result.tracks.push_back(track);
+            if (const auto* lens = std::get_if<CameraSettings>(&instance.settings))
+                result.cameras.push_back({instance.id, instance.transform.position, instance.transform.rotation,
+                                          lens->focus, lens->zoom, lens->active});
+        for (const auto& track : state.document.timeline.tracks()) {
+            const auto& property = track.target.property;
+            if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<vng::u32>(track.target.object)) &&
+                (property == "position" || property == "rotation" || property == "focus" || property == "zoom" || property == "active"))
+                result.keys.push_back({track.target, track.keys});
+        }
         return result;
     }
 

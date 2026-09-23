@@ -791,10 +791,10 @@ The native window supports the same orbit/pan/zoom controls, even with the debug
 link off. By default it looks through the active scene camera at the independent
 playback time. Navigating in that window switches to a private pose and
 temporarily stops following the camera; restarting Play resumes it. Stop
-restores the editor's chosen view. Any connected edit to a scene camera, at
-whatever time it is keyed, also clears the private override. A scene without a
-camera plays from the editor's view as it was when Play started. Editor-camera
-navigation never steers native Play.
+restores the editor's chosen view. Any connected edit that moves a scene
+camera, at whatever time it is keyed, also clears the private override. If the
+scene's camera is removed during Play, Play keeps its current view.
+Editor-camera navigation never steers native Play.
 
 **Debug link** is independent of Play:
 

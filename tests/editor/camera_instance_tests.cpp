@@ -226,6 +226,11 @@ TEST_CASE("Independent Play follows the scene camera until navigated, and any ca
     instance_transform(state, 1)->position = {5, 0, 0}; // Not a camera.
     CHECK_FALSE(play.authored(before, state));
     CHECK(play.view(state, 6) == looked);
+    before = PlayCamera::cameras(state);
+    find_instance(state, camera)->name = "Renamed"; // Neither changes what the camera sees.
+    camera_settings(state, camera)->visible = false;
+    CHECK_FALSE(play.authored(before, state));
+    CHECK(play.held());
 
     // A key far from the current playhead still counts as a camera edit.
     before = PlayCamera::cameras(state);
@@ -257,4 +262,17 @@ TEST_CASE("Independent Play of a scene without a camera holds the view it starte
     CHECK(play.authored(before, state)); // Adding a camera hands the view to it.
     CHECK(play.view(state, 1) == *evaluate_camera(state, 1));
     CHECK(find_instance(state, camera));
+}
+
+TEST_CASE("The editor can look through a camera only when its pivot is within the view range", "[editor][camera]") {
+    auto state = scene();
+    const auto camera = add_camera(state, {30, 10, 8, {1, 2, 3}, 2});
+    const auto near_pose = look_through(state, *find_instance(state, camera), 0);
+    REQUIRE(near_pose);
+    CHECK(close(*near_pose, {30, 10, 8, {1, 2, 3}, 2}));
+    auto* far = find_instance(state, camera);
+    far->transform = {{-600000, 0, 0}, {0, 90, 0}, 1};
+    camera_settings(state, camera)->focus = 600000; // Pivot at x = -1.2e6.
+    CHECK_FALSE(look_through(state, *far, 0));
+    CHECK(evaluate_camera(state, 0)); // Play can still render through it.
 }

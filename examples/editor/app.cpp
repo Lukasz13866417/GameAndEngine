@@ -815,11 +815,11 @@ int run(const Options& options) {
         status.text(camera.name + "'s pivot lies beyond the editor's view range; reduce its Focus distance to look through it");
     };
     auto visit_camera = [&](const SceneInstance& camera, bool editable) {
-        const auto pose = camera_pose(evaluate_instance(state, camera, view_state.time));
-        if (!valid_camera_pose(pose)) { out_of_view_range(camera); return; }
+        const auto pose = look_through(state, camera, view_state.time);
+        if (!pose) { out_of_view_range(camera); return; }
         const auto previous = camera_visit ? camera_visit->previous : view_state.editor_camera;
         camera_visit = CameraVisit{camera.id, editable, previous};
-        view_state.editor_camera = pose;
+        view_state.editor_camera = *pose;
         walk.active(false);
         camera_changed();
         status.text(editable ? "Looking through " + camera.name + " / navigate freely, then Save this camera to author the view"
@@ -1258,9 +1258,9 @@ int run(const Options& options) {
             if (!visited || !is_camera_instance(state, camera_visit->camera) || view_state.mode != ViewMode::scene)
                 end_camera_visit(true);
             else if (!camera_visit->editable) {
-                const auto pose = camera_pose(evaluate_instance(state, *visited, view_state.time));
-                if (!valid_camera_pose(pose)) { out_of_view_range(*visited); end_camera_visit(true); }
-                else if (pose != view_state.editor_camera) { view_state.editor_camera = pose; camera_changed(); }
+                const auto pose = look_through(state, *visited, view_state.time);
+                if (!pose) { out_of_view_range(*visited); end_camera_visit(true); }
+                else if (*pose != view_state.editor_camera) { view_state.editor_camera = *pose; camera_changed(); }
             }
         }
         camera_label.text(playing ? "SIM CAMERA / independent Play"
