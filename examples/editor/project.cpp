@@ -914,7 +914,7 @@ content::Result<State> decode(std::string_view source) {
         // outside the editor camera's range; then keep a valid default.
         if (!has_editor_camera) {
             if (const auto pose = evaluate_camera(s, 0); pose && valid_camera_pose(*pose)) s.viewport.editor_camera = *pose;
-            else if (legacy) s.viewport.editor_camera = legacy->pose;
+            else if (legacy && valid_camera_pose(legacy->pose)) s.viewport.editor_camera = legacy->pose;
         }
         if (auto valid = validate_state(s); !valid)
             r.fail(valid.error().message);

@@ -41,6 +41,19 @@ public:
     void times(std::set<f32>& out) const {
         if (track_) for (const auto& key : track_->keys) out.insert(key.time);
     }
+    // The smallest and largest value over [x, y). The component is linear
+    // between its keys, so only the ends and the keys inside matter.
+    [[nodiscard]] std::pair<T, T> range(f32 x, f32 y) const requires std::same_as<T, f32> {
+        T low = std::min(at(x), before(y)), high = std::max(at(x), before(y));
+        if (track_)
+            for (const auto& key : track_->keys)
+                if (x < key.time && key.time < y)
+                    for (const auto value : {before(key.time), at(key.time)}) {
+                        low = std::min(low, value);
+                        high = std::max(high, value);
+                    }
+        return {low, high};
+    }
 private:
     [[nodiscard]] T value(f32 time, bool left) const {
         if (!track_) return base_;
@@ -71,18 +84,19 @@ struct Shot {
 // its source components has a key. Between breakpoints it is continuous; at a
 // breakpoint it may cut. `moves(a, b)` says whether any source component
 // changes between two neighbouring breakpoints (the derived value can return
-// to where it started, as a full orbit does). `tolerance` is set for
-// properties that curve between breakpoints (the eye on an orbit); others are
-// linear there.
+// to where it started, as a full orbit does). `tolerance(x, y)` is set for
+// properties that curve between breakpoints (the eye on an orbit): the error
+// allowed anywhere in [x, y). Others are linear there.
 struct Signal {
     std::vector<f32> breakpoints;
     std::function<Vec3(f32)> at, before;
     std::function<bool(f32, f32)> moves;
-    std::function<f32(f32)> tolerance;
+    std::function<f32(f32, f32)> tolerance;
 };
 
-// Up to 2^10 pieces between two old keys; beyond that the curve is left as is.
-constexpr int max_depth = 10;
+// Refinement is bounded by the key room each attempt is given; this depth only
+// stops it where time itself cannot be split further.
+constexpr int max_depth = 24;
 
 // Adds keys strictly inside (x, y) until straight segments stay within
 // tolerance, giving up once `out` holds more than `limit` keys.
@@ -97,7 +111,7 @@ void refine(const Signal& signal, f32 scale, f32 x, Vec3 vx, f32 y, Vec3 vy, int
         const double ratio = (static_cast<double>(t) - x) / (static_cast<double>(y) - x);
         error = std::max(error, distance(signal.at(t), lerp(vx, vy, ratio)));
     }
-    if (error <= signal.tolerance(mid) * scale) return;
+    if (error <= signal.tolerance(x, y) * scale) return;
     const auto vm = signal.at(mid);
     refine(signal, scale, x, vx, mid, vm, depth + 1, limit, out);
     out.push_back({mid, vm, Interpolation::linear});
@@ -275,9 +289,10 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
         [&](f32 t) { return clamp_position(placed(legacy.at(t)).transform.position); },
         [&](f32 t) { return clamp_position(placed(legacy.before(t)).transform.position); },
         orbit_moves,
-        [&](f32 t) {
-            const auto pose = legacy.at(t);
-            return 5e-4F * pose.distance / std::max(1.F, pose.zoom);
+        // Half a pixel at the tightest zoom and nearest distance in the piece:
+        // a zoom key may fall inside it, since zoom does not move the eye.
+        [&](f32 x, f32 y) {
+            return 5e-4F * legacy.distance.range(x, y).first / std::max(1.F, legacy.zoom.range(x, y).second);
         }};
     // Rotation is {-pitch, yaw, 0}: linear wherever yaw and pitch are.
     const Signal rotation{

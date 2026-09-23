@@ -317,7 +317,7 @@ instance. Focus and zoom copy the
 old distance and zoom tracks key for key, rotation uses yaw and pitch key times,
 and the eye, which moved on an orbit, gets extra keys where a straight line
 would drift more than about half a pixel (the shipped fleet reveal grows from
-35 to 63 keyframes). A cut in one component while another moves keeps both via
+35 to 64 keyframes). A cut in one component while another moves keeps both via
 a key one millisecond before the cut. Keys are thinned only when the result
 would exceed a timeline limit. A scene that already had camera instances drops
 the unused shot, as does a scene already at the instance limit. An eye beyond

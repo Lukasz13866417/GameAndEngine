@@ -945,7 +945,9 @@ LegacyReference legacy_reference(std::string_view text) {
     REQUIRE(reference);
     return std::move(*reference);
 }
-struct Deviation { f32 eye{}, target{}, yaw{}, pitch{}, distance{}, zoom{}; };
+// eye: eye error relative to the orbit distance; seen: the same scaled by the
+// optical zoom, which is what shows on screen (5e-4 is about half a pixel).
+struct Deviation { f32 eye{}, seen{}, target{}, yaw{}, pitch{}, distance{}, zoom{}; };
 // Worst differences between the migrated camera and the old one over [start, end].
 Deviation deviation(const project::State& loaded, const LegacyReference& reference, f32 start, f32 end, f32 step) {
     Deviation worst;
@@ -958,8 +960,10 @@ Deviation deviation(const project::State& loaded, const LegacyReference& referen
         const auto eye = project::evaluate_transform(loaded, *camera, time).position;
         const auto actual = *project::evaluate_camera(loaded, time);
         const auto length = [](Vec3 v) { return std::hypot(v.x, v.y, v.z); };
-        worst.eye = std::max(worst.eye, length({eye.x - probe.transform.position.x, eye.y - probe.transform.position.y,
-                                                eye.z - probe.transform.position.z}) / expected.distance);
+        const auto eye_error = length({eye.x - probe.transform.position.x, eye.y - probe.transform.position.y,
+                                       eye.z - probe.transform.position.z}) / expected.distance;
+        worst.eye = std::max(worst.eye, eye_error);
+        worst.seen = std::max(worst.seen, eye_error * std::max(1.F, expected.zoom));
         worst.target = std::max(worst.target, length({actual.target.x - expected.target.x, actual.target.y - expected.target.y,
                                                       actual.target.z - expected.target.z}) / expected.distance);
         worst.yaw = std::max(worst.yaw, std::abs(std::remainder(actual.yaw - expected.yaw, 360.F)));
@@ -1090,6 +1094,24 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
               legacy_track("target", {{0, Vec3{0, 0, 0}, true}, {4, Vec3{20, 0, 0}}}) +
               legacy_track("pitch", {{0, 0.F, true}, {4, 30.F, true}}));
     }
+    SECTION("A zoom cut inside an orbit segment keeps the orbit sharp at the new zoom") {
+        const std::string tilted = "yaw = 0; pitch = 45; distance = 10; zoom = 1; camera_target = [0,0,0];";
+        const auto text = legacy_scene(value, tilted, legacy_track("yaw", {{0, 0.F, true}, {10, 90.F}}) +
+                                                      legacy_track("zoom", {{0, 1.F, true}, {3.603F, 10.F, true}}));
+        auto loaded = project::decode(text);
+        REQUIRE(loaded);
+        CHECK(deviation(*loaded, legacy_reference(text), 0, 10, .005F).seen < 6e-4F);
+    }
+    SECTION("A long dolly-in with a turn stays within tolerance at its closest") {
+        const std::string zoomed = "yaw = 0; pitch = 30; distance = 50; zoom = 10; camera_target = [0,0,0];";
+        const auto text = legacy_scene(value, zoomed, legacy_track("yaw", {{0, 0.F, true}, {10, 180.F}}) +
+                                                      legacy_track("distance", {{0, 50.F, true}, {10, .1F}}));
+        auto loaded = project::decode(text);
+        REQUIRE(loaded);
+        const auto reference = legacy_reference(text);
+        CHECK(deviation(*loaded, reference, 0, 9.9F, .005F).seen < 6e-4F);
+        CHECK(deviation(*loaded, reference, 9.9F, 10, .0002F).seen < 6e-4F); // Where the eye is closest.
+    }
     SECTION("Unsorted old keys follow the same order the old loader gave them") {
         const auto [loaded, reference] = load(legacy_track("yaw", {{4, 90.F}, {0, 0.F}}));
         CHECK(project::evaluate_camera(loaded, 2)->yaw == Catch::Approx(45));
@@ -1106,7 +1128,8 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         const auto [loaded, reference] = load(legacy_track("yaw", yaw));
         const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         std::cout << "4096 wild keys migrated in " << seconds << " s\n";
-        CHECK(seconds < 5); // Generous ceiling: catches unbounded refinement, not a benchmark.
+        // Bounded refinement takes about 0.25 s in a debug build; unbounded took over 5 s.
+        CHECK(seconds < 2);
         const auto* camera = project::active_camera(loaded, 0);
         CHECK(loaded.document.timeline.find({camera->id, "position"})->keys.size() <= vng::timeline::max_keys_per_track);
     }
@@ -1288,8 +1311,17 @@ TEST_CASE("Legacy scene shots load as an active camera instance with the same po
     }
     SECTION("An invalid shot is dropped unread when the scene already has cameras") {
         auto with_camera = value;
-        REQUIRE(project::ensure_camera(with_camera, {10, 5, 8, {}}));
+        const auto camera = project::ensure_camera(with_camera, {10, 5, 8, {}});
+        REQUIRE(camera);
         CHECK(project::decode(legacy_scene(with_camera, "yaw = 400; pitch = 0; distance = 8;")));
+        // Even without a saved view, and with a camera the editor cannot look through.
+        auto* far = project::find_instance(with_camera, *camera);
+        far->transform = {{-600000, 0, 0}, {0, 90, 0}, 1};
+        std::get<project::CameraSettings>(far->settings).focus = 600000;
+        auto loaded = project::decode(legacy_scene(with_camera, "yaw = 400; pitch = 0; distance = 8;", {}, false));
+        INFO((loaded ? "loaded" : loaded.error().message));
+        REQUIRE(loaded);
+        CHECK(project::valid_camera_pose(loaded->viewport.editor_camera));
     }
     SECTION("A scene at the total key limit still loads its shot") {
         auto full = value;
