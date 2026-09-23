@@ -1,5 +1,6 @@
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/animation.hpp"
+#include "../../examples/editor/play_camera.hpp"
 #include "../../examples/editor/annotation_geometry.hpp"
 #include "../../examples/editor/blueprint_gizmos.hpp"
 #include "../../examples/editor/camera_glyph.hpp"
@@ -202,4 +203,58 @@ TEST_CASE("Cameras move, turn and slide along their look direction, and draw a f
     camera_settings(state, camera)->visible = false;
     CHECK(scene_annotation_lines(state, 0).empty());
     CHECK(scene_annotation_triangles(state, 0).empty());
+}
+
+TEST_CASE("Independent Play follows the scene camera until navigated, and any camera edit hands it back", "[editor][camera][play]") {
+    auto state = scene();
+    state.document.timeline_duration = 30;
+    const auto camera = add_camera(state, {0, 0, 10, {}, 1});
+    REQUIRE(key_camera(state, camera, 0, {0, 0, 10, {}, 1}));
+    REQUIRE(key_camera(state, camera, 10, {60, 10, 10, {}, 1}));
+    PlayCamera play;
+    play.start(state, 2);
+    CHECK_FALSE(play.held());
+    CHECK(play.view(state, 2) == *evaluate_camera(state, 2));
+    CHECK(play.view(state, 5) == *evaluate_camera(state, 5)); // It follows the animation.
+
+    const CameraPose looked{-45, 20, 3, {1, 1, 1}, 1};
+    play.navigated(looked);
+    CHECK(play.held());
+    CHECK(play.view(state, 6) == looked);
+
+    auto before = PlayCamera::cameras(state);
+    instance_transform(state, 1)->position = {5, 0, 0}; // Not a camera.
+    CHECK_FALSE(play.authored(before, state));
+    CHECK(play.view(state, 6) == looked);
+
+    // A key far from the current playhead still counts as a camera edit.
+    before = PlayCamera::cameras(state);
+    REQUIRE(key_camera(state, camera, 25, {90, 0, 10, {}, 1}));
+    CHECK(play.authored(before, state));
+    CHECK_FALSE(play.held());
+    CHECK(play.view(state, 6) == *evaluate_camera(state, 6));
+
+    // Removing the camera keeps the view Play was showing.
+    const auto shown = play.view(state, 6);
+    before = PlayCamera::cameras(state);
+    REQUIRE(erase_instance(state, camera));
+    CHECK(play.authored(before, state));
+    CHECK(play.held());
+    CHECK(play.view(state, 7) == shown);
+}
+
+TEST_CASE("Independent Play of a scene without a camera holds the view it started with", "[editor][camera][play]") {
+    auto state = scene();
+    state.viewport.editor_camera = {10, 5, 8, {}, 1};
+    PlayCamera play;
+    play.start(state, 0);
+    CHECK(play.held());
+    const auto started = state.viewport.editor_camera;
+    state.viewport.editor_camera = {-80, 30, 2, {4, 4, 4}, 1}; // Editor navigation during Play.
+    CHECK(play.view(state, 1) == started);
+    const auto before = PlayCamera::cameras(state);
+    const auto camera = add_camera(state, {30, 0, 12, {}, 1});
+    CHECK(play.authored(before, state)); // Adding a camera hands the view to it.
+    CHECK(play.view(state, 1) == *evaluate_camera(state, 1));
+    CHECK(find_instance(state, camera));
 }
