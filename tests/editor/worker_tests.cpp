@@ -237,6 +237,16 @@ struct Harness final {
                       std::string(session.status()) + "\n" + std::string(session.logs())};
     }
 
+    // After "play\n0": wait until Play has stopped, then for a frame newer than
+    // any seen by then, so a Play frame still in flight is never mistaken for
+    // the restored editor view.
+    void until_stopped(vng::u64 last_play_frame) {
+        until("Play stopped", [&] { return !playing && session.latest_frame()->info.frame_id >= last_play_frame; });
+        const auto stopped = session.latest_frame()->info.frame_id;
+        until("first frame after Play stopped", [&] {
+            return matching_frame(authored.document.revision) && session.latest_frame()->info.frame_id > stopped;
+        });
+    }
     [[nodiscard]] bool matching_frame(vng::u64 revision, vng::u64 generation = 0) const {
         if (!generation)
             generation = session.active_generation();
@@ -583,9 +593,7 @@ void scene_camera_test(Harness& h) {
           "Camera-less Play followed the editor's live navigation");
     const auto held_frame = h.session.latest_frame()->info.frame_id;
     take(h.session.send("play\n0"), "Stop camera-less Play");
-    h.until("camera-less Play stopped", [&] {
-        return !h.playing && h.session.latest_frame()->info.frame_id > held_frame;
-    });
+    h.until_stopped(held_frame);
 
     // The editor view sees the mesh; the scene camera deliberately looks away.
     h.authored.viewport.editor_camera = {0, 0, 6, {}};
@@ -634,10 +642,7 @@ void scene_camera_test(Harness& h) {
 
     const auto play_frame = h.session.latest_frame()->info.frame_id;
     take(h.session.send("play\n0"), "Stop independent Play and restore the editor view");
-    h.until("restored editor camera", [&] {
-        return !h.playing && h.matching_frame(h.authored.document.revision) &&
-               h.session.latest_frame()->info.frame_id > play_frame;
-    });
+    h.until_stopped(play_frame);
     check(bright_pixels(*h.session.latest_frame()) == 0,
           "Stopping independent Play did not restore the editor camera");
     const auto after = h.query_stats();
@@ -665,12 +670,9 @@ void scene_camera_test(Harness& h) {
     });
     check(bright_pixels_any_extent(*h.session.latest_frame()) == 0,
           "Independent playback did not evaluate its camera timeline cut");
-    take(h.session.send("play\n0"), "Stop camera timeline playback");
     const auto final_play_frame = h.session.latest_frame()->info.frame_id;
-    h.until("restore embedded editor view", [&] {
-        return !h.playing && h.matching_frame(h.authored.document.revision) &&
-               h.session.latest_frame()->info.frame_id > final_play_frame;
-    });
+    take(h.session.send("play\n0"), "Stop camera timeline playback");
+    h.until_stopped(final_play_frame);
     check(bright_pixels(*h.session.latest_frame()) > 100,
           "Stopping independent playback did not restore the editor view");
 
