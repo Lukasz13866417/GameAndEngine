@@ -219,6 +219,39 @@ TEST_CASE("An orbiting camera is placed by its focus point and swings around it 
         index = 0;
         for (const f32 time : {0.F, 2.F, 3.F, 4.F}) CHECK(near(pinned_eye(time), at_keys[index++]));
     }
+    // A track that starts later keeps its cut from the default placement, and a
+    // held stretch stays continuous, however often the placement switches.
+    auto sparse = scene();
+    sparse.document.timeline_duration = 12;
+    const auto late = add_camera(sparse, {0, 0, 10, {}, 1});
+    REQUIRE(sparse.document.timeline.set({late, "rotation"}, {2, Vec3{0, 0, 0}, timeline::Interpolation::hold}));
+    REQUIRE(sparse.document.timeline.set({late, "rotation"}, {8, Vec3{0, 90, 0}, timeline::Interpolation::linear}));
+    REQUIRE(sparse.document.timeline.set({late, "position"}, {5, Vec3{4, 0, 10}, timeline::Interpolation::linear}));
+    REQUIRE(sparse.document.timeline.set({late, "position"}, {10, Vec3{20, 0, 0}, timeline::Interpolation::hold}));
+    const auto late_eye = [&](f32 time) { return evaluate_transform(sparse, *find_instance(sparse, late), time).position; };
+    const auto sparse_path = [&] {
+        std::vector<Vec3> eyes;
+        for (int step = 0; step <= 1200; ++step) eyes.push_back(late_eye(static_cast<f32>(step) * .01F));
+        return eyes;
+    };
+    const auto straight = sparse_path();
+    CHECK(near(late_eye(4.99F), {0, 0, 10})); // Held at the default placement until the first key.
+    std::optional<std::vector<Vec3>> orbiting;
+    for (const bool orbit : {true, false, true, false}) {
+        REQUIRE(set_camera_orbit(sparse, late, orbit));
+        const auto now = sparse_path();
+        if (!orbiting && orbit) orbiting = now;
+        const auto& expected = orbit ? *orbiting : straight;
+        for (std::size_t i = 0; i < now.size(); ++i) CHECK(near(now[i], expected[i]));
+        CHECK(near(late_eye(5), {4, 0, 10}));
+        f32 step{};
+        for (f32 time = 5.01F; time < 9.99F; time += .01F) {
+            const auto a = late_eye(time - .01F), b = late_eye(time);
+            step = std::max(step, std::hypot(a.x - b.x, a.y - b.y, a.z - b.z));
+        }
+        CHECK(step < .1F); // No cut appears inside the held stretch.
+    }
+
     // A copied keyframe pastes the same eye after the camera switched placement.
     EditClipboard clipboard;
     REQUIRE(clipboard.copy_keyframe(pinned, 4));
@@ -231,6 +264,21 @@ TEST_CASE("An orbiting camera is placed by its focus point and swings around it 
     pinned.viewport.time = 9;
     REQUIRE(clipboard.paste(pinned));
     CHECK(near(pinned_eye(9), at_keys[3]));
+    // Also when a later pasted keyframe sets the rotation an earlier one is placed with.
+    auto several = scene();
+    several.document.timeline_duration = 20;
+    const auto shot = add_camera(several, {0, 0, 10, {}, 1});
+    REQUIRE(key_property(several, {shot, "position"}, 2, Vec3{3, 0, 10}));
+    REQUIRE(key_camera(several, shot, 4, {90, 0, 10, {5, 0, 0}, 1}));
+    REQUIRE(key_camera(several, shot, 8, {180, 0, 10, {5, 0, 5}, 1}));
+    const auto shot_eye = [&](f32 time) { return evaluate_transform(several, *find_instance(several, shot), time).position; };
+    const auto copied = shot_eye(2);
+    const std::array<f32, 2> copied_times{2, 4};
+    REQUIRE(clipboard.copy_keyframes(several, copied_times));
+    REQUIRE(set_camera_orbit(several, shot, true));
+    several.viewport.time = 12;
+    REQUIRE(clipboard.paste(several));
+    CHECK(near(shot_eye(12), copied));
 
     // The inspector switches it with the rest of the lens, all or nothing: a
     // focus point that would leave the scene undoes the whole edit.
@@ -250,6 +298,43 @@ TEST_CASE("An orbiting camera is placed by its focus point and swings around it 
     next.orbit = false;
     REQUIRE(apply_lens(edge, edited, outward, lens, next));
     CHECK(camera_settings(edge, outward)->focus == 50);
+}
+
+TEST_CASE("Moving and turning an orbiting camera in the viewport puts its eye where it is dropped",
+          "[editor][camera][session]") {
+    auto initial = scene();
+    const auto camera = add_camera(initial, {0, 0, 10, {}, 1});
+    REQUIRE(set_camera_orbit(initial, camera, true));
+    const auto near = [](Vec3 a, Vec3 b) { return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-4F; };
+    EditingSession session{initial};
+    session.select_keyframe(session.state().viewport.time);
+    const auto eye = [&] {
+        const auto& state = session.state();
+        return evaluate_transform(state, *find_instance(state, camera), state.viewport.time).position;
+    };
+    REQUIRE(session.begin_move(camera));
+    REQUIRE(session.move({3, 1, 12}));
+    REQUIRE(session.commit());
+    CHECK(near(eye(), {3, 1, 12}));
+    CHECK(near(find_instance(session.state(), camera)->transform.position, {3, 1, 2})); // Its focus point.
+    // Turning it in place keeps the eye and swings the focus point instead.
+    REQUIRE(session.begin_rotation(camera, {}, {PivotMode::individual}));
+    REQUIRE(session.rotate_by({0, 90, 0}));
+    REQUIRE(session.commit());
+    CHECK(near(eye(), {3, 1, 12}));
+    CHECK(evaluate_camera(session.state(), 0)->yaw == Catch::Approx(90));
+    // A translation event at an animated keyframe stores the focus point for its eye too.
+    auto state = session.state();
+    state.document.timeline_duration = 10;
+    REQUIRE(key_property(state, {camera, "position"}, 3, Vec3{5, 1, 2}));
+    state.viewport.time = 3;
+    state.viewport.paused = true;
+    state.viewport.selected_object = camera;
+    const editor::Event event{{camera, 7, state.document.revision}, "position", editor::Phase::apply,
+                              {{"position", Vec3{8, 2, 6}}}};
+    auto translated = apply_animated_translation(state, event);
+    REQUIRE(translated); CHECK(*translated);
+    CHECK(near(evaluate_transform(state, *find_instance(state, camera), 3).position, {8, 2, 6}));
 }
 
 TEST_CASE("Only one camera can be active at a time and the session keys the switch", "[editor][camera][session]") {

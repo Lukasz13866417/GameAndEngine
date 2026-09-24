@@ -1174,7 +1174,8 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         const auto eye = project::evaluate_transform(*swept, *project::active_camera(*swept, 5), 5).position;
         CHECK(std::hypot(eye.x, eye.y, eye.z - 1.5F) < 1e-3F);
         CHECK(deviation(*swept, legacy_reference(far_text), 4.99F, 5.01F, .0005F).seen < 6e-4F);
-        // Lopsided, so the first chord's quarters all lie far out where floats are coarse.
+        // A lopsided sweep whose far-out focus point crosses the origin: the
+        // orbiting eye stays on the old path there.
         const std::string offset = "yaw = 0.2; pitch = 0; distance = 1; zoom = 4; camera_target = [0,0,0];";
         const auto lopsided_text = legacy_scene(value, offset,
             legacy_track("target", {{0, Vec3{-75000, 0, 0}}, {10, Vec3{125000, 0, 0}}}));

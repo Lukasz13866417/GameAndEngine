@@ -46,8 +46,8 @@ struct SceneValues {
 // nothing when the scene has no camera. The editor's own view is never this.
 [[nodiscard]] std::optional<CameraPose> evaluate_camera(const State&, vng::f32 time);
 // The editor pose that looks through a camera at this time, or nothing when
-// the camera's pivot (eye minus focus along its view) lies beyond the editor
-// camera's range.
+// the camera's pivot (the point `focus` ahead of its eye, camera_pose's
+// target) lies beyond the editor camera's range.
 [[nodiscard]] std::optional<CameraPose> look_through(const State&, const SceneInstance& camera, vng::f32 time);
 // The camera instance marked active at this time, else the first camera; null
 // when the scene has none.

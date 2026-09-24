@@ -236,6 +236,10 @@ content::Result<void> set_camera_orbit(State& state, u32 id, bool orbit) {
         : timeline::Track{{id, "position"}, orbit ? "Position" : "Focus point", camera->name, {}};
     // Pin the eye wherever only rotation or focus is keyed: a key there with
     // the value the camera has now keeps it in place once the path changes.
+    // The value lies on the stored path, so a linear pin leaves that path as
+    // it is; only the first key of a track that started later must now hold,
+    // to keep its cut from the base value.
+    const auto first = track.keys.empty() ? std::optional<f32>{} : track.keys.front().time;
     for (const auto* property : {"rotation", "focus"})
         if (const auto* turned = animation.find({id, property}))
             for (const auto& key : turned->keys) {
@@ -243,9 +247,10 @@ content::Result<void> set_camera_orbit(State& state, u32 id, bool orbit) {
                 if (next != track.keys.end() && next->time == key.time) continue;
                 auto value = camera->transform.position;
                 if (const auto sampled = animation.sample(track.target, key.time)) value = std::get<Vec3>(*sampled);
-                const auto incoming = next != track.keys.end() ? next->incoming : timeline::Interpolation::linear;
-                track.keys.insert(next, {key.time, value, incoming});
+                track.keys.insert(next, {key.time, value, timeline::Interpolation::linear});
             }
+    if (first && track.keys.front().time < *first)
+        std::ranges::find(track.keys, *first, &timeline::Keyframe::time)->incoming = timeline::Interpolation::hold;
     // Then store the same eye the other way, at time zero and at every key.
     const auto convert = [&](Vec3 value, f32 time) -> content::Result<Vec3> {
         const auto converted = switch_placement(state, *camera, value, time, orbit);

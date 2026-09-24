@@ -809,7 +809,7 @@ int run(const Options& options) {
         camera_visit.reset();
         camera_changed();
     };
-    // A camera's pivot (eye minus focus along its view) can lie beyond the
+    // A camera's pivot (the point `focus` ahead of its eye) can lie beyond the
     // editor camera's range; the editor cannot look through it then.
     const auto out_of_view_range = [&](const SceneInstance& camera) {
         status.text(camera.name + "'s pivot lies beyond the editor's view range; reduce its Focus distance to look through it");

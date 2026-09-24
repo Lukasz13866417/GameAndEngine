@@ -76,6 +76,10 @@ vng::content::Result<EditClipboard::Pasted> EditClipboard::paste(State& state) c
         result.objects.push_back(*created);
       }
     } else {
+      // Cameras that switched placement since the copy, converted once every
+      // keyframe is in, since a later one can set the rotation or focus the
+      // conversion reads at an earlier one.
+      std::vector<std::pair<vng::f32,const KeyframeValue*>> switched;
       for(const auto& keyframe:std::get<std::vector<Keyframe>>(contents_)) {
         const auto time=state.viewport.time+keyframe.offset;
         if(!std::isfinite(time) || time<0 || time>state.document.timeline_duration)
@@ -86,20 +90,22 @@ vng::content::Result<EditClipboard::Pasted> EditClipboard::paste(State& state) c
         for(const auto& value:keyframe.values)
             if(auto keyed=key_property(next,value.target,time,value.value,value.incoming); !keyed)
                 return std::unexpected(keyed.error());
-        // A camera that switched placement since the copy gets the same eye,
-        // stored the other way.
         for(const auto& [camera,orbit]:keyframe.orbits) {
-            const auto* instance=find_instance(next,camera);
-            const auto* lens=instance?std::get_if<CameraSettings>(&instance->settings):nullptr;
-            if(!lens || lens->orbit==orbit) continue;
-            const auto value=std::ranges::find(keyframe.values,vng::timeline::Target{camera,"position"},&KeyframeValue::target);
-            const auto placed=switch_placement(next,*instance,std::get<vng::Vec3>(value->value),time,lens->orbit);
-            if(auto keyed=key_property(next,value->target,time,placed,value->incoming); !keyed)
-                return std::unexpected(keyed.error());
+            const auto* lens=camera_settings(next,camera);
+            if(lens && lens->orbit!=orbit)
+                switched.push_back({time,&*std::ranges::find(keyframe.values,vng::timeline::Target{camera,"position"},&KeyframeValue::target)});
         }
         next.document.keyframe_names[time]=keyframe.name;
         result.keyframe=time;
         result.keyframes.push_back(time);
+      }
+      // Each gets the same eye, stored the other way.
+      for(const auto& [time,value]:switched) {
+        const auto* instance=find_instance(next,static_cast<vng::u32>(value->target.object));
+        const auto placed=switch_placement(next,*instance,std::get<vng::Vec3>(value->value),time,
+                                           std::get<CameraSettings>(instance->settings).orbit);
+        if(auto keyed=key_property(next,value->target,time,placed,value->incoming); !keyed)
+            return std::unexpected(keyed.error());
       }
     }
     if(auto valid=validate_animation(next); !valid) return std::unexpected(valid.error());
