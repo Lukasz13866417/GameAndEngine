@@ -318,9 +318,11 @@ old distance and zoom tracks key for key, rotation uses yaw and pitch key times,
 and the eye, which moved on an orbit, gets extra keys where a straight line
 would drift more than about half a pixel (the shipped fleet reveal grows from
 35 to 64 keyframes). A cut in one component while another moves keeps both via
-a key one millisecond before the cut. Keys are thinned only when the result
-would exceed a timeline limit. A scene that already had camera instances drops
-the unused shot, as does a scene already at the instance limit. An eye beyond
+a key one millisecond before the cut. The extra keys take at most half the
+room the timeline's key limits leave, so keyframes can still be added; keys are
+thinned only when the exact ones alone would exceed a limit. A scene that
+already had camera instances drops the unused shot, as does a scene already at
+the instance limit. An eye beyond
 the scene's coordinate range is clamped into it. Saving writes version 5.
 
 Native `ProjectControls` callbacks report the properties they committed. The

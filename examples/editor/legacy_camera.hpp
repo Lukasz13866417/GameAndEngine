@@ -34,10 +34,11 @@ struct LegacyCameraShot {
 // gets extra keys wherever a straight line would stray more than about half a
 // pixel (or float resolution, where that is coarser), worst stretch first. A
 // cut in one component while another still moves becomes a key a millisecond
-// before the cut plus a held key at it. If the key limits leave too little
-// room, the extra keys go where the error is largest; only if even the exact
-// keys exceed a limit are the least significant ones dropped, so every old
-// scene loads. A scene that already has camera instances never used the shot,
-// so it is dropped; so is the shot of a scene already at the instance limit.
+// before the cut plus a held key at it. The extra keys take at most half the
+// room the key limits leave, so keyframes can still be added afterwards; only
+// if even the exact keys exceed a limit are the least significant ones
+// dropped, so every old scene loads. A scene that already has camera
+// instances never used the shot, so it is dropped; so is the shot of a scene
+// already at the instance limit.
 [[nodiscard]] vng::content::Result<void> migrate_legacy_camera(State&, const LegacyCameraShot&);
 } // namespace editor_example

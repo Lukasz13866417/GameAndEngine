@@ -124,13 +124,33 @@ struct Piece {
     double excess{};
     friend bool operator<(const Piece& a, const Piece& b) { return a.excess < b.excess; }
 };
+// How far along the straight line from `from` to `to` its largest coordinate
+// is smallest, where the float grid is finest. That magnitude is convex along
+// the line, so a ternary search finds it.
+double nearest_origin(Vec3 from, Vec3 to) {
+    const auto largest = [&](double s) {
+        const auto along = [s](f32 a, f32 b) { return std::abs(a + (static_cast<double>(b) - a) * s); };
+        return std::max({along(from.x, to.x), along(from.y, to.y), along(from.z, to.z)});
+    };
+    double low = 0, high = 1;
+    for (int step = 0; step < 40; ++step) {
+        const double a = low + (high - low) / 3, b = high - (high - low) / 3;
+        if (largest(a) < largest(b)) high = b;
+        else low = a;
+    }
+    return (low + high) * .5;
+}
+
 Piece piece(const Signal& signal, f32 x, Vec3 vx, f32 y, Vec3 vy) {
     Piece result{x, y, vx, vy, 0};
     const f32 mid = x + (y - x) * .5F;
     if (!(x < mid && mid < y)) return result;
     const double allowed = signal.tolerance(x, y);
-    for (const auto fraction : {.25F, .5F, .75F}) {
-        const f32 t = x + (y - x) * fraction;
+    // Besides the quarters, measure where the line passes nearest the origin:
+    // a piece crossing from far on one side to far on the other can stray by
+    // many pixels there while the float floor elsewhere hides it.
+    const f32 nearest = x + static_cast<f32>((static_cast<double>(y) - x) * nearest_origin(vx, vy));
+    for (const auto t : {x + (y - x) * .25F, mid, x + (y - x) * .75F, nearest}) {
         if (!(x < t && t < y)) continue;
         const double ratio = (static_cast<double>(t) - x) / (static_cast<double>(y) - x);
         const auto ideal = signal.exact(t);
@@ -152,8 +172,9 @@ std::optional<f32> just_before(f32 cut, f32 after) {
 // one component while another still moves is kept as a key just before the
 // cut followed by a held key at it, so neither the cut nor the motion is lost.
 // For a curving signal, keys are then added one at a time where the straight
-// line strays furthest beyond its tolerance, until every piece fits or `room`
-// keys are used; the budget goes where it helps most.
+// line strays furthest beyond its tolerance, until every piece fits or half
+// the `room` left after the exact keys is used: the budget goes where it helps
+// most, and the scene keeps room for the keyframes its author adds next.
 std::vector<Keyframe> keys_for(const Signal& signal, std::size_t room) {
     std::vector<Keyframe> keys;
     const auto& times = signal.breakpoints;
@@ -181,7 +202,8 @@ std::vector<Keyframe> keys_for(const Signal& signal, std::size_t room) {
             keys.push_back({b, to, Interpolation::hold});
         }
     }
-    while (!pieces.empty() && keys.size() < room) {
+    const auto limit = keys.size() + (room - std::min(room, keys.size())) / 2;
+    while (!pieces.empty() && keys.size() < limit) {
         const auto worst = pieces.top();
         pieces.pop();
         const f32 mid = worst.x + (worst.y - worst.x) * .5F;
@@ -363,7 +385,7 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     for (const auto& existing : state.document.timeline.tracks()) other_keys += existing.keys.size();
     const auto budget = timeline::max_total_keys - std::min(timeline::max_total_keys, other_keys + focus_keys.size() + zoom_keys.size());
     auto rotation_keys = keys_for(rotation, 0);
-    // Refine the eye with whatever key room the limits leave.
+    // Refine the eye within the key room the limits leave.
     const auto room = std::min(timeline::max_keys_per_track, budget - std::min(budget, rotation_keys.size()));
     auto position_keys = keys_for(position, room);
     if (position_keys.size() > room || rotation_keys.size() > timeline::max_keys_per_track) {

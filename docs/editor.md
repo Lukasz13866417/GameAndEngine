@@ -438,8 +438,8 @@ metadata and **Logs → Interaction timing** measurements/export.
   cameras existed still load: their saved shot becomes an active **Animation
   camera** instance that follows the same path, including its cuts. Where the
   old camera swung along an orbit, extra keys keep the new path within about
-  half a pixel, so such scenes show more keyframes than before. The next save
-  writes the current format.
+  half a pixel, so such scenes show more keyframes than before (never more than
+  half the room left for keyframes). The next save writes the current format.
 - **Open scene...** (Ctrl+O) in the top toolbar browses for a `.vscene` and makes
   the chosen scene the current Save target; `--scene FILE` does the same at
   startup. The browser starts beside the current scene with it preselected, or in

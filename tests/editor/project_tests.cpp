@@ -4,6 +4,7 @@
 #include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/preview_values.hpp"
 #include "../../examples/editor/document_patch.hpp"
+#include "../../examples/editor/keyframes.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -1165,6 +1166,13 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         const auto eye = project::evaluate_transform(*swept, *project::active_camera(*swept, 5), 5).position;
         CHECK(std::hypot(eye.x, eye.y, eye.z - 1.5F) < 1e-3F);
         CHECK(deviation(*swept, legacy_reference(far_text), 4.99F, 5.01F, .0005F).seen < 6e-4F);
+        // Lopsided, so the first chord's quarters all lie far out where floats are coarse.
+        const std::string offset = "yaw = 0.2; pitch = 0; distance = 1; zoom = 4; camera_target = [0,0,0];";
+        const auto lopsided_text = legacy_scene(value, offset,
+            legacy_track("target", {{0, Vec3{-75000, 0, 0}}, {10, Vec3{125000, 0, 0}}}));
+        auto lopsided = project::decode(lopsided_text);
+        REQUIRE(lopsided);
+        CHECK(deviation(*lopsided, legacy_reference(lopsided_text), 3.7F, 3.8F, .0005F).seen < 6e-4F);
     }
     SECTION("An orbit far from the origin keeps half a pixel where floats allow it") {
         const std::string far = "yaw = 0; pitch = 30; distance = 10; zoom = 2; camera_target = [10000,0,0];";
@@ -1173,6 +1181,19 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         REQUIRE(loaded);
         // Half a pixel is 2.6 float steps of the eye here; the float reference itself jitters by one.
         CHECK(deviation(*loaded, legacy_reference(text), 0, 10, .005F).seen < 8e-4F);
+    }
+    SECTION("Refinement leaves room for the keyframes added next") {
+        // At zoom 1000 these swings would need more keys than a track holds.
+        const std::string tight = "yaw = 0; pitch = 0; distance = 1; zoom = 1000; camera_target = [0,0,0];";
+        std::vector<LegacyKey> yaw;
+        for (int i = 0; i <= 8; ++i) yaw.push_back({static_cast<f32>(i), i % 2 ? 170.F : -170.F});
+        auto loaded = project::decode(legacy_scene(value, tight, legacy_track("yaw", yaw)));
+        REQUIRE(loaded);
+        const auto refined = keys_of(*loaded, "position");
+        CHECK(refined > 1000);
+        CHECK(refined <= vng::timeline::max_keys_per_track / 2 + yaw.size());
+        REQUIRE(project::add_keyframe(*loaded, 8.5F));
+        CHECK(keys_of(*loaded, "position") == refined + 1);
     }
     SECTION("A legacy shot at the total key limit loads quickly") {
         std::vector<LegacyKey> pitch, distance, target, zoom;
