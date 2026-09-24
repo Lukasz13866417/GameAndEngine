@@ -182,7 +182,7 @@ TEST_CASE(
     CHECK(keyframe_times(state) == std::vector<f32>{0, 3, 6, 8});
     CHECK(state.document.keyframe_names.contains(3));
     const auto values = keyframe_values(state, 3);
-    REQUIRE(values.size() == 25); // Mesh, sun and camera properties.
+    REQUIRE(values.size() == 24); // Mesh, sun and camera properties.
     CHECK(std::ranges::all_of(values, [](const auto& field) { return field.keyed; }));
     CHECK(std::get<Vec3>(values[0].value) == previous.model_transform.position);
     const auto visible = std::ranges::find_if(values, [](const auto& field) {

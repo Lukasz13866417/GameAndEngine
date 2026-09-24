@@ -91,44 +91,6 @@ void sample(T& value, const timeline::Timeline& timeline, u64 object, std::strin
             value = *typed;
 }
 
-// Where an orbiting camera's eye is at `time`, given its rotation then. Its
-// focus point moves between position keys as each key's interpolation says,
-// and the eye turns and dollies around it; at a key the eye is exactly where
-// the key puts it. Before the first key the focus point is the one its
-// default placement looks at.
-Vec3 orbit_position(const State& state, const SceneInstance& camera, f32 time, Vec3 rotation) {
-    const auto& timeline = state.document.timeline;
-    const auto& lens = std::get<CameraSettings>(camera.settings);
-    // The focus point at a key: its eye with the rotation and focus there.
-    const auto keyed_point = [&](const timeline::Keyframe& key) {
-        auto turn = camera.transform.rotation;
-        auto focus = lens.focus;
-        sample(turn, timeline, camera.id, "rotation", key.time);
-        sample(focus, timeline, camera.id, "focus", key.time);
-        return focus_point(std::get<Vec3>(key.value), turn, focus);
-    };
-    auto point = focus_point(camera.transform.position, camera.transform.rotation, lens.focus);
-    if (const auto* track = timeline.find({camera.id, "position"})) {
-        const auto& keys = track->keys;
-        const auto next = std::ranges::lower_bound(keys, time, {}, &timeline::Keyframe::time);
-        if (next != keys.end() && next->time == time) return std::get<Vec3>(next->value);
-        if (next != keys.begin()) {
-            point = keyed_point(*(next - 1));
-            if (next != keys.end() && next->incoming == timeline::Interpolation::linear) {
-                const auto to = keyed_point(*next);
-                const double ratio = (static_cast<double>(time) - (next - 1)->time) /
-                                     (static_cast<double>(next->time) - (next - 1)->time);
-                for (unsigned c = 0; c < 3; ++c)
-                    point[c] = static_cast<f32>(std::lerp(static_cast<double>(point[c]), static_cast<double>(to[c]), ratio));
-            }
-        }
-    }
-    auto focus = lens.focus;
-    sample(focus, timeline, camera.id, "focus", time);
-    auto eye = orbit_eye(point, rotation, focus);
-    for (unsigned c = 0; c < 3; ++c) eye[c] = std::clamp(eye[c], -scene_coordinate_limit, scene_coordinate_limit);
-    return eye;
-}
 } // namespace
 
 std::vector<AnimationProperty> animation_properties(const State& state) {
@@ -136,8 +98,10 @@ std::vector<AnimationProperty> animation_properties(const State& state) {
     for (const auto& instance : state.document.instances) {
         const auto id = instance.id;
         const auto& name = instance.name;
+        const auto* camera = std::get_if<CameraSettings>(&instance.settings);
         properties.insert(properties.end(), {
-            {{id, "position"}, "Position", name, instance.transform.position, -scene_coordinate_limit, scene_coordinate_limit},
+            {{id, "position"}, camera && camera->orbit ? "Focus point" : "Position", name, instance.transform.position,
+             -scene_coordinate_limit, scene_coordinate_limit},
             {{id, "rotation"}, "Rotation (deg)", name, instance.transform.rotation, -360, 360},
             {{id, "scale"}, "Scale", name, instance.transform.scale, min_instance_scale, max_instance_scale},
             {{id, "axis_scale"}, "Axis scale", name, instance.transform.axis_scale, min_axis_scale, max_axis_scale}});
@@ -159,8 +123,7 @@ std::vector<AnimationProperty> animation_properties(const State& state) {
                 {{id, "zoom"}, "Optical zoom", name, lens->zoom, camera_min_zoom, camera_max_zoom},
                 {{id, "focus"}, "Focus distance", name, lens->focus, camera_min_distance, camera_max_distance},
                 {{id, "active"}, "Active camera", name, lens->active, {}, {}},
-                {{id, "visible"}, "Visible", name, lens->visible, {}, {}},
-                {{id, "orbit"}, "Orbit focus point", name, lens->orbit, {}, {}}});
+                {{id, "visible"}, "Visible", name, lens->visible, {}, {}}});
         } else if (const auto* region = std::get_if<RegionSettings>(&instance.settings)) {
             properties.push_back({{id, "visible"}, "Visible", name, region->visible, {}, {}});
         }
@@ -255,18 +218,61 @@ content::Result<void> key_camera(State& state, u32 id, f32 time, const CameraPos
     return edit_property_keys(state, time, keys);
 }
 
+content::Result<void> set_camera_orbit(State& state, u32 id, bool orbit) {
+    auto* camera = find_instance(state, id);
+    auto* lens = camera ? std::get_if<CameraSettings>(&camera->settings) : nullptr;
+    if (!lens) return invalid("Only a scene camera can orbit its focus point");
+    if (lens->orbit == orbit) return {};
+    // The new position value at `time`: the same eye, stored the other way.
+    const auto convert = [&](Vec3 value, f32 time) -> content::Result<Vec3> {
+        const auto evaluated = evaluate_instance(state, *camera, time);
+        const auto focus = std::get<CameraSettings>(evaluated.settings).focus;
+        const auto converted = orbit ? focus_point(value, evaluated.transform.rotation, focus)
+                                     : orbit_eye(value, evaluated.transform.rotation, focus);
+        if (!valid_scene_position(converted)) return invalid("The camera would leave the scene's coordinate range");
+        return converted;
+    };
+    auto base = convert(camera->transform.position, 0);
+    if (!base) return std::unexpected(base.error());
+    std::optional<timeline::Track> track;
+    if (const auto* existing = state.document.timeline.find({id, "position"})) {
+        track = *existing;
+        for (auto& key : track->keys) {
+            auto value = convert(std::get<Vec3>(key.value), key.time);
+            if (!value) return std::unexpected(value.error());
+            key.value = *value;
+        }
+    }
+    if (track) {
+        if (track->label == (orbit ? "Position" : "Focus point")) track->label = orbit ? "Focus point" : "Position";
+        if (auto replaced = state.document.timeline.replace_track(std::move(*track)); !replaced)
+            return invalid(replaced.error().message);
+    }
+    camera->transform.position = *base;
+    lens->orbit = orbit;
+    return {};
+}
+
 InstanceTransform evaluate_transform(const State& state, const SceneInstance& source, f32 time) {
     auto result = source.transform;
     sample(result.position, state.document.timeline, source.id, "position", time);
     sample(result.rotation, state.document.timeline, source.id, "rotation", time);
     sample(result.scale, state.document.timeline, source.id, "scale", time);
     sample(result.axis_scale, state.document.timeline, source.id, "axis_scale", time);
-    if (const auto* lens = std::get_if<CameraSettings>(&source.settings)) {
-        auto orbit = lens->orbit;
-        sample(orbit, state.document.timeline, source.id, "orbit", time);
-        if (orbit) result.position = orbit_position(state, source, time, result.rotation);
+    if (const auto* lens = std::get_if<CameraSettings>(&source.settings); lens && lens->orbit) {
+        auto focus = lens->focus;
+        sample(focus, state.document.timeline, source.id, "focus", time);
+        result.position = orbit_eye(result.position, result.rotation, focus);
+        for (unsigned c = 0; c < 3; ++c)
+            result.position[c] = std::clamp(result.position[c], -scene_coordinate_limit, scene_coordinate_limit);
     }
     return result;
+}
+Vec3 stored_position(const State& state, const SceneInstance& source, Vec3 placed, f32 time) {
+    const auto* lens = std::get_if<CameraSettings>(&source.settings);
+    if (!lens || !lens->orbit) return placed;
+    const auto evaluated = evaluate_instance(state, source, time);
+    return focus_point(placed, evaluated.transform.rotation, std::get<CameraSettings>(evaluated.settings).focus);
 }
 bool evaluate_visibility(const State& state, const SceneInstance& source, f32 time) {
     auto result = std::visit([](const auto& value) { return value.visible; }, source.settings);
@@ -290,7 +296,6 @@ SceneInstance evaluate_instance(const State& state, const SceneInstance& source,
             sample(value.zoom, state.document.timeline, source.id, "zoom", time);
             sample(value.focus, state.document.timeline, source.id, "focus", time);
             sample(value.active, state.document.timeline, source.id, "active", time);
-            sample(value.orbit, state.document.timeline, source.id, "orbit", time);
         }
     }, result.settings);
     return result;

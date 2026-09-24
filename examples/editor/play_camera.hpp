@@ -13,8 +13,8 @@ namespace editor_example {
 class PlayCamera {
 public:
     // The authored camera data a Play view depends on, in scene order: each
-    // camera's placement, focus, zoom, active flag and path, and the keys of
-    // those properties. Names, frustum visibility, scale and roll (rotation z, which
+    // camera's placement (and whether it orbits), focus, zoom and active flag,
+    // and the keys of those properties. Names, frustum visibility, scale and roll (rotation z, which
     // camera_pose ignores) do not move the view. Compare two to detect an
     // authored camera change.
     struct Camera {
@@ -43,8 +43,7 @@ public:
         for (const auto& track : state.document.timeline.tracks()) {
             const auto& property = track.target.property;
             if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<vng::u32>(track.target.object)) &&
-                (property == "position" || property == "rotation" || property == "focus" || property == "zoom" ||
-                 property == "active" || property == "orbit"))
+                (property == "position" || property == "rotation" || property == "focus" || property == "zoom" || property == "active"))
             {
                 auto keys = track.keys;
                 if (property == "rotation")

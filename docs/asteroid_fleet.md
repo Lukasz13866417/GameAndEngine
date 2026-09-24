@@ -39,8 +39,8 @@ watch the approach and reveal. In the editor, select the **Tracking camera**,
 click **Inspect** and **Play (in editor)** to follow the authored shot. The
 independent Play window uses the same renderer and renders through that camera.
 The shipped `.vscene` predates scene cameras, so its shot loads as an
-**Animation camera** instance that follows the same path (with extra keys
-where it swings along an orbit); a freshly generated scene names it
+**Animation camera** instance that orbits its focus point, as the old camera
+did, and keeps the same keys and path; a freshly generated scene names it
 **Tracking camera**.
 
 Ship/camera paths and rock rotation are ordinary timeline keys. Named

@@ -297,8 +297,12 @@ content::Result<void> apply_patch(State& state, const DocumentPatch& patch) {
     for (const auto& property : patch.properties) {
         const auto description = std::ranges::find(properties, property.target, &AnimationProperty::target);
         auto reference = property_reference(state, property.target);
-        if (description == properties.end() || !reference) return invalid("Unknown patch property");
-        if (auto valid = validate_property_value(*description, property.base); !valid) return valid;
+        if (!reference) return invalid("Unknown patch property");
+        if (description == properties.end()) {
+            // A setting that is never animated travels as its value alone.
+            if (property.track || !std::holds_alternative<bool*>(*reference) || !std::holds_alternative<bool>(property.base))
+                return invalid("Unknown patch property");
+        } else if (auto valid = validate_property_value(*description, property.base); !valid) return valid;
         references.push_back(*reference);
         const auto* current = state.document.timeline.find(property.target);
         if (bool(current) != property.track.has_value() || (current && *current != *property.track)) {

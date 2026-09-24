@@ -61,7 +61,7 @@ void place_camera(SceneInstance& instance, const CameraPose& pose) {
     auto* lens = std::get_if<CameraSettings>(&instance.settings);
     if (!lens) return;
     instance.transform.rotation = {-pose.pitch, pose.yaw, 0};
-    instance.transform.position = orbit_eye(pose.target, instance.transform.rotation, pose.distance);
+    instance.transform.position = lens->orbit ? pose.target : orbit_eye(pose.target, instance.transform.rotation, pose.distance);
     lens->focus = pose.distance;
     lens->zoom = pose.zoom;
 }

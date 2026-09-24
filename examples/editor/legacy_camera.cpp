@@ -66,7 +66,8 @@ struct Shot {
     }
 };
 
-// The latest representable time strictly between `after` and `cut`, close to the cut.
+// A time a millisecond before the cut (halfway, in a shorter gap), or failing
+// that the latest float before it; none when no float lies between.
 std::optional<f32> just_before(f32 cut, f32 after) {
     f32 time = cut - std::min(1e-3F, (cut - after) * .5F);
     if (!(after < time && time < cut)) time = std::nextafter(cut, after);
@@ -77,34 +78,44 @@ std::optional<f32> just_before(f32 cut, f32 after) {
 // Rotation is {-pitch, yaw, 0}, linear wherever yaw and pitch both are, so a
 // key at each of their key times reproduces both. A cut in one while the
 // other still moves becomes a key just before the cut followed by a held key
-// at it, so neither the cut nor the motion is lost.
-std::vector<Keyframe> rotation_keys(const Component<f32>& yaw, const Component<f32>& pitch) {
+// at it, so neither the cut nor the motion is lost; `before_cut` marks those
+// extra keys.
+struct Turn {
+    std::vector<Keyframe> keys;
+    std::vector<bool> before_cut;
+};
+Turn rotation_keys(const Component<f32>& yaw, const Component<f32>& pitch) {
     std::set<f32> times;
     for (const auto* component : {&yaw, &pitch})
         for (const auto& key : component->keys()) times.insert(key.time);
     const auto at = [&](f32 t) { return Vec3{-pitch.at(t), yaw.at(t), 0}; };
     const auto before = [&](f32 t) { return Vec3{-pitch.before(t), yaw.before(t), 0}; };
-    std::vector<Keyframe> keys;
+    Turn turn;
+    const auto add = [&](Keyframe key, bool before_cut = false) {
+        turn.keys.push_back(std::move(key));
+        turn.before_cut.push_back(before_cut);
+    };
     for (auto time = times.begin(); time != times.end(); ++time) {
-        if (time == times.begin()) { keys.push_back({*time, at(*time), Interpolation::hold}); continue; }
+        if (time == times.begin()) { add({*time, at(*time), Interpolation::hold}); continue; }
         const f32 a = *std::prev(time), b = *time;
         if (const auto left = before(b), to = at(b); left == to) {
-            keys.push_back({b, to, Interpolation::linear});
+            add({b, to, Interpolation::linear});
         } else if (const auto freeze = just_before(b, a); at(a) == left || !freeze) {
             // Nothing moved before the cut, or there is no room to keep the motion.
-            keys.push_back({b, to, Interpolation::hold});
+            add({b, to, Interpolation::hold});
         } else {
-            keys.push_back({*freeze, at(*freeze), Interpolation::linear});
-            keys.push_back({b, to, Interpolation::hold});
+            add({*freeze, at(*freeze), Interpolation::linear}, true);
+            add({b, to, Interpolation::hold});
         }
     }
-    return keys;
+    return turn;
 }
 
 // Last resort when the rotation keys exceed a timeline limit: repeatedly drop
-// the interior key its neighbours reproduce best, so the scene still loads. A
-// target of zero drops the track, leaving the camera's base rotation.
-void thin(std::vector<Keyframe>& keys, std::size_t target) {
+// the interior key its neighbours reproduce best, so the scene still loads.
+// Only keys marked `removable` are dropped (all when it is empty). A target of
+// zero drops the track, leaving the camera's base rotation.
+void thin(std::vector<Keyframe>& keys, std::size_t target, const std::vector<bool>& removable = {}) {
     if (target == 0) { keys.clear(); return; }
     if (keys.size() <= target) return;
     const auto n = keys.size();
@@ -121,7 +132,8 @@ void thin(std::vector<Keyframe>& keys, std::size_t target) {
     };
     std::set<std::pair<f32, std::size_t>> queue;
     std::vector<f32> costs(n, 0);
-    for (std::size_t i = 1; i + 1 < n; ++i) queue.insert({costs[i] = cost(i), i});
+    for (std::size_t i = 1; i + 1 < n; ++i)
+        if (removable.empty() || removable[i]) queue.insert({costs[i] = cost(i), i});
     std::vector<bool> alive(n, true);
     auto count = n;
     while (count > target && count > 2 && !queue.empty()) {
@@ -132,21 +144,13 @@ void thin(std::vector<Keyframe>& keys, std::size_t target) {
         const auto p = previous[i], q = next[i];
         next[p] = q;
         previous[q] = p;
-        for (const auto j : {p, q}) {
-            if (j == 0 || j + 1 >= n) continue;
-            queue.erase({costs[j], j});
-            queue.insert({costs[j] = cost(j), j});
-        }
+        for (const auto j : {p, q})
+            if (queue.erase({costs[j], j})) queue.insert({costs[j] = cost(j), j});
     }
-    if (count > target) alive[n - 1] = false; // A single key: keep the first.
+    if (count > target && removable.empty()) alive[n - 1] = false; // A single key: keep the first.
     std::vector<Keyframe> kept;
     for (std::size_t i = 0; i < n; ++i) if (alive[i]) kept.push_back(std::move(keys[i]));
     keys = std::move(kept);
-}
-
-Vec3 clamp_position(Vec3 p) {
-    for (unsigned c = 0; c < 3; ++c) p[c] = std::clamp(p[c], -scene_coordinate_limit, scene_coordinate_limit);
-    return p;
 }
 } // namespace
 
@@ -184,12 +188,10 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     camera->name = "Animation camera";
     auto& lens = std::get<CameraSettings>(camera->settings);
     lens.active = true;
-    // The old camera orbited its target; an orbiting camera moves the same way.
+    // The old camera orbited its target; an orbiting camera is placed by that
+    // target and moves the same way.
     lens.orbit = true;
     place_camera(*camera, shot.pose);
-    // An old eye could lie beyond the scene's coordinate range (target plus
-    // distance); keep the scene loadable rather than reject it.
-    camera->transform.position = clamp_position(camera->transform.position);
     if (shot.tracks.empty()) return {};
 
     // The old decoder put these tracks through the timeline, which sorts keys
@@ -208,36 +210,29 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
             if (!valid_camera_pose(legacy.at(key.time)) || !valid_camera_pose(legacy.before(key.time)))
                 return invalid("Invalid legacy animation camera key");
 
-    // Each new track comes from the old tracks it depends on, key for key.
-    // Focus and zoom are the old distance and zoom; rotation is yaw and pitch.
-    const auto copy = [](const Component<f32>& component) {
+    // Each new track comes from the old tracks it depends on, key for key:
+    // position is the target, focus and zoom are distance and zoom, and
+    // rotation is yaw and pitch.
+    const auto copy = [](const auto& component) {
         const auto keys = component.keys();
         return std::vector<Keyframe>(keys.begin(), keys.end());
     };
+    auto position_keys = copy(legacy.target);
     const auto focus_keys = copy(legacy.distance), zoom_keys = copy(legacy.zoom);
-    auto turn_keys = rotation_keys(legacy.yaw, legacy.pitch);
-    // The old tracks fitted the scene's key limits; only the keys that keep a
-    // cut in yaw or pitch apart from the other's motion can exceed them.
+    auto turn = rotation_keys(legacy.yaw, legacy.pitch);
+    // Every old track fitted the key limits, but merging yaw's and pitch's key
+    // times, plus the keys that hold a cut apart from the other's motion, can
+    // exceed them. Those extra keys go first.
     std::size_t other_keys{};
     for (const auto& existing : state.document.timeline.tracks()) other_keys += existing.keys.size();
-    const auto target_count = legacy.target.keys().size();
     const auto budget = timeline::max_total_keys -
-        std::min(timeline::max_total_keys, other_keys + target_count + focus_keys.size() + zoom_keys.size());
-    thin(turn_keys, std::min(timeline::max_keys_per_track, budget));
-
-    // The eye has a key wherever the target has one, placed around the target
-    // by the rotation and focus the camera has there. Between keys the camera
-    // orbits, so its focus point follows the old target and the eye follows
-    // yaw, pitch and distance as they did.
-    const Component<Vec3> turn{&turn_keys, camera->transform.rotation};
-    std::vector<Keyframe> position_keys;
-    for (const auto& key : legacy.target.keys())
-        position_keys.push_back({key.time, clamp_position(orbit_eye(std::get<Vec3>(key.value), turn.at(key.time),
-                                                                    legacy.distance.at(key.time))),
-                                 key.incoming});
+        std::min(timeline::max_total_keys, other_keys + position_keys.size() + focus_keys.size() + zoom_keys.size());
+    const auto limit = std::min(timeline::max_keys_per_track, budget);
+    thin(turn.keys, limit, turn.before_cut);
+    thin(turn.keys, limit);
 
     const auto properties = animation_properties(state);
-    for (auto [property, keys] : {std::pair{"position", std::move(position_keys)}, std::pair{"rotation", std::move(turn_keys)},
+    for (auto [property, keys] : {std::pair{"position", std::move(position_keys)}, std::pair{"rotation", std::move(turn.keys)},
                                   std::pair{"focus", focus_keys}, std::pair{"zoom", zoom_keys}}) {
         if (keys.empty()) continue;
         timeline::Track generated{{*created, property}, {}, {}, std::move(keys)};

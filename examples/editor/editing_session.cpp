@@ -324,7 +324,7 @@ content::Result<bool> EditingSession::move(Vec3 position) {
     const Vec3 delta{position.x - p.x, position.y - p.y, position.z - p.z};
     for (std::size_t i = 0; i < gesture_->objects.size(); ++i) {
         const auto origin = gesture_->origins[i];
-        auto moved = apply_position_value(state_, gesture_->objects[i],
+        auto moved = apply_placed_position(state_, gesture_->objects[i],
             i == 0 ? position : Vec3{origin.x + delta.x, origin.y + delta.y, origin.z + delta.z});
         if (!moved) {
             if (auto restored = restore(*rollback, false); !restored) return std::unexpected(restored.error());
@@ -391,11 +391,11 @@ content::Result<bool> EditingSession::rotations(std::span<const Vec3> values) {
         const auto offset=rotation_math::direction(values[i],local);
         Vec3 position{};for(unsigned c=0;c<3;++c)position[c]=world[c]-offset[c]*center.transform.scale;
         auto changed=apply_rotation_value(state_,center.object,values[i]);
-        if(changed && position!=center.transform.position)changed=apply_position_value(state_,center.object,position);
+        if(changed && position!=center.transform.position)changed=apply_placed_position(state_,center.object,position);
         // Restore the sampled position too when a later update returns this
         // object's center to its original position during the same gesture.
         else if(changed && evaluate_transform(state_,*find_instance(state_,center.object),state_.viewport.time).position!=position)
-            changed=apply_position_value(state_,center.object,position);
+            changed=apply_placed_position(state_,center.object,position);
         if(!changed) {
             if(auto restored=restore(*before,false); !restored)return std::unexpected(restored.error());
             return std::unexpected(changed.error());

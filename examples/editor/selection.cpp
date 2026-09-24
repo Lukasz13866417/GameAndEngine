@@ -252,7 +252,7 @@ vng::content::Result<bool> apply_animated_translation(State& state,
     const auto current = values.transform.position;
     if (position == current)
         return true; // A click without movement must not silently create a key.
-    if (auto applied = apply_position_value(state, state.viewport.selected_object, position);
+    if (auto applied = apply_placed_position(state, state.viewport.selected_object, position);
         !applied)
         return std::unexpected(applied.error());
     return true;

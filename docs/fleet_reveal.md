@@ -40,8 +40,8 @@ animates the scene but leaves your private inspection camera alone. **Play
 (independent)** uses the worker's native window and renders through that same
 scene camera. Native camera navigation temporarily overrides the shot; restart
 independent Play to resume following it. The shipped `.vscene` predates scene cameras, so its shot loads as an
-**Animation camera** instance that follows the same path (with extra keys
-where it swings along an orbit); a freshly generated scene names it
+**Animation camera** instance that orbits its focus point, as the old camera
+did, and keeps the same keys and path; a freshly generated scene names it
 **Tracking camera**.
 
 Pause and choose a timestamp before authoring changes:

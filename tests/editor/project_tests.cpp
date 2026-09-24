@@ -959,6 +959,7 @@ Deviation deviation(const project::State& loaded, const LegacyReference& referen
     for (f32 time = start; time <= end + step * .5F; time += step) {
         const auto expected = reference.at(time);
         auto probe = *camera;
+        std::get<project::CameraSettings>(probe.settings).orbit = false; // The eye, not the focus point.
         project::place_camera(probe, expected);
         const auto eye = project::evaluate_transform(loaded, *camera, time).position;
         const auto actual = *project::evaluate_camera(loaded, time);
@@ -1261,6 +1262,37 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         // Half a pixel is 2.6 float steps of the eye here; the float reference itself jitters by one.
         CHECK(deviation(*loaded, legacy_reference(text), 0, 10, .005F).seen < 8e-4F);
     }
+    SECTION("Editing a migrated shot keeps the rest of its path") {
+        auto [loaded, reference] = load(legacy_track("yaw", {{0, 0.F, true}, {4, 90.F}}) +
+                                        legacy_track("target", {{0, Vec3{0, 0, 0}}, {6, Vec3{3, 0, 0}}}));
+        // A keyframe added anywhere stores where the camera is and changes nothing else.
+        REQUIRE(project::add_keyframe(loaded, 2));
+        CHECK(deviation(loaded, reference, 0, 8, .01F).eye < 1e-5F);
+        // Saving a view at time zero puts the camera exactly there, and saving
+        // it again changes nothing, whether or not the target was animated.
+        auto [turning, ignored] = load(legacy_track("yaw", {{0, 0.F, true}, {4, 90.F}}));
+        for (auto* shot : {&loaded, &turning}) {
+            shot->document.keyframe_names[0] = "start";
+            project::EditingSession session{*shot};
+            session.viewport().time = 0;
+            session.select_keyframe(0);
+            const auto shot_camera = project::active_camera(*shot, 0)->id;
+            const project::CameraPose view{-40, 20, 6, {2, 1, 0}, 1.5F};
+            auto saved = session.set_camera(shot_camera, view);
+            REQUIRE(saved); CHECK(*saved);
+            CHECK(near(*project::evaluate_camera(session.state(), 0), view));
+            auto again = session.set_camera(shot_camera, view);
+            REQUIRE(again); CHECK_FALSE(*again);
+        }
+        // A far focus point does not leak into the close-up that follows it.
+        const std::string distant = "yaw = 30; pitch = 20; distance = 100000; zoom = 1; camera_target = [0.3,0.2,0.1];";
+        const auto text = legacy_scene(value, distant, legacy_track("distance", {{1, 100000.F}, {5, .5F}}));
+        auto dolly = project::decode(text);
+        REQUIRE(dolly);
+        const auto close_up = deviation(*dolly, legacy_reference(text), 5, 8, .01F);
+        CHECK(close_up.target < 1e-6F);
+        CHECK(close_up.eye < 1e-5F);
+    }
     SECTION("A migrated shot leaves the old room for keyframes") {
         // 16300 keys elsewhere leave room for one keyframe, which keys every property.
         auto full = value;
@@ -1343,6 +1375,26 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         CHECK(worst.yaw < .05F);
         CHECK(worst.pitch < .05F);
     }
+    SECTION("Rotation that needs more keys than a track holds keeps every old key's value") {
+        // Every yaw key cuts while pitch moves, so an exact copy needs a key a
+        // millisecond before each cut: 5399 keys. Those extra keys go first,
+        // and every old yaw and pitch key keeps its value and time.
+        std::vector<LegacyKey> yaw, pitch;
+        for (int i = 0; i < 1800; ++i) {
+            yaw.push_back({.01F + .02F * static_cast<f32>(i), i % 2 ? 10.F : -10.F, true});
+            pitch.push_back({.02F + .02F * static_cast<f32>(i), static_cast<f32>(i % 3) * 20 - 20});
+        }
+        value.document.timeline_duration = 90;
+        const auto [loaded, reference] = load(legacy_track("yaw", yaw) + legacy_track("pitch", pitch));
+        CHECK(keys_of(loaded, "rotation") == vng::timeline::max_keys_per_track);
+        f32 worst{};
+        for (const auto* keys : {&yaw, &pitch})
+            for (const auto& key : *keys) {
+                const auto actual = *project::evaluate_camera(loaded, key.time), expected = reference.at(key.time);
+                worst = std::max({worst, std::abs(actual.yaw - expected.yaw), std::abs(actual.pitch - expected.pitch)});
+            }
+        CHECK(worst < 1e-3F);
+    }
 }
 
 TEST_CASE("Legacy files load the way they were saved, or are rejected like before",
@@ -1377,7 +1429,8 @@ TEST_CASE("Legacy files load the way they were saved, or are rejected like befor
         REQUIRE(loaded);
         const auto* camera = project::active_camera(*loaded, 0);
         REQUIRE(camera);
-        CHECK(camera->transform.position.x == project::scene_coordinate_limit);
+        CHECK(camera->transform.position.x == 999999); // Placed by the old target.
+        CHECK(project::evaluate_transform(*loaded, *camera, 0).position.x == project::scene_coordinate_limit);
     }
     SECTION("A scene with no identity left for a camera still loads, without one") {
         auto text = replace_value(legacy_scene(value, shot), "next_instance_id", "4294967295");

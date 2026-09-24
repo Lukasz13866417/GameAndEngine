@@ -29,6 +29,10 @@ struct PositionEdit {
 // Returns false for a no-op. Existing animation edits a key at the playhead,
 // preserving its incoming interpolation; an unkeyed property edits its base.
 [[nodiscard]] vng::content::Result<bool> apply_position_value(State&, vng::u32 object, vng::Vec3);
+// The same for a position where the instance should show at the playhead, as
+// gizmos and drags give it: an orbiting camera stores the focus point its eye
+// there looks at.
+[[nodiscard]] vng::content::Result<bool> apply_placed_position(State&, vng::u32 object, vng::Vec3 placed);
 
 [[nodiscard]] vng::content::Result<PositionEdit>
 position_edit(vng::u64 base_revision, const State&, vng::u32 object);

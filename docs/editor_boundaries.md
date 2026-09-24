@@ -313,15 +313,16 @@ with yaw/pitch/distance/target/zoom tracks, which was the simulation camera
 whenever a scene had no camera instances. `legacy_camera.hpp` is the only code
 that knows that shape: the decoder asks it to read the shot and route its
 tracks, and it turns a shot that was in use into an active **Animation camera**
-instance that orbits, as the old camera did: between position keys its focus
-point moves in a straight line and the eye turns and dollies around it. So the
-old tracks carry over key for key and the path is unchanged: focus and zoom
-copy distance and zoom, position has the target's keys (each eye placed around
-the target), and rotation takes yaw's and pitch's key times. A cut in yaw or
-pitch while the other moves keeps both via a key one millisecond before the
-cut; only if those rotation keys would exceed a timeline limit are they thinned.
-A scene that already had camera instances drops the unused shot, as does a
-scene already at the instance limit. An eye beyond the scene's coordinate
+instance that orbits, as the old camera did: it is placed by its focus point
+(`CameraSettings::orbit`), which moves in a straight line between position keys
+while the eye turns and dollies around it. So the old tracks carry over key for
+key and the path is unchanged: position is the old target, focus and zoom are
+distance and zoom, and rotation takes yaw's and pitch's key times. A cut in yaw
+or pitch while the other moves keeps both via a key one millisecond before the
+cut. Only if merging yaw and pitch needs more keys than a track holds is
+rotation thinned, those extra keys first, so every old key keeps its value. A
+scene that already had camera instances drops the unused shot, as does a scene
+already at the instance limit. An orbiting eye beyond the scene's coordinate
 range is clamped into it. Saving writes version 5.
 
 Native `ProjectControls` callbacks report the properties they committed. The

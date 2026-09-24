@@ -329,11 +329,13 @@ metadata and **Logs → Interaction timing** measurements/export.
   a position and rotation like any instance (its heading is the look direction),
   plus a **Camera lens** with optical zoom and a focus distance that doubles as
   its orbit pivot and far-plane scale. Between keys a camera's eye moves in a
-  straight line; with **Orbit focus point between keys** its focus point moves
-  in a straight line instead, and the camera turns and dollies around it, so a
-  shot that keys a turn around a subject keeps the subject framed. At keys both
-  paths put the camera exactly where it was keyed, and the setting is itself a
-  keyable property. Several cameras can exist, but only one is
+  straight line. With **Orbit focus point between keys** the camera is placed by
+  its focus point instead: its position values and keys are the point it looks
+  at, which moves in a straight line between keys while the camera turns and
+  dollies around it, so a shot that keys a turn around a subject keeps the
+  subject framed. Switching the setting rewrites those values so the camera
+  stays where it is at every key; moving the camera in the viewport moves its
+  focus point along with it. The setting is not keyed. Several cameras can exist, but only one is
   **active** at any timestamp; **Set active here** keys the switch at the selected
   keyframe and clears the others there, so the simulation cuts between cameras.
   Independent Play and the demos render through the active camera.

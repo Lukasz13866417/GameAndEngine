@@ -105,14 +105,30 @@ editor::Result<void> apply_appearance(State& state, DocumentChanges& changes, u3
 } // namespace
 
 editor::Result<void> apply_lens(State& state, DocumentChanges& changes, u32 id, const CameraSettings& before, const CameraSettings& next) {
-    return apply(state, changes, id, [&](auto& candidate) -> editor::Result<void> {
-        auto* value = std::get_if<CameraSettings>(&candidate.instance.settings);
-        if (!value) return invalid("Edited scene instance is not a camera");
-        if (auto changed = candidate.change("zoom", before.zoom, next.zoom, value->zoom); !changed) return changed;
-        if (auto changed = candidate.change("focus", before.focus, next.focus, value->focus); !changed) return changed;
-        if (auto changed = candidate.change("orbit", before.orbit, next.orbit, value->orbit); !changed) return changed;
-        return candidate.change("visible", before.visible, next.visible, value->visible);
-    });
+    const auto* source = find_instance(state, id);
+    if (!source) return invalid("Edited scene instance no longer exists");
+    // Kept to undo the lens edits if the placement cannot switch.
+    const auto instance = *source;
+    const auto timeline = state.document.timeline;
+    const auto published = changes;
+    if (auto lens = apply(state, changes, id, [&](auto& candidate) -> editor::Result<void> {
+            auto* value = std::get_if<CameraSettings>(&candidate.instance.settings);
+            if (!value) return invalid("Edited scene instance is not a camera");
+            if (auto changed = candidate.change("zoom", before.zoom, next.zoom, value->zoom); !changed) return changed;
+            if (auto changed = candidate.change("focus", before.focus, next.focus, value->focus); !changed) return changed;
+            return candidate.change("visible", before.visible, next.visible, value->visible);
+        }); !lens) return lens;
+    // Placement is not animated: switching it keeps the camera where it is.
+    if (before.orbit == next.orbit) return {};
+    if (auto placed = set_camera_orbit(state, id, next.orbit); !placed) {
+        *find_instance(state, id) = instance;
+        state.document.timeline = timeline;
+        changes = published;
+        return invalid(placed.error().message);
+    }
+    changes.properties.insert({id, "position"});
+    changes.properties.insert({id, "orbit"});
+    return {};
 }
 editor::Result<void> apply_active_camera(State& state, DocumentChanges& changes, u32 id) {
     if (!is_camera_instance(state, id)) return invalid("Only a scene camera can be made active");
@@ -167,7 +183,7 @@ void ProjectControls::describe_editor(vng::editor::Inspector& ui) {
                 original.reset();
                 return {};
             }
-            auto moved = apply_position_value(state_, id, next);
+            auto moved = apply_placed_position(state_, id, next);
             if (!moved) return invalid(moved.error().message);
             if (*moved) changes_.properties.insert({id, "position"});
             if (phase == vng::editor::Phase::commit) original.reset();

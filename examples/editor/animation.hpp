@@ -35,7 +35,11 @@ struct SceneValues {
 [[nodiscard]] SceneValues evaluate_scene(const State&, vng::f32 time);
 [[nodiscard]] SceneInstance evaluate_instance(const State&, const SceneInstance&, vng::f32 time);
 // Placement queries must not copy an instance's editable boundary or settings.
+// An orbiting camera's position is its eye, placed around its focus point.
 [[nodiscard]] InstanceTransform evaluate_transform(const State&, const SceneInstance&, vng::f32 time);
+// The position value that shows an instance at `placed` at `time`: `placed`
+// itself, or for an orbiting camera the focus point its eye there looks at.
+[[nodiscard]] vng::Vec3 stored_position(const State&, const SceneInstance&, vng::Vec3 placed, vng::f32 time);
 [[nodiscard]] bool evaluate_visibility(const State&, const SceneInstance&, vng::f32 time);
 // The simulation camera: the pose of the active scene camera instance, or
 // nothing when the scene has no camera. The editor's own view is never this.
@@ -53,6 +57,10 @@ struct SceneValues {
 [[nodiscard]] vng::content::Result<vng::u32> ensure_camera(State&, const CameraPose&, std::string name = "Camera");
 [[nodiscard]] vng::content::Result<void> key_camera(State&, vng::u32 camera, vng::f32 time, const CameraPose&,
     vng::timeline::Interpolation = vng::timeline::Interpolation::linear);
+// Places a camera by its focus point (orbit) or by its eye, rewriting its
+// position and position keys so it stays where it is at time zero and at
+// every key; only the path between keys changes.
+[[nodiscard]] vng::content::Result<void> set_camera_orbit(State&, vng::u32 camera, bool orbit);
 [[nodiscard]] vng::content::Result<void> validate_animation(const State&);
 [[nodiscard]] vng::content::Result<void> validate_animation(
     std::span<const AnimationProperty>, const vng::timeline::Timeline&, vng::f32 duration,

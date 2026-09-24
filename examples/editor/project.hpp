@@ -48,8 +48,11 @@ struct SunSettings {
 // used when none is marked active.
 struct CameraSettings {
     vng::f32 zoom{1}, focus{8};
-    // orbit: between position keys the camera's focus point, not its eye,
-    // moves in a straight line, and the camera turns and dollies around it.
+    // orbit: the camera is placed by its focus point. Its position (and
+    // position keys) is the point it looks at and its eye stands `focus`
+    // behind it, so between keys the focus point moves in a straight line and
+    // the camera turns and dollies around it. Not animated; set_camera_orbit
+    // switches it without moving the camera.
     bool active{}, visible{true}, orbit{};
     friend bool operator==(const CameraSettings&, const CameraSettings&) = default;
 };
@@ -204,8 +207,9 @@ struct MeshTarget {
 [[nodiscard]] const CameraSettings* camera_settings(const State&, vng::u32);
 [[nodiscard]] bool is_camera_instance(const State&, vng::u32);
 [[nodiscard]] bool has_camera(const State&); // any scene camera instance
-// The orbit pose a camera instance renders with (roll ignored), and the
-// inverse placement. Both are pure value conversions without timeline access.
+// The orbit pose an evaluated camera instance renders with (roll ignored),
+// and the inverse: the authored placement for a pose (for an orbiting camera,
+// its focus point). Both are pure value conversions without timeline access.
 [[nodiscard]] CameraPose camera_pose(const SceneInstance& evaluated);
 void place_camera(SceneInstance&, const CameraPose&);
 // The point a camera placed at `position` with this rotation looks at from

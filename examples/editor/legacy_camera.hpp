@@ -25,18 +25,17 @@ struct LegacyCameraShot {
 // The typed legacy camera properties, so the file reader can parse their keys.
 [[nodiscard]] std::vector<AnimationProperty> legacy_camera_properties(const CameraPose& base);
 
-// Adds an active "Animation camera" that follows the shot, placed where the
-// shot's eye was (clamped to the scene's coordinate range if it lay beyond).
-// The old tracks first go through the timeline's own sorting and validation,
-// exactly as the old loader did. The camera orbits (CameraSettings::orbit), as
-// the old one did, so each new track copies the old tracks it depends on key
-// for key and the path is the same: focus and zoom are distance and zoom;
-// position has the target's keys, each eye placed around the target by the
-// rotation and focus there; rotation takes yaw's and pitch's key times, and a
-// cut in one while the other still moves becomes a key a millisecond before
-// the cut plus a held key at it. Only if those rotation keys exceed a timeline
-// limit are the least significant ones dropped, so every old scene loads. A
-// scene that already has camera instances never used the shot, so it is
-// dropped; so is the shot of a scene already at the instance limit.
+// Adds an active "Animation camera" that follows the shot. It orbits, as the
+// old camera did (CameraSettings::orbit): it is placed by its focus point, so
+// the old tracks carry over key for key and the path is the same. The old
+// tracks first go through the timeline's own sorting and validation, exactly
+// as the old loader did. Position is the old target, focus and zoom are
+// distance and zoom, and rotation takes yaw's and pitch's key times; a cut in
+// one of those while the other still moves becomes a key a millisecond before
+// the cut plus a held key at it. Only if merging them needs more keys than the
+// timeline allows are rotation keys dropped, those extra keys first, so every
+// old scene loads. A scene that already has camera instances never used the
+// shot, so it is dropped; so is the shot of a scene already at the instance
+// limit.
 [[nodiscard]] vng::content::Result<void> migrate_legacy_camera(State&, const LegacyCameraShot&);
 } // namespace editor_example

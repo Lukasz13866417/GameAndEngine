@@ -1,4 +1,5 @@
 #include "position_edits.hpp"
+#include "animation.hpp"
 #include "instance_property_edits.hpp"
 
 namespace editor_example {
@@ -16,6 +17,11 @@ vng::content::Result<void> restore_position(State& state, const PositionSnapshot
 }
 vng::content::Result<bool> apply_position_value(State& state, vng::u32 object, vng::Vec3 value) {
     return implementation.apply_value(state, object, value);
+}
+vng::content::Result<bool> apply_placed_position(State& state, vng::u32 object, vng::Vec3 placed) {
+    const auto* instance = find_instance(state, object);
+    return implementation.apply_value(state, object,
+        instance ? stored_position(state, *instance, placed, state.viewport.time) : placed);
 }
 vng::content::Result<PositionEdit> position_edit(vng::u64 base, const State& state, vng::u32 object) {
     return implementation.make_edit(base, state, object);
