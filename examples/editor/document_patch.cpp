@@ -49,6 +49,7 @@ std::optional<PropertyReference<S>> property_reference(S& state, const timeline:
             if (key == "zoom") return &settings.zoom;
             if (key == "focus") return &settings.focus;
             if (key == "active") return &settings.active;
+            if (key == "orbit") return &settings.orbit;
         }
         return {};
     }, instance->settings);

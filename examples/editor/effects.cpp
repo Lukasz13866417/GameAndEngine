@@ -110,6 +110,7 @@ editor::Result<void> apply_lens(State& state, DocumentChanges& changes, u32 id, 
         if (!value) return invalid("Edited scene instance is not a camera");
         if (auto changed = candidate.change("zoom", before.zoom, next.zoom, value->zoom); !changed) return changed;
         if (auto changed = candidate.change("focus", before.focus, next.focus, value->focus); !changed) return changed;
+        if (auto changed = candidate.change("orbit", before.orbit, next.orbit, value->orbit); !changed) return changed;
         return candidate.change("visible", before.visible, next.visible, value->visible);
     });
 }
@@ -197,6 +198,7 @@ void ProjectControls::describe_editor(vng::editor::Inspector& ui) {
         auto edit = ui.edit("lens", *lens, "Camera lens");
         edit.slider("zoom", &CameraSettings::zoom, camera_min_zoom, std::max(10.F, lens->zoom), "Optical zoom");
         edit.slider("focus", &CameraSettings::focus, camera_min_distance, std::max(100.F, lens->focus), "Focus distance");
+        edit.toggle("orbit", &CameraSettings::orbit, "Orbit focus point between keys");
         edit.toggle("visible", &CameraSettings::visible, "Show frustum in preview");
         edit.apply("Apply lens", [this, id, before = *lens](const CameraSettings& next) mutable {
             auto result = apply_lens(state_, changes_, id, before, next);

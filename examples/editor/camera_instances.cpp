@@ -14,6 +14,11 @@ Vec3 orbit(f32 yaw, f32 pitch) {
     return {std::sin(yaw * radians) * std::cos(pitch * radians), std::sin(pitch * radians),
             std::cos(yaw * radians) * std::cos(pitch * radians)};
 }
+// Instance pitch looks up when positive; an orbit pitch is the eye's
+// elevation above its pivot, so the two are opposite in sign.
+f32 orbit_yaw(Vec3 rotation) { return std::remainder(rotation.y, 360.F); }
+f32 orbit_pitch(Vec3 rotation) { return std::clamp(-rotation.x, -camera_max_pitch, camera_max_pitch); }
+f32 orbit_distance(f32 focus) { return std::clamp(focus, camera_min_distance, camera_max_distance); }
 auto invalid(std::string message) {
     content::Diagnostic error;
     error.code = content::ErrorCode::invalid_document;
@@ -43,27 +48,35 @@ CameraPose camera_pose(const SceneInstance& evaluated) {
     CameraPose pose;
     const auto* lens = std::get_if<CameraSettings>(&evaluated.settings);
     if (!lens) return pose;
-    // Instance pitch looks up when positive; an orbit pitch is the eye's
-    // elevation above its pivot, so the two are opposite in sign.
-    pose.yaw = std::remainder(evaluated.transform.rotation.y, 360.F);
-    pose.pitch = std::clamp(-evaluated.transform.rotation.x, -camera_max_pitch, camera_max_pitch);
-    pose.distance = std::clamp(lens->focus, camera_min_distance, camera_max_distance);
+    const auto& transform = evaluated.transform;
+    pose.yaw = orbit_yaw(transform.rotation);
+    pose.pitch = orbit_pitch(transform.rotation);
+    pose.distance = orbit_distance(lens->focus);
     pose.zoom = std::clamp(lens->zoom, camera_min_zoom, camera_max_zoom);
-    const auto direction = orbit(pose.yaw, pose.pitch);
-    for (unsigned c = 0; c < 3; ++c)
-        pose.target[c] = evaluated.transform.position[c] - direction[c] * pose.distance;
+    pose.target = focus_point(transform.position, transform.rotation, lens->focus);
     return pose;
 }
 
 void place_camera(SceneInstance& instance, const CameraPose& pose) {
     auto* lens = std::get_if<CameraSettings>(&instance.settings);
     if (!lens) return;
-    const auto direction = orbit(pose.yaw, pose.pitch);
-    for (unsigned c = 0; c < 3; ++c)
-        instance.transform.position[c] = pose.target[c] + direction[c] * pose.distance;
     instance.transform.rotation = {-pose.pitch, pose.yaw, 0};
+    instance.transform.position = orbit_eye(pose.target, instance.transform.rotation, pose.distance);
     lens->focus = pose.distance;
     lens->zoom = pose.zoom;
+}
+
+Vec3 focus_point(Vec3 position, Vec3 rotation, f32 focus) {
+    const auto direction = orbit(orbit_yaw(rotation), orbit_pitch(rotation));
+    Vec3 point;
+    for (unsigned c = 0; c < 3; ++c) point[c] = position[c] - direction[c] * orbit_distance(focus);
+    return point;
+}
+Vec3 orbit_eye(Vec3 point, Vec3 rotation, f32 focus) {
+    const auto direction = orbit(orbit_yaw(rotation), orbit_pitch(rotation));
+    Vec3 eye;
+    for (unsigned c = 0; c < 3; ++c) eye[c] = point[c] + direction[c] * orbit_distance(focus);
+    return eye;
 }
 
 content::Result<void> validate_active_cameras(const State& state) {

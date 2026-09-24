@@ -48,7 +48,9 @@ struct SunSettings {
 // used when none is marked active.
 struct CameraSettings {
     vng::f32 zoom{1}, focus{8};
-    bool active{}, visible{true};
+    // orbit: between position keys the camera's focus point, not its eye,
+    // moves in a straight line, and the camera turns and dollies around it.
+    bool active{}, visible{true}, orbit{};
     friend bool operator==(const CameraSettings&, const CameraSettings&) = default;
 };
 // Reserved builtin identities do not steal ID 3 from existing imported assets.
@@ -206,6 +208,11 @@ struct MeshTarget {
 // inverse placement. Both are pure value conversions without timeline access.
 [[nodiscard]] CameraPose camera_pose(const SceneInstance& evaluated);
 void place_camera(SceneInstance&, const CameraPose&);
+// The point a camera placed at `position` with this rotation looks at from
+// `focus` away (camera_pose's target), and the inverse: the eye that looks at
+// `point` that way.
+[[nodiscard]] vng::Vec3 focus_point(vng::Vec3 position, vng::Vec3 rotation, vng::f32 focus);
+[[nodiscard]] vng::Vec3 orbit_eye(vng::Vec3 point, vng::Vec3 rotation, vng::f32 focus);
 // At every keyed time at most one camera may be active.
 [[nodiscard]] vng::content::Result<void> validate_active_cameras(const State&);
 [[nodiscard]] Regions region_snapshot(const State&); // authored local boundaries

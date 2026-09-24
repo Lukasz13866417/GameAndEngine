@@ -328,7 +328,12 @@ metadata and **Logs → Interaction timing** measurements/export.
   the current editor view; the first camera becomes the active one. A camera has
   a position and rotation like any instance (its heading is the look direction),
   plus a **Camera lens** with optical zoom and a focus distance that doubles as
-  its orbit pivot and far-plane scale. Several cameras can exist, but only one is
+  its orbit pivot and far-plane scale. Between keys a camera's eye moves in a
+  straight line; with **Orbit focus point between keys** its focus point moves
+  in a straight line instead, and the camera turns and dollies around it, so a
+  shot that keys a turn around a subject keeps the subject framed. At keys both
+  paths put the camera exactly where it was keyed, and the setting is itself a
+  keyable property. Several cameras can exist, but only one is
   **active** at any timestamp; **Set active here** keys the switch at the selected
   keyframe and clears the others there, so the simulation cuts between cameras.
   Independent Play and the demos render through the active camera.
@@ -436,10 +441,9 @@ metadata and **Logs → Interaction timing** measurements/export.
   editor view and any camera visit are not saved. Opening a scene starts the editor
   view looking through its active camera at time zero. Files saved before scene
   cameras existed still load: their saved shot becomes an active **Animation
-  camera** instance that follows the same path, including its cuts. Where the
-  old camera swung along an orbit, extra keys keep the new path within about
-  half a pixel, so such scenes show more keyframes than before (always leaving
-  room to add more). The next save writes the current format.
+  camera** instance that orbits its focus point, as the old camera did, and so
+  follows the same path, including its cuts, from the same keyframes. The next
+  save writes the current format.
 - **Open scene...** (Ctrl+O) in the top toolbar browses for a `.vscene` and makes
   the chosen scene the current Save target; `--scene FILE` does the same at
   startup. The browser starts beside the current scene with it preselected, or in

@@ -1,13 +1,11 @@
 #include "legacy_camera.hpp"
 #include "authoring_limits.hpp"
 #include <algorithm>
-#include <array>
 #include <cmath>
-#include <functional>
 #include <limits>
-#include <numbers>
-#include <queue>
+#include <optional>
 #include <set>
+#include <span>
 
 namespace editor_example {
 using namespace vng;
@@ -30,69 +28,32 @@ Vec3 lerp(Vec3 from, Vec3 to, double ratio) {
 f32 distance(Vec3 a, Vec3 b) {
     return std::hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
-// A position evaluated in double, so refinement measures the chord against
-// the ideal path rather than against float rounding noise.
-using Precise = std::array<double, 3>;
-Vec3 rounded(const Precise& p) { return {static_cast<f32>(p[0]), static_cast<f32>(p[1]), static_cast<f32>(p[2])}; }
-// A float's step near `value` is at most this, and a stored key rounds by
-// half a step, so no split can bring a coordinate much closer than this.
-double float_step(double value) { return std::ldexp(std::abs(value), -23); }
 
-// One component of the old shot with its own keys and interpolation, sampled
-// exactly as Timeline::sample did for it: the base pose where the component is
-// untracked or before its first key, then its keys (the first key is a cut).
+// One track with its own keys and interpolation, sampled exactly as
+// Timeline::sample does: the base value where it is untracked or before its
+// first key, then its keys (so the first key is a cut from the base).
 template<class T>
 class Component {
 public:
-    Component(const timeline::Track* track, T base) : track_(track), base_(base) {}
-    [[nodiscard]] T at(f32 time) const { return narrow(smooth(time, false)); }
+    Component(const std::vector<Keyframe>* keys, T base) : keys_(keys), base_(base) {}
+    [[nodiscard]] T at(f32 time) const { return value(time, false); }
     // The value just before `time`: differs from at() only at a cut.
-    [[nodiscard]] T before(f32 time) const { return narrow(smooth(time, true)); }
-    // The value before its interpolation is rounded to float (double, or
-    // Precise for a Vec3): the smooth path that at() steps around.
-    [[nodiscard]] auto smooth(f32 time, bool left = false) const {
-        if (!track_) return widen(base_);
-        const auto& keys = track_->keys;
+    [[nodiscard]] T before(f32 time) const { return value(time, true); }
+    [[nodiscard]] std::span<const Keyframe> keys() const { return keys_ ? *keys_ : std::span<const Keyframe>{}; }
+private:
+    [[nodiscard]] T value(f32 time, bool left) const {
+        if (!keys_) return base_;
+        const auto& keys = *keys_;
         const auto next = std::ranges::lower_bound(keys, time, {}, &Keyframe::time);
-        if (!left && next != keys.end() && next->time == time) return widen(std::get<T>(next->value));
-        if (next == keys.begin()) return widen(base_);
+        if (!left && next != keys.end() && next->time == time) return std::get<T>(next->value);
+        if (next == keys.begin()) return base_;
         const auto& previous = *(next - 1);
-        if (next == keys.end() || next->incoming == Interpolation::hold) return widen(std::get<T>(previous.value));
+        if (next == keys.end() || next->incoming == Interpolation::hold) return std::get<T>(previous.value);
         const double ratio = (static_cast<double>(time) - previous.time) /
                              (static_cast<double>(next->time) - previous.time);
-        const auto from = widen(std::get<T>(previous.value)), to = widen(std::get<T>(next->value));
-        if constexpr (std::same_as<T, f32>) return std::lerp(from, to, ratio);
-        else return Precise{std::lerp(from[0], to[0], ratio), std::lerp(from[1], to[1], ratio), std::lerp(from[2], to[2], ratio)};
+        return lerp(std::get<T>(previous.value), std::get<T>(next->value), ratio);
     }
-    void times(std::set<f32>& out) const {
-        if (track_) for (const auto& key : track_->keys) out.insert(key.time);
-    }
-    // The smallest and largest value over [x, y). The component is linear
-    // between its keys, so only the ends and the keys inside matter.
-    [[nodiscard]] std::pair<T, T> range(f32 x, f32 y) const requires std::same_as<T, f32> {
-        T low = std::min(at(x), before(y)), high = std::max(at(x), before(y));
-        if (track_) {
-            const auto& keys = track_->keys;
-            const auto first = std::ranges::upper_bound(keys, x, {}, &Keyframe::time);
-            const auto last = std::ranges::lower_bound(keys, y, {}, &Keyframe::time);
-            for (auto key = first; key < last; ++key)
-                for (const auto value : {before(key->time), at(key->time)}) {
-                    low = std::min(low, value);
-                    high = std::max(high, value);
-                }
-        }
-        return {low, high};
-    }
-private:
-    static auto widen(const T& value) {
-        if constexpr (std::same_as<T, f32>) return static_cast<double>(value);
-        else return Precise{value.x, value.y, value.z};
-    }
-    static T narrow(const auto& value) {
-        if constexpr (std::same_as<T, f32>) return static_cast<f32>(value);
-        else return rounded(value);
-    }
-    const timeline::Track* track_;
+    const std::vector<Keyframe>* keys_;
     T base_;
 };
 
@@ -103,73 +64,7 @@ struct Shot {
     [[nodiscard]] CameraPose before(f32 t) const {
         return {yaw.before(t), pitch.before(t), distance.before(t), target.before(t), zoom.before(t)};
     }
-    // What moves the eye, interpolated in double: the path the old camera's
-    // float samples stepped around.
-    struct Smooth { double yaw, pitch, distance; Precise target; };
-    [[nodiscard]] Smooth smooth(f32 t, bool left = false) const {
-        return {yaw.smooth(t, left), pitch.smooth(t, left), distance.smooth(t, left), target.smooth(t, left)};
-    }
 };
-
-// A Vec3 camera property as a function of time, with breakpoints where any of
-// its source components has a key. Between breakpoints it is continuous; at a
-// breakpoint it may cut. `moves(a, b)` says whether any source component
-// changes between two neighbouring breakpoints (the derived value can return
-// to where it started, as a full orbit does). Properties that curve between
-// breakpoints (the eye on an orbit) also give their ideal value in double
-// (`exact`) and the error allowed anywhere in [x, y) (`tolerance`); others are
-// linear there.
-struct Signal {
-    std::vector<f32> breakpoints;
-    std::function<Vec3(f32)> at, before;
-    std::function<bool(f32, f32)> moves;
-    std::function<f32(f32, f32)> tolerance;
-    std::function<Precise(f32)> exact;
-};
-
-// A stretch between two keys where the signal is continuous, with how far
-// its straight line strays from the ideal path relative to what is allowed
-// there (above 1: it needs another key). Zero when time cannot be split.
-struct Piece {
-    f32 x{}, y{};
-    Vec3 vx{}, vy{};
-    double excess{};
-    friend bool operator<(const Piece& a, const Piece& b) { return a.excess < b.excess; }
-};
-// Each coordinate may stray by the tolerance less its own float step, since
-// the evaluated eye rounds by up to half a step more than the chord shows, but
-// never by less than that step: a far coordinate never excuses a near one.
-// That allowance is smallest where the step is half the tolerance and changes
-// slope where the coordinate crosses zero, so the line is measured there, as
-// well as at eighths across the piece and sixteenths by its ends.
-Piece piece(const Signal& signal, f32 x, Vec3 vx, f32 y, Vec3 vy) {
-    Piece result{x, y, vx, vy, 0};
-    const f32 mid = x + (y - x) * .5F;
-    if (!(x < mid && mid < y)) return result;
-    const double allowed = signal.tolerance(x, y);
-    const auto measure = [&](double fraction) {
-        const f32 t = x + static_cast<f32>((static_cast<double>(y) - x) * fraction);
-        if (!(x < t && t < y)) return;
-        const double ratio = (static_cast<double>(t) - x) / (static_cast<double>(y) - x);
-        const auto ideal = signal.exact(t);
-        double sum{};
-        for (unsigned c = 0; c < 3; ++c) {
-            const double along = vx[c] + (static_cast<double>(vy[c]) - vx[c]) * ratio;
-            const double step = float_step(ideal[c]);
-            const double relative = (ideal[c] - along) / std::max(allowed - step, step);
-            sum += relative * relative;
-        }
-        result.excess = std::max(result.excess, std::sqrt(sum));
-    };
-    for (const auto fraction : {1. / 16, 1. / 8, 2. / 8, 3. / 8, 4. / 8, 5. / 8, 6. / 8, 7. / 8, 15. / 16})
-        measure(fraction);
-    const double tightest = std::ldexp(allowed, 22); // Where the float step is half the tolerance.
-    for (unsigned c = 0; c < 3; ++c)
-        if (vx[c] != vy[c])
-            for (const double level : {0., tightest, -tightest})
-                measure((level - vx[c]) / (static_cast<double>(vy[c]) - vx[c]));
-    return result;
-}
 
 // The latest representable time strictly between `after` and `cut`, close to the cut.
 std::optional<f32> just_before(f32 cut, f32 after) {
@@ -179,57 +74,36 @@ std::optional<f32> just_before(f32 cut, f32 after) {
     return time;
 }
 
-// Keys that reproduce the signal: exact at every breakpoint and cut. A cut in
-// one component while another still moves is kept as a key just before the
-// cut followed by a held key at it, so neither the cut nor the motion is lost.
-// For a curving signal, keys are then added one at a time where the straight
-// line strays furthest beyond its tolerance, until every piece fits or half
-// the `room` left after the exact keys is used: the budget goes where it helps
-// most, and the scene keeps room for the keyframes its author adds next.
-std::vector<Keyframe> keys_for(const Signal& signal, std::size_t room) {
+// Rotation is {-pitch, yaw, 0}, linear wherever yaw and pitch both are, so a
+// key at each of their key times reproduces both. A cut in one while the
+// other still moves becomes a key just before the cut followed by a held key
+// at it, so neither the cut nor the motion is lost.
+std::vector<Keyframe> rotation_keys(const Component<f32>& yaw, const Component<f32>& pitch) {
+    std::set<f32> times;
+    for (const auto* component : {&yaw, &pitch})
+        for (const auto& key : component->keys()) times.insert(key.time);
+    const auto at = [&](f32 t) { return Vec3{-pitch.at(t), yaw.at(t), 0}; };
+    const auto before = [&](f32 t) { return Vec3{-pitch.before(t), yaw.before(t), 0}; };
     std::vector<Keyframe> keys;
-    const auto& times = signal.breakpoints;
-    if (times.empty()) return keys;
-    const bool curves = signal.tolerance && signal.exact;
-    std::priority_queue<Piece> pieces;
-    const auto consider = [&](f32 x, Vec3 vx, f32 y, Vec3 vy) {
-        if (!curves) return;
-        if (auto candidate = piece(signal, x, vx, y, vy); candidate.excess > 1) pieces.push(candidate);
-    };
-    keys.push_back({times.front(), signal.at(times.front()), Interpolation::hold});
-    for (std::size_t i = 1; i < times.size(); ++i) {
-        const f32 a = times[i - 1], b = times[i];
-        const auto from = signal.at(a), left = signal.before(b), to = signal.at(b);
-        if (left == to) {
-            consider(a, from, b, to);
+    for (auto time = times.begin(); time != times.end(); ++time) {
+        if (time == times.begin()) { keys.push_back({*time, at(*time), Interpolation::hold}); continue; }
+        const f32 a = *std::prev(time), b = *time;
+        if (const auto left = before(b), to = at(b); left == to) {
             keys.push_back({b, to, Interpolation::linear});
-        } else if (const auto freeze = just_before(b, a); !signal.moves(a, b) || !freeze) {
+        } else if (const auto freeze = just_before(b, a); at(a) == left || !freeze) {
             // Nothing moved before the cut, or there is no room to keep the motion.
             keys.push_back({b, to, Interpolation::hold});
         } else {
-            const auto held = signal.at(*freeze);
-            consider(a, from, *freeze, held);
-            keys.push_back({*freeze, held, Interpolation::linear});
+            keys.push_back({*freeze, at(*freeze), Interpolation::linear});
             keys.push_back({b, to, Interpolation::hold});
         }
     }
-    const auto limit = keys.size() + (room - std::min(room, keys.size())) / 2;
-    while (!pieces.empty() && keys.size() < limit) {
-        const auto worst = pieces.top();
-        pieces.pop();
-        const f32 mid = worst.x + (worst.y - worst.x) * .5F;
-        const auto value = signal.at(mid);
-        keys.push_back({mid, value, Interpolation::linear});
-        consider(worst.x, worst.vx, mid, value);
-        consider(mid, value, worst.y, worst.vy);
-    }
-    std::ranges::sort(keys, {}, &Keyframe::time);
     return keys;
 }
 
-// Last resort when the exact keys exceed a timeline limit: repeatedly drop the
-// interior key its neighbours reproduce best, so the scene still loads. A
-// target of zero drops the track, leaving the camera's base value.
+// Last resort when the rotation keys exceed a timeline limit: repeatedly drop
+// the interior key its neighbours reproduce best, so the scene still loads. A
+// target of zero drops the track, leaving the camera's base rotation.
 void thin(std::vector<Keyframe>& keys, std::size_t target) {
     if (target == 0) { keys.clear(); return; }
     if (keys.size() <= target) return;
@@ -308,7 +182,10 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     state.viewport.selected_vertex = vertex;
     auto* camera = find_instance(state, *created);
     camera->name = "Animation camera";
-    std::get<CameraSettings>(camera->settings).active = true;
+    auto& lens = std::get<CameraSettings>(camera->settings);
+    lens.active = true;
+    // The old camera orbited its target; an orbiting camera moves the same way.
+    lens.orbit = true;
     place_camera(*camera, shot.pose);
     // An old eye could lie beyond the scene's coordinate range (target plus
     // distance); keep the scene loadable rather than reject it.
@@ -319,108 +196,48 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     // and rejects duplicates or bad values; keep exactly those rules.
     timeline::Timeline old;
     if (auto normalized = old.replace(shot.tracks); !normalized) return invalid(normalized.error().message);
-    const auto track = [&](std::string_view property) -> const timeline::Track* {
-        return old.find({legacy_camera_object, std::string(property)});
+    const auto keys_of = [&](std::string_view property) -> const std::vector<Keyframe>* {
+        const auto* track = old.find({legacy_camera_object, std::string(property)});
+        return track ? &track->keys : nullptr;
     };
-    const Shot legacy{{track("yaw"), shot.pose.yaw}, {track("pitch"), shot.pose.pitch},
-                      {track("distance"), shot.pose.distance}, {track("zoom"), shot.pose.zoom},
-                      {track("target"), shot.pose.target}};
+    const Shot legacy{{keys_of("yaw"), shot.pose.yaw}, {keys_of("pitch"), shot.pose.pitch},
+                      {keys_of("distance"), shot.pose.distance}, {keys_of("zoom"), shot.pose.zoom},
+                      {keys_of("target"), shot.pose.target}};
     for (const auto& source : old.tracks())
         for (const auto& key : source.keys)
             if (!valid_camera_pose(legacy.at(key.time)) || !valid_camera_pose(legacy.before(key.time)))
                 return invalid("Invalid legacy animation camera key");
 
-    // The placement a pose gives this camera, using the same conversion as Save this camera.
-    auto placed = [probe = SceneInstance{camera->id, camera->blueprint, {}, camera->settings, camera->transform}](
-                      const CameraPose& pose) mutable {
-        place_camera(probe, pose);
-        return probe;
+    // Each new track comes from the old tracks it depends on, key for key.
+    // Focus and zoom are the old distance and zoom; rotation is yaw and pitch.
+    const auto copy = [](const Component<f32>& component) {
+        const auto keys = component.keys();
+        return std::vector<Keyframe>(keys.begin(), keys.end());
     };
-    const auto breakpoints = [](std::initializer_list<std::function<void(std::set<f32>&)>> sources) {
-        std::set<f32> times;
-        for (const auto& source : sources) source(times);
-        return std::vector<f32>(times.begin(), times.end());
-    };
-    const auto times_of = [](const auto& component) {
-        return std::function<void(std::set<f32>&)>([&component](std::set<f32>& out) { component.times(out); });
-    };
-    // Between breakpoints every component is linear, so it moves iff its
-    // values at the two ends differ.
-    const auto orbit_moves = [&](f32 a, f32 b) {
-        const auto from = legacy.at(a), to = legacy.before(b);
-        return from.yaw != to.yaw || from.pitch != to.pitch || from.distance != to.distance || from.target != to.target;
-    };
-    const auto turn_moves = [&](f32 a, f32 b) {
-        const auto from = legacy.at(a), to = legacy.before(b);
-        return from.yaw != to.yaw || from.pitch != to.pitch;
-    };
-    // The eye of the smooth pose, as place_camera computes it but in double,
-    // clamped into the scene's coordinate range. Refinement measures against
-    // it, so float rounding in the old samples never looks like a curve.
-    const auto eye = [](const Shot::Smooth& pose) {
-        constexpr double radians = std::numbers::pi / 180;
-        const double yaw = pose.yaw * radians, pitch = pose.pitch * radians;
-        const auto clamp = [](double v) { return std::clamp<double>(v, -scene_coordinate_limit, scene_coordinate_limit); };
-        return Precise{clamp(pose.target[0] + std::sin(yaw) * std::cos(pitch) * pose.distance),
-                       clamp(pose.target[1] + std::sin(pitch) * pose.distance),
-                       clamp(pose.target[2] + std::cos(yaw) * std::cos(pitch) * pose.distance)};
-    };
-    // The eye moves on an orbit, so it is refined to within about half a pixel.
-    const Signal position{
-        breakpoints({times_of(legacy.yaw), times_of(legacy.pitch), times_of(legacy.distance), times_of(legacy.target)}),
-        [&](f32 t) { return rounded(eye(legacy.smooth(t))); },
-        [&](f32 t) { return rounded(eye(legacy.smooth(t, true))); },
-        orbit_moves,
-        // Half a pixel at the tightest zoom and nearest distance in the piece:
-        // a zoom key may fall inside it, since zoom does not move the eye.
-        [&](f32 x, f32 y) {
-            return 5e-4F * legacy.distance.range(x, y).first / std::max(1.F, legacy.zoom.range(x, y).second);
-        },
-        [&](f32 t) { return eye(legacy.smooth(t)); }};
-    // Rotation is {-pitch, yaw, 0}: linear wherever yaw and pitch are.
-    const Signal rotation{
-        breakpoints({times_of(legacy.yaw), times_of(legacy.pitch)}),
-        [&](f32 t) { return placed(legacy.at(t)).transform.rotation; },
-        [&](f32 t) { return placed(legacy.before(t)).transform.rotation; },
-        turn_moves,
-        {},
-        {}};
-    // Focus and zoom are the old distance and zoom, key for key.
-    const auto copy = [&](std::string_view property) {
-        const auto* source = track(property);
-        return source ? source->keys : std::vector<Keyframe>{};
-    };
-    const auto focus_keys = copy("distance"), zoom_keys = copy("zoom");
-
-    // The old tracks fitted the scene's key budget; so must the new ones.
+    const auto focus_keys = copy(legacy.distance), zoom_keys = copy(legacy.zoom);
+    auto turn_keys = rotation_keys(legacy.yaw, legacy.pitch);
+    // The old tracks fitted the scene's key limits; only the keys that keep a
+    // cut in yaw or pitch apart from the other's motion can exceed them.
     std::size_t other_keys{};
     for (const auto& existing : state.document.timeline.tracks()) other_keys += existing.keys.size();
-    const auto budget = timeline::max_total_keys - std::min(timeline::max_total_keys, other_keys + focus_keys.size() + zoom_keys.size());
-    auto rotation_keys = keys_for(rotation, 0);
-    const auto room = std::min(timeline::max_keys_per_track, budget - std::min(budget, rotation_keys.size()));
-    // Refining the eye keeps room for the next keyframe, which keys every
-    // property and also seeds time zero for one without a track (the new
-    // camera's tracks count as missing).
-    const auto properties = animation_properties(state);
-    std::size_t keyframe_cost{};
-    for (const auto& property : properties)
-        keyframe_cost += property.target.object != *created && state.document.timeline.find(property.target) ? 1 : 2;
-    const auto spare = budget - std::min(budget, rotation_keys.size() + keyframe_cost);
-    auto position_keys = keys_for(position, std::min(timeline::max_keys_per_track - 1, spare));
-    if (position_keys.size() > room || rotation_keys.size() > timeline::max_keys_per_track) {
-        auto rotation_target = std::min(rotation_keys.size(), timeline::max_keys_per_track);
-        auto position_target = std::min(position_keys.size(), timeline::max_keys_per_track);
-        if (const auto wanted = rotation_target + position_target; wanted > budget) {
-            // Share what is left in proportion to what each track wanted; with
-            // no room at all a track is dropped rather than failing the load.
-            rotation_target = std::min(rotation_target, std::max<std::size_t>(budget ? 1 : 0, rotation_target * budget / wanted));
-            position_target = budget - rotation_target;
-        }
-        thin(rotation_keys, rotation_target);
-        thin(position_keys, position_target);
-    }
+    const auto target_count = legacy.target.keys().size();
+    const auto budget = timeline::max_total_keys -
+        std::min(timeline::max_total_keys, other_keys + target_count + focus_keys.size() + zoom_keys.size());
+    thin(turn_keys, std::min(timeline::max_keys_per_track, budget));
 
-    for (auto [property, keys] : {std::pair{"position", std::move(position_keys)}, std::pair{"rotation", std::move(rotation_keys)},
+    // The eye has a key wherever the target has one, placed around the target
+    // by the rotation and focus the camera has there. Between keys the camera
+    // orbits, so its focus point follows the old target and the eye follows
+    // yaw, pitch and distance as they did.
+    const Component<Vec3> turn{&turn_keys, camera->transform.rotation};
+    std::vector<Keyframe> position_keys;
+    for (const auto& key : legacy.target.keys())
+        position_keys.push_back({key.time, clamp_position(orbit_eye(std::get<Vec3>(key.value), turn.at(key.time),
+                                                                    legacy.distance.at(key.time))),
+                                 key.incoming});
+
+    const auto properties = animation_properties(state);
+    for (auto [property, keys] : {std::pair{"position", std::move(position_keys)}, std::pair{"rotation", std::move(turn_keys)},
                                   std::pair{"focus", focus_keys}, std::pair{"zoom", zoom_keys}}) {
         if (keys.empty()) continue;
         timeline::Track generated{{*created, property}, {}, {}, std::move(keys)};

@@ -1112,7 +1112,7 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         REQUIRE(loaded);
         CHECK(deviation(*loaded, legacy_reference(text), 0, 10, .005F).seen < 6e-4F);
     }
-    SECTION("A long dolly-in with a turn stays within tolerance at its closest") {
+    SECTION("A long dolly-in with a turn keeps its path at its closest") {
         const std::string zoomed = "yaw = 0; pitch = 30; distance = 50; zoom = 10; camera_target = [0,0,0];";
         const auto text = legacy_scene(value, zoomed, legacy_track("yaw", {{0, 0.F, true}, {10, 180.F}}) +
                                                       legacy_track("distance", {{0, 50.F, true}, {10, .1F}}));
@@ -1122,9 +1122,7 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         CHECK(deviation(*loaded, reference, 0, 9.9F, .005F).seen < 6e-4F);
         CHECK(deviation(*loaded, reference, 9.9F, 10, .0002F).seen < 6e-4F); // Where the eye is closest.
     }
-    SECTION("A fly-in from far away does not loosen the orbit that follows it") {
-        // Far out, half a pixel at zoom 40 is below float resolution; that
-        // piece must not force a looser tolerance on the rest of the track.
+    SECTION("A fly-in from far away keeps the orbit that follows it") {
         const std::string close_up = "yaw = 0; pitch = 20; distance = 1; zoom = 40; camera_target = [0,0,0];";
         const auto text = legacy_scene(value, close_up,
             legacy_track("target", {{0, Vec3{100000, 37000, -21000}, true}, {5, Vec3{0, 0, 0}}}) +
@@ -1133,7 +1131,7 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         REQUIRE(loaded);
         CHECK(deviation(*loaded, legacy_reference(text), 5.01F, 10, .005F).seen < 6e-4F);
     }
-    SECTION("A far, zoomed close-up does not coarsen an ordinary orbit before it") {
+    SECTION("A far, zoomed close-up leaves the ordinary orbit before it intact") {
         const auto [loaded, reference] = load(
             legacy_track("yaw", {{0, 0.F, true}, {4, 90.F}, {5, 0.F, true}, {9, 90.F}}) +
             legacy_track("pitch", {{0, 0.F, true}, {5, 15.F, true}}) +
@@ -1158,7 +1156,7 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         std::cout << "12288 legacy keys migrated in " << seconds << " s\n";
         CHECK(seconds < 1.5);
     }
-    SECTION("A tracking shot through the origin is refined where its eye passes it") {
+    SECTION("A tracking shot through the origin keeps its path where its eye passes it") {
         const std::string tracking = "yaw = 0; pitch = 60; distance = 1; zoom = 10; camera_target = [0,0,0];";
         const auto text = legacy_scene(value, tracking,
             legacy_track("target", {{0, Vec3{-1000, 0, 0}}, {10, Vec3{1000, 0, 0}}}) + legacy_track("yaw", {{0, 0.F}, {10, 6.F}}));
@@ -1183,56 +1181,77 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         REQUIRE(lopsided);
         CHECK(deviation(*lopsided, legacy_reference(lopsided_text), 3.7F, 3.8F, .0005F).seen < 6e-4F);
     }
-    SECTION("Float rounding in the old samples neither adds keys nor hides error") {
-        const auto migrate = [&](const std::string& pose, const std::string& tracks) {
-            const auto text = legacy_scene(value, pose, tracks);
-            auto loaded = project::decode(text);
-            REQUIRE(loaded);
-            return std::pair{std::move(*loaded), legacy_reference(text)};
+    SECTION("Each new track takes its keys from the old tracks it depends on") {
+        const auto [loaded, reference] = load(
+            legacy_track("yaw", {{0, 0.F}, {3, 60.F}, {7, 20.F, true}}) + legacy_track("pitch", {{1, 10.F}, {5, 30.F}}) +
+            legacy_track("distance", {{0, 10.F}, {2, 6.F, true}, {4, 8.F}, {8, 12.F}}) +
+            legacy_track("target", {{0, Vec3{0, 0, 0}}, {1.5F, Vec3{2, 0, 0}, true}, {2.5F, Vec3{2, 1, 0}},
+                                    {6, Vec3{-3, 1, 2}}, {9, Vec3{0, 0, 0}, true}}) +
+            legacy_track("zoom", {{0, 1.F}, {6.5F, 3.F}}));
+        const auto* camera = project::active_camera(loaded, 0);
+        CHECK(std::get<project::CameraSettings>(camera->settings).orbit);
+        CHECK(keys_of(loaded, "position") == 5); // The target's times, with its interpolation.
+        // Yaw's and pitch's times, and a millisecond before pitch's first key,
+        // which cuts from the base shot while yaw still turns.
+        CHECK(keys_of(loaded, "rotation") == 6);
+        CHECK(keys_of(loaded, "focus") == 4);
+        CHECK(keys_of(loaded, "zoom") == 2);
+        const auto* position = loaded.document.timeline.find({camera->id, "position"});
+        CHECK(position->keys[1].incoming == vng::timeline::Interpolation::hold);
+        CHECK(position->keys[4].incoming == vng::timeline::Interpolation::hold);
+        for (const auto worst : {deviation(loaded, reference, 0, .998F, .001F), deviation(loaded, reference, 1, 10, .001F)}) {
+            CHECK(worst.eye < 1e-5F);
+            CHECK(worst.target < 1e-5F);
+            CHECK(worst.yaw < 1e-3F);
+            CHECK(worst.pitch < 1e-3F);
+            CHECK(worst.distance < 1e-6F);
+            CHECK(worst.zoom < 1e-6F);
+        }
+        // Straight moves stay two keys, however close or far.
+        const auto dolly = [&](const std::string& pose, const std::string& tracks) {
+            auto moved = project::decode(legacy_scene(value, pose, tracks));
+            REQUIRE(moved);
+            return keys_of(*moved, "position");
         };
-        // Straight dollies: the two exact keys already hold the eye to float precision.
-        CHECK(keys_of(migrate("yaw = 100; pitch = 20; distance = 0.05; zoom = 1000; camera_target = [64,64,64];",
-            legacy_track("target", {{0, Vec3{64, 64, 64}}, {10, Vec3{64.9F, 64.99F, 65.08F}}})).first, "position") == 2);
-        CHECK(keys_of(migrate("yaw = 179.036224; pitch = -51.5902214; distance = 17.649004; zoom = 2; camera_target = [0,0,0];",
+        CHECK(dolly("yaw = 100; pitch = 20; distance = 0.05; zoom = 1000; camera_target = [64,64,64];",
+            legacy_track("target", {{0, Vec3{64, 64, 64}}, {10, Vec3{64.9F, 64.99F, 65.08F}}})) == 2);
+        CHECK(dolly("yaw = 179.036224; pitch = -51.5902214; distance = 17.649004; zoom = 2; camera_target = [0,0,0];",
             legacy_track("target", {{0, Vec3{-83333.7812F, -39758.0781F, 73912.0156F}},
-                                    {10, Vec3{-83216.7031F, -39690.6953F, 73930.1328F}}})).first, "position") == 2);
-        // Panning an orbit needs no more keys than the orbit alone.
-        const std::string close = "yaw = 100; pitch = 20; distance = 0.1; zoom = 1000; camera_target = [64,64,64];";
-        const auto orbit = legacy_track("yaw", {{0, 100.F}, {10, 130.F}});
-        CHECK(keys_of(migrate(close, orbit + legacy_track("target", {{0, Vec3{64, 64, 64}}, {10, Vec3{64.064F, 64.0704F, 64.0768F}}})).first,
-                      "position") == keys_of(migrate(close, orbit).first, "position"));
-        // At the tightest zoom, rounding at the measured points must not hide the error between them.
-        const auto [tight, reference] = migrate(
+                                    {10, Vec3{-83216.7031F, -39690.6953F, 73930.1328F}}})) == 2);
+        // At the tightest zoom the path still holds to float precision.
+        const auto tight_text = legacy_scene(value,
             "yaw = 149.249084; pitch = 64.2795715; distance = 0.30659771; zoom = 1000; camera_target = [0.522508562,0.265010029,-0.524484515];",
             legacy_track("target", {{0.809272528F, Vec3{0.522508562F, 0.265010029F, -0.524484515F}},
                                     {29.8384514F, Vec3{0.542802155F, 0.318747163F, -0.538280547F}}}) +
             legacy_track("yaw", {{0.809272528F, 149.249084F}, {29.8384514F, 137.335098F}}));
-        CHECK(deviation(tight, reference, 25.7F, 26.2F, .00005F).excess < 1.5F);
+        auto tight = project::decode(tight_text);
+        REQUIRE(tight);
+        CHECK(deviation(*tight, legacy_reference(tight_text), 25.7F, 26.2F, .00005F).excess < 1.F);
     }
-    SECTION("Sweeps through the origin stay within half a pixel, or float steps, all the way") {
+    SECTION("Sweeps through the origin keep their path all the way") {
         const auto excess = [&](const std::string& pose, const std::string& tracks) {
             const auto text = legacy_scene(value, pose, tracks);
             auto loaded = project::decode(text);
             REQUIRE(loaded);
             return deviation(*loaded, legacy_reference(text), 0, 10, .0005F).excess;
         };
-        // Crossing x = 0 far up the y axis: the far coordinate must not excuse the near one.
+        // Crossing x = 0 far up the y axis.
         CHECK(excess("yaw = 0.2; pitch = 0; distance = 1; zoom = 4; camera_target = [0,0,0];",
-            legacy_track("target", {{0, Vec3{-75000, 45000, 0}}, {10, Vec3{125000, 45000, 0}}})) < 1.5F);
+            legacy_track("target", {{0, Vec3{-75000, 45000, 0}}, {10, Vec3{125000, 45000, 0}}})) < 1.F);
         // x and z cross zero at different times.
         CHECK(excess("yaw = 0.2; pitch = 0; distance = 1; zoom = 4; camera_target = [0,0,0];",
-            legacy_track("target", {{0, Vec3{-75000, 0, 90000}}, {10, Vec3{125000, 0, -30000}}})) < 1.5F);
-        // Lopsided sweeps that also turn: the worst error lies just off the crossing.
+            legacy_track("target", {{0, Vec3{-75000, 0, 90000}}, {10, Vec3{125000, 0, -30000}}})) < 1.F);
+        // Lopsided sweeps that also turn.
         CHECK(excess("yaw = 133.6; pitch = 26.2; distance = 0.9855; zoom = 2.63; camera_target = [0,0,0];",
             legacy_track("target", {{0, Vec3{-242.8F, 0, 0}}, {10, Vec3{266224, 0, 0}}}) +
-            legacy_track("yaw", {{0, 133.6F}, {10, 110.8F}})) < 1.5F);
+            legacy_track("yaw", {{0, 133.6F}, {10, 110.8F}})) < 1.F);
         CHECK(excess("yaw = 0; pitch = -30; distance = 0.02; zoom = 4; camera_target = [0,0,0];",
             legacy_track("target", {{0, Vec3{-10000, 10, 0}}, {10, Vec3{20, 10, 0}}}) +
-            legacy_track("yaw", {{0, 150.F}, {10, 180.F}})) < 1.5F);
-        // A close orbit whose target leaves the origin: the worst error lies just after the first key.
+            legacy_track("yaw", {{0, 150.F}, {10, 180.F}})) < 1.F);
+        // A close orbit whose target leaves the origin.
         CHECK(excess("yaw = -142.748535; pitch = 32.4696274; distance = 0.0802408755; zoom = 11.3677559; camera_target = [0,0,0];",
             legacy_track("target", {{0, Vec3{0, 0, 0}}, {10, Vec3{-8555.96973F, 0, -4554.01953F}}}) +
-            legacy_track("yaw", {{0, -142.748535F}, {10, -119.055267F}})) < 1.5F);
+            legacy_track("yaw", {{0, -142.748535F}, {10, -119.055267F}})) < 1.F);
     }
     SECTION("An orbit far from the origin keeps half a pixel where floats allow it") {
         const std::string far = "yaw = 0; pitch = 30; distance = 10; zoom = 2; camera_target = [10000,0,0];";
@@ -1242,18 +1261,7 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         // Half a pixel is 2.6 float steps of the eye here; the float reference itself jitters by one.
         CHECK(deviation(*loaded, legacy_reference(text), 0, 10, .005F).seen < 8e-4F);
     }
-    SECTION("Refinement leaves room for the keyframes added next") {
-        // At zoom 1000 these swings would need more keys than a track holds.
-        const std::string tight = "yaw = 0; pitch = 0; distance = 1; zoom = 1000; camera_target = [0,0,0];";
-        std::vector<LegacyKey> yaw;
-        for (int i = 0; i <= 8; ++i) yaw.push_back({static_cast<f32>(i), i % 2 ? 170.F : -170.F});
-        auto loaded = project::decode(legacy_scene(value, tight, legacy_track("yaw", yaw)));
-        REQUIRE(loaded);
-        const auto refined = keys_of(*loaded, "position");
-        CHECK(refined > 1000);
-        CHECK(refined <= vng::timeline::max_keys_per_track / 2 + yaw.size());
-        REQUIRE(project::add_keyframe(*loaded, 8.5F));
-        CHECK(keys_of(*loaded, "position") == refined + 1);
+    SECTION("A migrated shot leaves the old room for keyframes") {
         // 16300 keys elsewhere leave room for one keyframe, which keys every property.
         auto full = value;
         const auto filler = [&](std::string property, auto value_at) {
@@ -1265,10 +1273,10 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         filler("rotation", [](int i) { return Vec3{0, static_cast<f32>(i % 90), 0}; });
         filler("scale", [](int i) { return 1.F + static_cast<f32>(i % 3); });
         filler("axis_scale", [](int i) { return Vec3{1, 1.F + static_cast<f32>(i % 2), 1}; });
+        const std::string tight = "yaw = 0; pitch = 0; distance = 1; zoom = 1000; camera_target = [0,0,0];";
         auto crowded = project::decode(legacy_scene(full, tight, legacy_track("yaw", {{0, 0.F, true}, {10, 170.F}})));
         INFO((crowded ? "loaded" : crowded.error().message));
         REQUIRE(crowded);
-        CHECK(keys_of(*crowded, "position") > 2); // Still refined with what is spare.
         const auto added = project::add_keyframe(*crowded, 45);
         INFO((added ? "added" : added.error().message));
         CHECK(added);
@@ -1312,10 +1320,9 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         const auto [loaded, reference] = load(legacy_track("yaw", yaw));
         const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         std::cout << "4096 wild keys migrated in " << seconds << " s\n";
-        // Bounded refinement takes about 0.25 s in a debug build; unbounded took over 5 s.
         CHECK(seconds < 2);
-        const auto* camera = project::active_camera(loaded, 0);
-        CHECK(loaded.document.timeline.find({camera->id, "position"})->keys.size() <= vng::timeline::max_keys_per_track);
+        CHECK(keys_of(loaded, "rotation") == yaw.size());
+        CHECK(deviation(loaded, reference, 0, 40.95F, .0025F).eye < 1e-5F);
     }
     SECTION("Full-size tracks at staggered times still load within the timeline limits") {
         std::vector<LegacyKey> yaw, pitch;

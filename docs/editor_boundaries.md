@@ -313,15 +313,13 @@ with yaw/pitch/distance/target/zoom tracks, which was the simulation camera
 whenever a scene had no camera instances. `legacy_camera.hpp` is the only code
 that knows that shape: the decoder asks it to read the shot and route its
 tracks, and it turns a shot that was in use into an active **Animation camera**
-instance. Focus and zoom copy the
-old distance and zoom tracks key for key, rotation uses yaw and pitch key times,
-and the eye, which moved on an orbit, gets extra keys where a straight line
-would drift more than about half a pixel, or a coordinate's float step where
-that is coarser (the shipped fleet reveal grows from 35 to 64 keyframes). A cut
-in one component while another moves keeps both via a key one millisecond
-before the cut. The extra keys leave room for the next keyframe, which keys
-every property, and take at most half of the rest of the timeline's key
-limits; keys are thinned only when the exact ones alone would exceed a limit.
+instance that orbits, as the old camera did: between position keys its focus
+point moves in a straight line and the eye turns and dollies around it. So the
+old tracks carry over key for key and the path is unchanged: focus and zoom
+copy distance and zoom, position has the target's keys (each eye placed around
+the target), and rotation takes yaw's and pitch's key times. A cut in yaw or
+pitch while the other moves keeps both via a key one millisecond before the
+cut; only if those rotation keys would exceed a timeline limit are they thinned.
 A scene that already had camera instances drops the unused shot, as does a
 scene already at the instance limit. An eye beyond the scene's coordinate
 range is clamped into it. Saving writes version 5.

@@ -28,17 +28,15 @@ struct LegacyCameraShot {
 // Adds an active "Animation camera" that follows the shot, placed where the
 // shot's eye was (clamped to the scene's coordinate range if it lay beyond).
 // The old tracks first go through the timeline's own sorting and validation,
-// exactly as the old loader did. Each new track comes only from the old
-// tracks it depends on: focus and zoom copy distance and zoom key for key;
-// rotation takes yaw and pitch key times; the eye, which moved on an orbit,
-// gets extra keys wherever a straight line would stray more than about half a
-// pixel (or, for a coordinate whose float step is coarser, that step), worst
-// stretch first. A cut in one component while another still moves becomes a
-// key a millisecond before the cut plus a held key at it. The extra keys leave
-// room for the next keyframe, which keys every property, and take at most half
-// of the rest; only if even the exact keys exceed a limit are the least
-// significant ones dropped, so every old scene loads. A scene that already has camera
-// instances never used the shot, so it is dropped; so is the shot of a scene
-// already at the instance limit.
+// exactly as the old loader did. The camera orbits (CameraSettings::orbit), as
+// the old one did, so each new track copies the old tracks it depends on key
+// for key and the path is the same: focus and zoom are distance and zoom;
+// position has the target's keys, each eye placed around the target by the
+// rotation and focus there; rotation takes yaw's and pitch's key times, and a
+// cut in one while the other still moves becomes a key a millisecond before
+// the cut plus a held key at it. Only if those rotation keys exceed a timeline
+// limit are the least significant ones dropped, so every old scene loads. A
+// scene that already has camera instances never used the shot, so it is
+// dropped; so is the shot of a scene already at the instance limit.
 [[nodiscard]] vng::content::Result<void> migrate_legacy_camera(State&, const LegacyCameraShot&);
 } // namespace editor_example

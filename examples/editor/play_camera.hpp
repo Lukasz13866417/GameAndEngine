@@ -13,15 +13,15 @@ namespace editor_example {
 class PlayCamera {
 public:
     // The authored camera data a Play view depends on, in scene order: each
-    // camera's placement, focus, zoom and active flag, and the keys of those
-    // properties. Names, frustum visibility, scale and roll (rotation z, which
+    // camera's placement, focus, zoom, active flag and path, and the keys of
+    // those properties. Names, frustum visibility, scale and roll (rotation z, which
     // camera_pose ignores) do not move the view. Compare two to detect an
     // authored camera change.
     struct Camera {
         vng::u32 id{};
         vng::Vec3 position{}, rotation{};
         vng::f32 focus{}, zoom{};
-        bool active{};
+        bool active{}, orbit{};
         friend bool operator==(const Camera&, const Camera&) = default;
     };
     struct Keys {
@@ -39,11 +39,12 @@ public:
         for (const auto& instance : state.document.instances)
             if (const auto* lens = std::get_if<CameraSettings>(&instance.settings))
                 result.cameras.push_back({instance.id, instance.transform.position, without_roll(instance.transform.rotation),
-                                          lens->focus, lens->zoom, lens->active});
+                                          lens->focus, lens->zoom, lens->active, lens->orbit});
         for (const auto& track : state.document.timeline.tracks()) {
             const auto& property = track.target.property;
             if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<vng::u32>(track.target.object)) &&
-                (property == "position" || property == "rotation" || property == "focus" || property == "zoom" || property == "active"))
+                (property == "position" || property == "rotation" || property == "focus" || property == "zoom" ||
+                 property == "active" || property == "orbit"))
             {
                 auto keys = track.keys;
                 if (property == "rotation")

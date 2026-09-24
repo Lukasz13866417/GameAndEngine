@@ -1,6 +1,7 @@
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/play_camera.hpp"
+#include "../../examples/editor/document_patch.hpp"
 #include "../../examples/editor/annotation_geometry.hpp"
 #include "../../examples/editor/blueprint_gizmos.hpp"
 #include "../../examples/editor/camera_glyph.hpp"
@@ -77,7 +78,7 @@ TEST_CASE("Adding cameras places them at the editor view and only the first beco
     CHECK(view_instance(state, BlueprintKind::camera)->id == first); // Otherwise the first camera.
     // Camera settings are ordinary keyable properties.
     const auto properties = animation_properties(state);
-    for (const auto property : {"zoom", "focus", "active", "visible"})
+    for (const auto property : {"zoom", "focus", "active", "visible", "orbit"})
         CHECK(std::ranges::find(properties, timeline::Target{first, property}, &AnimationProperty::target) != properties.end());
     auto bytes = encode_scene(state); REQUIRE(bytes);
     CHECK(bytes->find("editor_project = 5;") != std::string::npos);
@@ -107,6 +108,73 @@ TEST_CASE("The scene camera follows the active camera's keys and is absent witho
     CHECK(middle->yaw == Catch::Approx(45));
     CHECK_FALSE(key_camera(state, 1, 2, end)); // Not a camera.
 }
+TEST_CASE("An orbiting camera swings around a focus point that moves in straight lines", "[editor][camera]") {
+    auto state = scene();
+    state.document.timeline_duration = 10;
+    const CameraPose start{0, 0, 10, {}, 1}, end{90, 0, 10, {4, 0, 0}, 1};
+    const auto camera = add_camera(state, start);
+    REQUIRE(key_camera(state, camera, 0, start));
+    REQUIRE(key_camera(state, camera, 4, end));
+    const auto eye = [&](f32 time) { return evaluate_transform(state, *find_instance(state, camera), time).position; };
+    CHECK_FALSE(camera_settings(state, camera)->orbit); // Straight lines by default.
+    CHECK(eye(2).x == Catch::Approx(7)); CHECK(eye(2).z == Catch::Approx(5));
+    camera_settings(state, camera)->orbit = true;
+    // The focus point moves from the origin to (4, 0, 0) while the camera turns
+    // a quarter around it, keeping its focus distance.
+    CHECK(close(*evaluate_camera(state, 1), {22.5F, 0, 10, {1, 0, 0}, 1}));
+    CHECK(close(*evaluate_camera(state, 2), {45, 0, 10, {2, 0, 0}, 1}));
+    CHECK(eye(2).x == Catch::Approx(2 + 7.0710678)); CHECK(eye(2).z == Catch::Approx(7.0710678));
+    // At a key the eye is exactly where the key puts it, and after the last
+    // key the camera keeps turning around the last focus point.
+    const auto* position = state.document.timeline.find({camera, "position"});
+    CHECK(eye(4) == std::get<Vec3>(position->keys[1].value));
+    REQUIRE(key_property(state, {camera, "rotation"}, 8, Vec3{0, 180, 0}));
+    CHECK(close(*evaluate_camera(state, 8), {180, 0, 10, {4, 0, 0}, 1}));
+    // Focus changes dolly toward the focus point rather than moving it.
+    REQUIRE(key_property(state, {camera, "focus"}, 6, 4.F));
+    CHECK(close(*evaluate_camera(state, 6), {135, 0, 4, {4, 0, 0}, 1}));
+
+    // The path is saved and travels in worker patches.
+    auto bytes = encode_scene(state); REQUIRE(bytes);
+    auto restored = decode(*bytes); REQUIRE(restored);
+    CHECK(camera_settings(*restored, camera)->orbit);
+    auto worker = *restored;
+    camera_settings(worker, camera)->orbit = false;
+    DocumentChanges toggled;
+    toggled.properties.insert({camera, "orbit"});
+    ++restored->document.revision;
+    const auto patch = capture_patch(restored->document.revision - 1, *restored, toggled); REQUIRE(patch);
+    const auto encoded = encode_patch(*patch); REQUIRE(encoded);
+    const auto decoded = decode_patch(*encoded); REQUIRE(decoded);
+    REQUIRE(apply_patch(worker, *decoded));
+    CHECK(camera_settings(worker, camera)->orbit);
+
+    // It can be keyed: straight until a key switches it to orbit.
+    camera_settings(state, camera)->orbit = false;
+    REQUIRE(key_property(state, {camera, "orbit"}, 3, true, timeline::Interpolation::hold));
+    CHECK(eye(2).x == Catch::Approx(7));
+    CHECK(evaluate_camera(state, 3.5F)->target.x == Catch::Approx(3.5));
+
+    // A held key holds the focus point until it.
+    auto held = *state.document.timeline.find({camera, "position"});
+    held.keys[1].incoming = timeline::Interpolation::hold;
+    REQUIRE(state.document.timeline.replace_track(held));
+    CHECK(close(*evaluate_camera(state, 3.5F), {78.75F, 0, 10, {}, 1}));
+
+    // Without position keys, or before the first, the camera turns around the
+    // point its default placement looks at.
+    auto turning = scene();
+    const auto still = add_camera(turning, {0, 0, 10, {1, 2, 3}, 1});
+    camera_settings(turning, still)->orbit = true;
+    REQUIRE(turning.document.timeline.set({still, "rotation"}, {0, Vec3{0, 0, 0}, timeline::Interpolation::hold}));
+    REQUIRE(turning.document.timeline.set({still, "rotation"}, {4, Vec3{-30, 90, 0}, timeline::Interpolation::linear}));
+    CHECK(close(*evaluate_camera(turning, 2), {45, 15, 10, {1, 2, 3}, 1}));
+    REQUIRE(turning.document.timeline.set({still, "position"},
+        {3, orbit_eye({5, 2, 3}, Vec3{-22.5F, 67.5F, 0}, 10), timeline::Interpolation::linear}));
+    CHECK(close(*evaluate_camera(turning, 2), {45, 15, 10, {1, 2, 3}, 1}));
+    CHECK(close(*evaluate_camera(turning, 3), {67.5F, 22.5F, 10, {5, 2, 3}, 1}));
+}
+
 TEST_CASE("Only one camera can be active at a time and the session keys the switch", "[editor][camera][session]") {
     auto initial = scene();
     const auto first = add_camera(initial, {0, 0, 10, {}, 1});
@@ -232,6 +300,13 @@ TEST_CASE("Independent Play follows the scene camera until navigated, and any ca
     find_instance(state, camera)->transform.rotation.z = 25;
     CHECK_FALSE(play.authored(before, state));
     CHECK(play.held());
+
+    // Switching the path between keys changes what the camera sees.
+    before = PlayCamera::cameras(state);
+    camera_settings(state, camera)->orbit = true;
+    CHECK(play.authored(before, state));
+    CHECK_FALSE(play.held());
+    play.navigated(looked);
 
     // A key far from the current playhead still counts as a camera edit.
     before = PlayCamera::cameras(state);

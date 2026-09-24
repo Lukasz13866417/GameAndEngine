@@ -76,11 +76,11 @@ bool valid_settings(const CameraSettings& lens) {
 }
 void write_settings(std::ostream& out, const CameraSettings& lens) {
     out << "{ zoom = " << lens.zoom << "; focus = " << lens.focus << "; active = " << lens.active
-        << "; visible = " << lens.visible << "; }";
+        << "; visible = " << lens.visible << "; orbit = " << lens.orbit << "; }";
 }
 CameraSettings read_camera_settings(content::Reader reader) {
     return {reader.get<f32>("zoom"), reader.get<f32>("focus"), reader.get_or<bool>("active", false),
-            reader.get_or<bool>("visible", true)};
+            reader.get_or<bool>("visible", true), reader.get_or<bool>("orbit", false)};
 }
 bool valid_transform(const InstanceTransform& transform) {
     return valid_scene_position(transform.position) && range(transform.scale, min_instance_scale, max_instance_scale) &&
