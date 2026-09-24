@@ -165,18 +165,24 @@ TEST_CASE(
     "New scene keyframes capture the interpolated playhead without changing the animation",
     "[editor][keyframe]") {
     auto state = scene();
+    // A camera moving through the insertion time, so keying it there shows.
+    const auto camera = ensure_camera(state, {0, 10, 8, {}});
+    REQUIRE(camera);
+    REQUIRE(key_camera(state, *camera, 0, {0, 10, 8, {}}));
+    REQUIRE(key_camera(state, *camera, 6, {60, 30, 12, {1, 2, 3}}));
     const auto original = state;
     REQUIRE(key_property(state, {1, "position"}, 6, Vec3{3.7F, 2, 0}));
     REQUIRE(key_property(state, {2, "radius"}, 8, 2.F, timeline::Interpolation::hold));
     const auto previous = evaluate_scene(state, 3);
     const auto previous_camera = evaluate_camera(state, 3);
+    REQUIRE(previous_camera);
     std::vector<SceneValues> samples;
     for (f32 time=0; time<=10; time+=.5F) samples.push_back(evaluate_scene(state,time));
     REQUIRE(add_keyframe(state, 3));
     CHECK(keyframe_times(state) == std::vector<f32>{0, 3, 6, 8});
     CHECK(state.document.keyframe_names.contains(3));
     const auto values = keyframe_values(state, 3);
-    REQUIRE(values.size() == 16);
+    REQUIRE(values.size() == 24); // Mesh, sun and camera properties.
     CHECK(std::ranges::all_of(values, [](const auto& field) { return field.keyed; }));
     CHECK(std::get<Vec3>(values[0].value) == previous.model_transform.position);
     const auto visible = std::ranges::find_if(values, [](const auto& field) {

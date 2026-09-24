@@ -1,6 +1,7 @@
 #include "legacy_camera.hpp"
 #include "authoring_limits.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -31,18 +32,11 @@ f32 distance(Vec3 a, Vec3 b) {
 }
 // A position evaluated in double, so refinement measures the chord against
 // the ideal path rather than against float rounding noise.
-struct Precise { double x{}, y{}, z{}; };
-Vec3 rounded(Precise p) { return {static_cast<f32>(p.x), static_cast<f32>(p.y), static_cast<f32>(p.z)}; }
-double gap(Precise a, Vec3 from, Vec3 to, double ratio) {
-    const auto along = [ratio](f32 a0, f32 b0) { return a0 + (static_cast<double>(b0) - a0) * ratio; };
-    return std::hypot(a.x - along(from.x, to.x), a.y - along(from.y, to.y), a.z - along(from.z, to.z));
-}
-// Two units in the last place of the largest coordinate: stored keys round
-// to float, so no split can bring a chord closer than that.
-double float_resolution(Precise p) {
-    const auto magnitude = static_cast<f32>(std::max({std::abs(p.x), std::abs(p.y), std::abs(p.z), 1e-30}));
-    return 2.0 * (std::nextafter(magnitude, std::numeric_limits<f32>::infinity()) - magnitude);
-}
+using Precise = std::array<double, 3>;
+Vec3 rounded(const Precise& p) { return {static_cast<f32>(p[0]), static_cast<f32>(p[1]), static_cast<f32>(p[2])}; }
+// A float's step near `value` is at most this, and a stored key rounds by
+// half a step, so no split can bring a coordinate much closer than this.
+double float_step(double value) { return std::ldexp(std::abs(value), -23); }
 
 // One component of the old shot with its own keys and interpolation, sampled
 // exactly as Timeline::sample did for it: the base pose where the component is
@@ -124,39 +118,36 @@ struct Piece {
     double excess{};
     friend bool operator<(const Piece& a, const Piece& b) { return a.excess < b.excess; }
 };
-// How far along the straight line from `from` to `to` its largest coordinate
-// is smallest, where the float grid is finest. That magnitude is convex along
-// the line, so a ternary search finds it.
-double nearest_origin(Vec3 from, Vec3 to) {
-    const auto largest = [&](double s) {
-        const auto along = [s](f32 a, f32 b) { return std::abs(a + (static_cast<double>(b) - a) * s); };
-        return std::max({along(from.x, to.x), along(from.y, to.y), along(from.z, to.z)});
-    };
-    double low = 0, high = 1;
-    for (int step = 0; step < 40; ++step) {
-        const double a = low + (high - low) / 3, b = high - (high - low) / 3;
-        if (largest(a) < largest(b)) high = b;
-        else low = a;
-    }
-    return (low + high) * .5;
-}
-
+// Each coordinate may stray by the tolerance, or by its own float step where
+// that is coarser: a far coordinate never excuses a near one. That allowance
+// changes only where a coordinate crosses zero or its float step overtakes
+// the tolerance, so the line is measured there, as well as at eighths across
+// the piece and sixteenths by its ends.
 Piece piece(const Signal& signal, f32 x, Vec3 vx, f32 y, Vec3 vy) {
     Piece result{x, y, vx, vy, 0};
     const f32 mid = x + (y - x) * .5F;
     if (!(x < mid && mid < y)) return result;
     const double allowed = signal.tolerance(x, y);
-    // Besides the quarters, measure where the line passes nearest the origin:
-    // a piece crossing from far on one side to far on the other can stray by
-    // many pixels there while the float floor elsewhere hides it.
-    const f32 nearest = x + static_cast<f32>((static_cast<double>(y) - x) * nearest_origin(vx, vy));
-    for (const auto t : {x + (y - x) * .25F, mid, x + (y - x) * .75F, nearest}) {
-        if (!(x < t && t < y)) continue;
+    const auto measure = [&](double fraction) {
+        const f32 t = x + static_cast<f32>((static_cast<double>(y) - x) * fraction);
+        if (!(x < t && t < y)) return;
         const double ratio = (static_cast<double>(t) - x) / (static_cast<double>(y) - x);
         const auto ideal = signal.exact(t);
-        // Never ask for more than float resolution where the error is measured.
-        result.excess = std::max(result.excess, gap(ideal, vx, vy, ratio) / std::max(allowed, float_resolution(ideal)));
-    }
+        double sum{};
+        for (unsigned c = 0; c < 3; ++c) {
+            const double along = vx[c] + (static_cast<double>(vy[c]) - vx[c]) * ratio;
+            const double relative = (ideal[c] - along) / std::max(allowed, float_step(ideal[c]));
+            sum += relative * relative;
+        }
+        result.excess = std::max(result.excess, std::sqrt(sum));
+    };
+    for (const auto fraction : {1. / 16, 1. / 8, 2. / 8, 3. / 8, 4. / 8, 5. / 8, 6. / 8, 7. / 8, 15. / 16})
+        measure(fraction);
+    const double coarse = std::ldexp(allowed, 23); // Beyond this, the float step exceeds the tolerance.
+    for (unsigned c = 0; c < 3; ++c)
+        if (vx[c] != vy[c])
+            for (const double level : {0., coarse, -coarse})
+                measure((level - vx[c]) / (static_cast<double>(vy[c]) - vx[c]));
     return result;
 }
 
@@ -385,9 +376,16 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
     for (const auto& existing : state.document.timeline.tracks()) other_keys += existing.keys.size();
     const auto budget = timeline::max_total_keys - std::min(timeline::max_total_keys, other_keys + focus_keys.size() + zoom_keys.size());
     auto rotation_keys = keys_for(rotation, 0);
-    // Refine the eye within the key room the limits leave.
     const auto room = std::min(timeline::max_keys_per_track, budget - std::min(budget, rotation_keys.size()));
-    auto position_keys = keys_for(position, room);
+    // Refining the eye keeps room for the next keyframe, which keys every
+    // property and also seeds time zero for one without a track (the new
+    // camera's tracks count as missing).
+    const auto properties = animation_properties(state);
+    std::size_t keyframe_cost{};
+    for (const auto& property : properties)
+        keyframe_cost += property.target.object != *created && state.document.timeline.find(property.target) ? 1 : 2;
+    const auto spare = budget - std::min(budget, rotation_keys.size() + keyframe_cost);
+    auto position_keys = keys_for(position, std::min(timeline::max_keys_per_track - 1, spare));
     if (position_keys.size() > room || rotation_keys.size() > timeline::max_keys_per_track) {
         auto rotation_target = std::min(rotation_keys.size(), timeline::max_keys_per_track);
         auto position_target = std::min(position_keys.size(), timeline::max_keys_per_track);
@@ -401,7 +399,6 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
         thin(position_keys, position_target);
     }
 
-    const auto properties = animation_properties(state);
     for (auto [property, keys] : {std::pair{"position", std::move(position_keys)}, std::pair{"rotation", std::move(rotation_keys)},
                                   std::pair{"focus", focus_keys}, std::pair{"zoom", zoom_keys}}) {
         if (keys.empty()) continue;

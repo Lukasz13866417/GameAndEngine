@@ -948,7 +948,9 @@ LegacyReference legacy_reference(std::string_view text) {
 }
 // eye: eye error relative to the orbit distance; seen: the same scaled by the
 // optical zoom, which is what shows on screen (5e-4 is about half a pixel).
-struct Deviation { f32 eye{}, seen{}, target{}, yaw{}, pitch{}, distance{}, zoom{}; };
+// excess: eye error per coordinate against half a pixel, or two float steps of
+// that coordinate where those are coarser (above 1: more than floats excuse).
+struct Deviation { f32 eye{}, seen{}, excess{}, target{}, yaw{}, pitch{}, distance{}, zoom{}; };
 // Worst differences between the migrated camera and the old one over [start, end].
 Deviation deviation(const project::State& loaded, const LegacyReference& reference, f32 start, f32 end, f32 step) {
     Deviation worst;
@@ -965,6 +967,13 @@ Deviation deviation(const project::State& loaded, const LegacyReference& referen
                                        eye.z - probe.transform.position.z}) / expected.distance;
         worst.eye = std::max(worst.eye, eye_error);
         worst.seen = std::max(worst.seen, eye_error * std::max(1.F, expected.zoom));
+        const auto half_pixel = 5e-4F * expected.distance / std::max(1.F, expected.zoom);
+        f32 excess{};
+        for (unsigned c = 0; c < 3; ++c) {
+            const auto ideal = probe.transform.position[c];
+            excess = std::hypot(excess, (eye[c] - ideal) / std::max(half_pixel, std::ldexp(std::abs(ideal), -22)));
+        }
+        worst.excess = std::max(worst.excess, excess);
         worst.target = std::max(worst.target, length({actual.target.x - expected.target.x, actual.target.y - expected.target.y,
                                                       actual.target.z - expected.target.z}) / expected.distance);
         worst.yaw = std::max(worst.yaw, std::abs(std::remainder(actual.yaw - expected.yaw, 360.F)));
@@ -1174,6 +1183,31 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         REQUIRE(lopsided);
         CHECK(deviation(*lopsided, legacy_reference(lopsided_text), 3.7F, 3.8F, .0005F).seen < 6e-4F);
     }
+    SECTION("Sweeps through the origin stay within half a pixel, or float steps, all the way") {
+        const auto excess = [&](const std::string& pose, const std::string& tracks) {
+            const auto text = legacy_scene(value, pose, tracks);
+            auto loaded = project::decode(text);
+            REQUIRE(loaded);
+            return deviation(*loaded, legacy_reference(text), 0, 10, .0005F).excess;
+        };
+        // Crossing x = 0 far up the y axis: the far coordinate must not excuse the near one.
+        CHECK(excess("yaw = 0.2; pitch = 0; distance = 1; zoom = 4; camera_target = [0,0,0];",
+            legacy_track("target", {{0, Vec3{-75000, 45000, 0}}, {10, Vec3{125000, 45000, 0}}})) < 1.5F);
+        // x and z cross zero at different times.
+        CHECK(excess("yaw = 0.2; pitch = 0; distance = 1; zoom = 4; camera_target = [0,0,0];",
+            legacy_track("target", {{0, Vec3{-75000, 0, 90000}}, {10, Vec3{125000, 0, -30000}}})) < 1.5F);
+        // Lopsided sweeps that also turn: the worst error lies just off the crossing.
+        CHECK(excess("yaw = 133.6; pitch = 26.2; distance = 0.9855; zoom = 2.63; camera_target = [0,0,0];",
+            legacy_track("target", {{0, Vec3{-242.8F, 0, 0}}, {10, Vec3{266224, 0, 0}}}) +
+            legacy_track("yaw", {{0, 133.6F}, {10, 110.8F}})) < 1.5F);
+        CHECK(excess("yaw = 0; pitch = -30; distance = 0.02; zoom = 4; camera_target = [0,0,0];",
+            legacy_track("target", {{0, Vec3{-10000, 10, 0}}, {10, Vec3{20, 10, 0}}}) +
+            legacy_track("yaw", {{0, 150.F}, {10, 180.F}})) < 1.5F);
+        // A close orbit whose target leaves the origin: the worst error lies just after the first key.
+        CHECK(excess("yaw = -142.748535; pitch = 32.4696274; distance = 0.0802408755; zoom = 11.3677559; camera_target = [0,0,0];",
+            legacy_track("target", {{0, Vec3{0, 0, 0}}, {10, Vec3{-8555.96973F, 0, -4554.01953F}}}) +
+            legacy_track("yaw", {{0, -142.748535F}, {10, -119.055267F}})) < 1.5F);
+    }
     SECTION("An orbit far from the origin keeps half a pixel where floats allow it") {
         const std::string far = "yaw = 0; pitch = 30; distance = 10; zoom = 2; camera_target = [10000,0,0];";
         const auto text = legacy_scene(value, far, legacy_track("yaw", {{0, 0.F}, {10, 90.F}}));
@@ -1194,6 +1228,24 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         CHECK(refined <= vng::timeline::max_keys_per_track / 2 + yaw.size());
         REQUIRE(project::add_keyframe(*loaded, 8.5F));
         CHECK(keys_of(*loaded, "position") == refined + 1);
+        // 16300 keys elsewhere leave room for one keyframe, which keys every property.
+        auto full = value;
+        const auto filler = [&](std::string property, auto value_at) {
+            vng::timeline::Track track{{1, std::move(property)}, {}, {}, {}};
+            for (int i = 0; i < 4075; ++i) track.keys.push_back({static_cast<f32>(i) * .01F, value_at(i), {}});
+            REQUIRE(full.document.timeline.replace_track(std::move(track)));
+        };
+        filler("position", [](int i) { return Vec3{static_cast<f32>(i % 7), 0, 0}; });
+        filler("rotation", [](int i) { return Vec3{0, static_cast<f32>(i % 90), 0}; });
+        filler("scale", [](int i) { return 1.F + static_cast<f32>(i % 3); });
+        filler("axis_scale", [](int i) { return Vec3{1, 1.F + static_cast<f32>(i % 2), 1}; });
+        auto crowded = project::decode(legacy_scene(full, tight, legacy_track("yaw", {{0, 0.F, true}, {10, 170.F}})));
+        INFO((crowded ? "loaded" : crowded.error().message));
+        REQUIRE(crowded);
+        CHECK(keys_of(*crowded, "position") > 2); // Still refined with what is spare.
+        const auto added = project::add_keyframe(*crowded, 45);
+        INFO((added ? "added" : added.error().message));
+        CHECK(added);
     }
     SECTION("A legacy shot at the total key limit loads quickly") {
         std::vector<LegacyKey> pitch, distance, target, zoom;

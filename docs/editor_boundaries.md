@@ -316,14 +316,15 @@ tracks, and it turns a shot that was in use into an active **Animation camera**
 instance. Focus and zoom copy the
 old distance and zoom tracks key for key, rotation uses yaw and pitch key times,
 and the eye, which moved on an orbit, gets extra keys where a straight line
-would drift more than about half a pixel (the shipped fleet reveal grows from
-35 to 64 keyframes). A cut in one component while another moves keeps both via
-a key one millisecond before the cut. The extra keys take at most half the
-room the timeline's key limits leave, so keyframes can still be added; keys are
-thinned only when the exact ones alone would exceed a limit. A scene that
-already had camera instances drops the unused shot, as does a scene already at
-the instance limit. An eye beyond
-the scene's coordinate range is clamped into it. Saving writes version 5.
+would drift more than about half a pixel, or a coordinate's float step where
+that is coarser (the shipped fleet reveal grows from 35 to 64 keyframes). A cut
+in one component while another moves keeps both via a key one millisecond
+before the cut. The extra keys leave room for the next keyframe, which keys
+every property, and take at most half of the rest of the timeline's key
+limits; keys are thinned only when the exact ones alone would exceed a limit.
+A scene that already had camera instances drops the unused shot, as does a
+scene already at the instance limit. An eye beyond the scene's coordinate
+range is clamped into it. Saving writes version 5.
 
 Native `ProjectControls` callbacks report the properties they committed. The
 worker replies with `state_patch`, updating those properties/tracks in the UI
