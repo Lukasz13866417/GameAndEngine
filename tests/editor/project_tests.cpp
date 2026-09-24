@@ -1183,6 +1183,32 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         REQUIRE(lopsided);
         CHECK(deviation(*lopsided, legacy_reference(lopsided_text), 3.7F, 3.8F, .0005F).seen < 6e-4F);
     }
+    SECTION("Float rounding in the old samples neither adds keys nor hides error") {
+        const auto migrate = [&](const std::string& pose, const std::string& tracks) {
+            const auto text = legacy_scene(value, pose, tracks);
+            auto loaded = project::decode(text);
+            REQUIRE(loaded);
+            return std::pair{std::move(*loaded), legacy_reference(text)};
+        };
+        // Straight dollies: the two exact keys already hold the eye to float precision.
+        CHECK(keys_of(migrate("yaw = 100; pitch = 20; distance = 0.05; zoom = 1000; camera_target = [64,64,64];",
+            legacy_track("target", {{0, Vec3{64, 64, 64}}, {10, Vec3{64.9F, 64.99F, 65.08F}}})).first, "position") == 2);
+        CHECK(keys_of(migrate("yaw = 179.036224; pitch = -51.5902214; distance = 17.649004; zoom = 2; camera_target = [0,0,0];",
+            legacy_track("target", {{0, Vec3{-83333.7812F, -39758.0781F, 73912.0156F}},
+                                    {10, Vec3{-83216.7031F, -39690.6953F, 73930.1328F}}})).first, "position") == 2);
+        // Panning an orbit needs no more keys than the orbit alone.
+        const std::string close = "yaw = 100; pitch = 20; distance = 0.1; zoom = 1000; camera_target = [64,64,64];";
+        const auto orbit = legacy_track("yaw", {{0, 100.F}, {10, 130.F}});
+        CHECK(keys_of(migrate(close, orbit + legacy_track("target", {{0, Vec3{64, 64, 64}}, {10, Vec3{64.064F, 64.0704F, 64.0768F}}})).first,
+                      "position") == keys_of(migrate(close, orbit).first, "position"));
+        // At the tightest zoom, rounding at the measured points must not hide the error between them.
+        const auto [tight, reference] = migrate(
+            "yaw = 149.249084; pitch = 64.2795715; distance = 0.30659771; zoom = 1000; camera_target = [0.522508562,0.265010029,-0.524484515];",
+            legacy_track("target", {{0.809272528F, Vec3{0.522508562F, 0.265010029F, -0.524484515F}},
+                                    {29.8384514F, Vec3{0.542802155F, 0.318747163F, -0.538280547F}}}) +
+            legacy_track("yaw", {{0.809272528F, 149.249084F}, {29.8384514F, 137.335098F}}));
+        CHECK(deviation(tight, reference, 25.7F, 26.2F, .00005F).excess < 1.5F);
+    }
     SECTION("Sweeps through the origin stay within half a pixel, or float steps, all the way") {
         const auto excess = [&](const std::string& pose, const std::string& tracks) {
             const auto text = legacy_scene(value, pose, tracks);

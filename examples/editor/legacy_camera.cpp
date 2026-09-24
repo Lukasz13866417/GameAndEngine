@@ -45,9 +45,25 @@ template<class T>
 class Component {
 public:
     Component(const timeline::Track* track, T base) : track_(track), base_(base) {}
-    [[nodiscard]] T at(f32 time) const { return value(time, false); }
+    [[nodiscard]] T at(f32 time) const { return narrow(smooth(time, false)); }
     // The value just before `time`: differs from at() only at a cut.
-    [[nodiscard]] T before(f32 time) const { return value(time, true); }
+    [[nodiscard]] T before(f32 time) const { return narrow(smooth(time, true)); }
+    // The value before its interpolation is rounded to float (double, or
+    // Precise for a Vec3): the smooth path that at() steps around.
+    [[nodiscard]] auto smooth(f32 time, bool left = false) const {
+        if (!track_) return widen(base_);
+        const auto& keys = track_->keys;
+        const auto next = std::ranges::lower_bound(keys, time, {}, &Keyframe::time);
+        if (!left && next != keys.end() && next->time == time) return widen(std::get<T>(next->value));
+        if (next == keys.begin()) return widen(base_);
+        const auto& previous = *(next - 1);
+        if (next == keys.end() || next->incoming == Interpolation::hold) return widen(std::get<T>(previous.value));
+        const double ratio = (static_cast<double>(time) - previous.time) /
+                             (static_cast<double>(next->time) - previous.time);
+        const auto from = widen(std::get<T>(previous.value)), to = widen(std::get<T>(next->value));
+        if constexpr (std::same_as<T, f32>) return std::lerp(from, to, ratio);
+        else return Precise{std::lerp(from[0], to[0], ratio), std::lerp(from[1], to[1], ratio), std::lerp(from[2], to[2], ratio)};
+    }
     void times(std::set<f32>& out) const {
         if (track_) for (const auto& key : track_->keys) out.insert(key.time);
     }
@@ -68,17 +84,13 @@ public:
         return {low, high};
     }
 private:
-    [[nodiscard]] T value(f32 time, bool left) const {
-        if (!track_) return base_;
-        const auto& keys = track_->keys;
-        const auto next = std::ranges::lower_bound(keys, time, {}, &Keyframe::time);
-        if (!left && next != keys.end() && next->time == time) return std::get<T>(next->value);
-        if (next == keys.begin()) return base_;
-        const auto& previous = *(next - 1);
-        if (next == keys.end() || next->incoming == Interpolation::hold) return std::get<T>(previous.value);
-        const double ratio = (static_cast<double>(time) - previous.time) /
-                             (static_cast<double>(next->time) - previous.time);
-        return lerp(std::get<T>(previous.value), std::get<T>(next->value), ratio);
+    static auto widen(const T& value) {
+        if constexpr (std::same_as<T, f32>) return static_cast<double>(value);
+        else return Precise{value.x, value.y, value.z};
+    }
+    static T narrow(const auto& value) {
+        if constexpr (std::same_as<T, f32>) return static_cast<f32>(value);
+        else return rounded(value);
     }
     const timeline::Track* track_;
     T base_;
@@ -90,6 +102,12 @@ struct Shot {
     [[nodiscard]] CameraPose at(f32 t) const { return {yaw.at(t), pitch.at(t), distance.at(t), target.at(t), zoom.at(t)}; }
     [[nodiscard]] CameraPose before(f32 t) const {
         return {yaw.before(t), pitch.before(t), distance.before(t), target.before(t), zoom.before(t)};
+    }
+    // What moves the eye, interpolated in double: the path the old camera's
+    // float samples stepped around.
+    struct Smooth { double yaw, pitch, distance; Precise target; };
+    [[nodiscard]] Smooth smooth(f32 t, bool left = false) const {
+        return {yaw.smooth(t, left), pitch.smooth(t, left), distance.smooth(t, left), target.smooth(t, left)};
     }
 };
 
@@ -118,11 +136,12 @@ struct Piece {
     double excess{};
     friend bool operator<(const Piece& a, const Piece& b) { return a.excess < b.excess; }
 };
-// Each coordinate may stray by the tolerance, or by its own float step where
-// that is coarser: a far coordinate never excuses a near one. That allowance
-// changes only where a coordinate crosses zero or its float step overtakes
-// the tolerance, so the line is measured there, as well as at eighths across
-// the piece and sixteenths by its ends.
+// Each coordinate may stray by the tolerance less its own float step, since
+// the evaluated eye rounds by up to half a step more than the chord shows, but
+// never by less than that step: a far coordinate never excuses a near one.
+// That allowance is smallest where the step is half the tolerance and changes
+// slope where the coordinate crosses zero, so the line is measured there, as
+// well as at eighths across the piece and sixteenths by its ends.
 Piece piece(const Signal& signal, f32 x, Vec3 vx, f32 y, Vec3 vy) {
     Piece result{x, y, vx, vy, 0};
     const f32 mid = x + (y - x) * .5F;
@@ -136,17 +155,18 @@ Piece piece(const Signal& signal, f32 x, Vec3 vx, f32 y, Vec3 vy) {
         double sum{};
         for (unsigned c = 0; c < 3; ++c) {
             const double along = vx[c] + (static_cast<double>(vy[c]) - vx[c]) * ratio;
-            const double relative = (ideal[c] - along) / std::max(allowed, float_step(ideal[c]));
+            const double step = float_step(ideal[c]);
+            const double relative = (ideal[c] - along) / std::max(allowed - step, step);
             sum += relative * relative;
         }
         result.excess = std::max(result.excess, std::sqrt(sum));
     };
     for (const auto fraction : {1. / 16, 1. / 8, 2. / 8, 3. / 8, 4. / 8, 5. / 8, 6. / 8, 7. / 8, 15. / 16})
         measure(fraction);
-    const double coarse = std::ldexp(allowed, 23); // Beyond this, the float step exceeds the tolerance.
+    const double tightest = std::ldexp(allowed, 22); // Where the float step is half the tolerance.
     for (unsigned c = 0; c < 3; ++c)
         if (vx[c] != vy[c])
-            for (const double level : {0., coarse, -coarse})
+            for (const double level : {0., tightest, -tightest})
                 measure((level - vx[c]) / (static_cast<double>(vy[c]) - vx[c]));
     return result;
 }
@@ -334,28 +354,29 @@ content::Result<void> migrate_legacy_camera(State& state, const LegacyCameraShot
         const auto from = legacy.at(a), to = legacy.before(b);
         return from.yaw != to.yaw || from.pitch != to.pitch;
     };
-    // The eye of a pose, as place_camera computes it but in double, clamped
-    // into the scene's coordinate range.
-    const auto eye = [](const CameraPose& pose) {
+    // The eye of the smooth pose, as place_camera computes it but in double,
+    // clamped into the scene's coordinate range. Refinement measures against
+    // it, so float rounding in the old samples never looks like a curve.
+    const auto eye = [](const Shot::Smooth& pose) {
         constexpr double radians = std::numbers::pi / 180;
         const double yaw = pose.yaw * radians, pitch = pose.pitch * radians;
         const auto clamp = [](double v) { return std::clamp<double>(v, -scene_coordinate_limit, scene_coordinate_limit); };
-        return Precise{clamp(pose.target.x + std::sin(yaw) * std::cos(pitch) * pose.distance),
-                       clamp(pose.target.y + std::sin(pitch) * pose.distance),
-                       clamp(pose.target.z + std::cos(yaw) * std::cos(pitch) * pose.distance)};
+        return Precise{clamp(pose.target[0] + std::sin(yaw) * std::cos(pitch) * pose.distance),
+                       clamp(pose.target[1] + std::sin(pitch) * pose.distance),
+                       clamp(pose.target[2] + std::cos(yaw) * std::cos(pitch) * pose.distance)};
     };
     // The eye moves on an orbit, so it is refined to within about half a pixel.
     const Signal position{
         breakpoints({times_of(legacy.yaw), times_of(legacy.pitch), times_of(legacy.distance), times_of(legacy.target)}),
-        [&](f32 t) { return rounded(eye(legacy.at(t))); },
-        [&](f32 t) { return rounded(eye(legacy.before(t))); },
+        [&](f32 t) { return rounded(eye(legacy.smooth(t))); },
+        [&](f32 t) { return rounded(eye(legacy.smooth(t, true))); },
         orbit_moves,
         // Half a pixel at the tightest zoom and nearest distance in the piece:
         // a zoom key may fall inside it, since zoom does not move the eye.
         [&](f32 x, f32 y) {
             return 5e-4F * legacy.distance.range(x, y).first / std::max(1.F, legacy.zoom.range(x, y).second);
         },
-        [&](f32 t) { return eye(legacy.at(t)); }};
+        [&](f32 t) { return eye(legacy.smooth(t)); }};
     // Rotation is {-pitch, yaw, 0}: linear wherever yaw and pitch are.
     const Signal rotation{
         breakpoints({times_of(legacy.yaw), times_of(legacy.pitch)}),
