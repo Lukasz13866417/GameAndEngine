@@ -41,7 +41,12 @@ vng::content::Result<void> EditClipboard::copy_keyframes(const State& state,std:
         if(std::ranges::find(times,time)==times.end()) return invalid("Select existing keyframes to copy");
         auto values=keyframe_values(state,time);
         std::erase_if(values,[](const auto& v){return !v.keyed;});
-        copies.push_back({keyframe_name(state,time),std::move(values),time-sorted.front()});
+        std::vector<std::pair<vng::u32,bool>> orbits;
+        for(const auto& value:values)
+            if(value.target.property=="position" && value.target.object<=UINT32_MAX)
+                if(const auto* lens=camera_settings(state,static_cast<vng::u32>(value.target.object)))
+                    orbits.push_back({static_cast<vng::u32>(value.target.object),lens->orbit});
+        copies.push_back({keyframe_name(state,time),std::move(values),time-sorted.front(),std::move(orbits)});
     }
     contents_=std::move(copies);return {};
 }
@@ -81,6 +86,17 @@ vng::content::Result<EditClipboard::Pasted> EditClipboard::paste(State& state) c
         for(const auto& value:keyframe.values)
             if(auto keyed=key_property(next,value.target,time,value.value,value.incoming); !keyed)
                 return std::unexpected(keyed.error());
+        // A camera that switched placement since the copy gets the same eye,
+        // stored the other way.
+        for(const auto& [camera,orbit]:keyframe.orbits) {
+            const auto* instance=find_instance(next,camera);
+            const auto* lens=instance?std::get_if<CameraSettings>(&instance->settings):nullptr;
+            if(!lens || lens->orbit==orbit) continue;
+            const auto value=std::ranges::find(keyframe.values,vng::timeline::Target{camera,"position"},&KeyframeValue::target);
+            const auto placed=switch_placement(next,*instance,std::get<vng::Vec3>(value->value),time,lens->orbit);
+            if(auto keyed=key_property(next,value->target,time,placed,value->incoming); !keyed)
+                return std::unexpected(keyed.error());
+        }
         next.document.keyframe_names[time]=keyframe.name;
         result.keyframe=time;
         result.keyframes.push_back(time);

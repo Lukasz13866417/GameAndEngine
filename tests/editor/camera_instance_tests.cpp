@@ -5,6 +5,7 @@
 #include "../../examples/editor/keyframes.hpp"
 #include "../../examples/editor/position_edits.hpp"
 #include "../../examples/editor/effects.hpp"
+#include "../../examples/editor/edit_clipboard.hpp"
 #include "../../examples/editor/annotation_geometry.hpp"
 #include "../../examples/editor/blueprint_gizmos.hpp"
 #include "../../examples/editor/camera_glyph.hpp"
@@ -167,12 +168,11 @@ TEST_CASE("An orbiting camera is placed by its focus point and swings around it 
     CHECK(near(evaluate_camera(state, 3.5F)->target, keyed_at_three));
 
     // Switching back keeps it where it is at every key, too.
-    std::vector<Vec3> eyes;
-    for (const auto& key : position_keys()->keys) eyes.push_back(eye(key.time));
+    std::vector<std::pair<f32, Vec3>> eyes;
+    for (const auto time : keyframe_times(state)) eyes.push_back({time, eye(time)});
     REQUIRE(set_camera_orbit(state, camera, false));
     CHECK(position_keys()->label == "Position");
-    index = 0;
-    for (const auto& key : position_keys()->keys) CHECK(near(eye(key.time), eyes[index++]));
+    for (const auto& [time, seen] : eyes) CHECK(near(eye(time), seen));
 
     // Without position keys an orbiting camera turns around the point its
     // placement looks at.
@@ -202,6 +202,35 @@ TEST_CASE("An orbiting camera is placed by its focus point and swings around it 
     CHECK(camera_settings(worker, camera)->orbit);
     CHECK(close(*evaluate_camera(worker, 2), *evaluate_camera(*restored, 2)));
     CHECK_FALSE(key_property(state, {camera, "orbit"}, 3, false, timeline::Interpolation::hold));
+
+    // Switching keeps the eye at every key of the camera, including ones that
+    // key only its rotation or focus, in either direction.
+    auto pinned = scene();
+    pinned.document.timeline_duration = 10;
+    const auto panning = add_camera(pinned, {0, 0, 10, {}, 1});
+    REQUIRE(key_property(pinned, {panning, "position"}, 4, Vec3{4, 0, 10}));
+    REQUIRE(key_property(pinned, {panning, "rotation"}, 2, Vec3{0, 90, 0}));
+    REQUIRE(key_property(pinned, {panning, "focus"}, 3, 30.F));
+    const auto pinned_eye = [&](f32 time) { return evaluate_transform(pinned, *find_instance(pinned, panning), time).position; };
+    std::vector<Vec3> at_keys;
+    for (const f32 time : {0.F, 2.F, 3.F, 4.F}) at_keys.push_back(pinned_eye(time));
+    for (const bool orbit : {true, false, true}) {
+        REQUIRE(set_camera_orbit(pinned, panning, orbit));
+        index = 0;
+        for (const f32 time : {0.F, 2.F, 3.F, 4.F}) CHECK(near(pinned_eye(time), at_keys[index++]));
+    }
+    // A copied keyframe pastes the same eye after the camera switched placement.
+    EditClipboard clipboard;
+    REQUIRE(clipboard.copy_keyframe(pinned, 4));
+    REQUIRE(set_camera_orbit(pinned, panning, false));
+    pinned.viewport.time = 8;
+    REQUIRE(clipboard.paste(pinned));
+    CHECK(near(pinned_eye(8), at_keys[3]));
+    REQUIRE(clipboard.copy_keyframe(pinned, 8));
+    REQUIRE(set_camera_orbit(pinned, panning, true));
+    pinned.viewport.time = 9;
+    REQUIRE(clipboard.paste(pinned));
+    CHECK(near(pinned_eye(9), at_keys[3]));
 
     // The inspector switches it with the rest of the lens, all or nothing: a
     // focus point that would leave the scene undoes the whole edit.

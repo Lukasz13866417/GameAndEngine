@@ -333,9 +333,11 @@ metadata and **Logs → Interaction timing** measurements/export.
   its focus point instead: its position values and keys are the point it looks
   at, which moves in a straight line between keys while the camera turns and
   dollies around it, so a shot that keys a turn around a subject keeps the
-  subject framed. Switching the setting rewrites those values so the camera
-  stays where it is at every key; moving the camera in the viewport moves its
-  focus point along with it. The setting is not keyed. Several cameras can exist, but only one is
+  subject framed. Switching the setting rewrites those values, adding position
+  keys where only the camera's rotation or focus was keyed, so it stays where
+  it is at each of its keys and only its path between them changes. Moving the
+  camera in the viewport moves its focus point along with it. The setting is
+  not keyed. Several cameras can exist, but only one is
   **active** at any timestamp; **Set active here** keys the switch at the selected
   keyframe and clears the others there, so the simulation cuts between cameras.
   Independent Play and the demos render through the active camera.
@@ -444,8 +446,8 @@ metadata and **Logs → Interaction timing** measurements/export.
   view looking through its active camera at time zero. Files saved before scene
   cameras existed still load: their saved shot becomes an active **Animation
   camera** instance that orbits its focus point, as the old camera did, and so
-  follows the same path, including its cuts, from the same keyframes. The next
-  save writes the current format.
+  follows the same path, including its cuts, from the old keys. The next save
+  writes the current format.
 - **Open scene...** (Ctrl+O) in the top toolbar browses for a `.vscene` and makes
   the chosen scene the current Save target; `--scene FILE` does the same at
   startup. The browser starts beside the current scene with it preselected, or in

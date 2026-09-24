@@ -41,9 +41,10 @@ struct SunSettings {
     friend bool operator==(const SunSettings&, const SunSettings&) = default;
 };
 // A scene camera used by the actual simulation (independent Play and demos),
-// never the editor's private viewing camera. Its transform is the eye and
-// look direction, following the mesh -Z heading convention; roll is stored but
-// not rendered. focus is the orbit pivot distance, which also sizes the far
+// never the editor's private viewing camera. Its evaluated transform is the
+// eye and look direction, following the mesh -Z heading convention; roll is
+// stored but not rendered. A straight camera stores its eye as its position;
+// an orbiting one (orbit below) stores its focus point. focus is the orbit pivot distance, which also sizes the far
 // plane. Only one camera may be active at any timestamp; the first camera is
 // used when none is marked active.
 struct CameraSettings {
@@ -52,7 +53,7 @@ struct CameraSettings {
     // position keys) is the point it looks at and its eye stands `focus`
     // behind it, so between keys the focus point moves in a straight line and
     // the camera turns and dollies around it. Not animated; set_camera_orbit
-    // switches it without moving the camera.
+    // switches it, keeping the camera where it is at each of its keys.
     bool active{}, visible{true}, orbit{};
     friend bool operator==(const CameraSettings&, const CameraSettings&) = default;
 };

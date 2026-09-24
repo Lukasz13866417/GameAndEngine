@@ -118,7 +118,7 @@ editor::Result<void> apply_lens(State& state, DocumentChanges& changes, u32 id, 
             if (auto changed = candidate.change("focus", before.focus, next.focus, value->focus); !changed) return changed;
             return candidate.change("visible", before.visible, next.visible, value->visible);
         }); !lens) return lens;
-    // Placement is not animated: switching it keeps the camera where it is.
+    // Placement is not animated: switching it keeps the camera where it is at its keys.
     if (before.orbit == next.orbit) return {};
     if (auto placed = set_camera_orbit(state, id, next.orbit); !placed) {
         *find_instance(state, id) = instance;

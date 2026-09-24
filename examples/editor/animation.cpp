@@ -218,35 +218,53 @@ content::Result<void> key_camera(State& state, u32 id, f32 time, const CameraPos
     return edit_property_keys(state, time, keys);
 }
 
+Vec3 switch_placement(const State& state, const SceneInstance& camera, Vec3 value, f32 time, bool orbit) {
+    const auto evaluated = evaluate_instance(state, camera, time);
+    const auto focus = std::get<CameraSettings>(evaluated.settings).focus;
+    return orbit ? focus_point(value, evaluated.transform.rotation, focus)
+                 : orbit_eye(value, evaluated.transform.rotation, focus);
+}
+
 content::Result<void> set_camera_orbit(State& state, u32 id, bool orbit) {
     auto* camera = find_instance(state, id);
     auto* lens = camera ? std::get_if<CameraSettings>(&camera->settings) : nullptr;
     if (!lens) return invalid("Only a scene camera can orbit its focus point");
     if (lens->orbit == orbit) return {};
-    // The new position value at `time`: the same eye, stored the other way.
+    const auto& animation = state.document.timeline;
+    const auto* existing = animation.find({id, "position"});
+    timeline::Track track = existing ? *existing
+        : timeline::Track{{id, "position"}, orbit ? "Position" : "Focus point", camera->name, {}};
+    // Pin the eye wherever only rotation or focus is keyed: a key there with
+    // the value the camera has now keeps it in place once the path changes.
+    for (const auto* property : {"rotation", "focus"})
+        if (const auto* turned = animation.find({id, property}))
+            for (const auto& key : turned->keys) {
+                const auto next = std::ranges::lower_bound(track.keys, key.time, {}, &timeline::Keyframe::time);
+                if (next != track.keys.end() && next->time == key.time) continue;
+                auto value = camera->transform.position;
+                if (const auto sampled = animation.sample(track.target, key.time)) value = std::get<Vec3>(*sampled);
+                const auto incoming = next != track.keys.end() ? next->incoming : timeline::Interpolation::linear;
+                track.keys.insert(next, {key.time, value, incoming});
+            }
+    // Then store the same eye the other way, at time zero and at every key.
     const auto convert = [&](Vec3 value, f32 time) -> content::Result<Vec3> {
-        const auto evaluated = evaluate_instance(state, *camera, time);
-        const auto focus = std::get<CameraSettings>(evaluated.settings).focus;
-        const auto converted = orbit ? focus_point(value, evaluated.transform.rotation, focus)
-                                     : orbit_eye(value, evaluated.transform.rotation, focus);
+        const auto converted = switch_placement(state, *camera, value, time, orbit);
         if (!valid_scene_position(converted)) return invalid("The camera would leave the scene's coordinate range");
         return converted;
     };
     auto base = convert(camera->transform.position, 0);
     if (!base) return std::unexpected(base.error());
-    std::optional<timeline::Track> track;
-    if (const auto* existing = state.document.timeline.find({id, "position"})) {
-        track = *existing;
-        for (auto& key : track->keys) {
-            auto value = convert(std::get<Vec3>(key.value), key.time);
-            if (!value) return std::unexpected(value.error());
-            key.value = *value;
-        }
+    for (auto& key : track.keys) {
+        auto value = convert(std::get<Vec3>(key.value), key.time);
+        if (!value) return std::unexpected(value.error());
+        key.value = *value;
     }
-    if (track) {
-        if (track->label == (orbit ? "Position" : "Focus point")) track->label = orbit ? "Focus point" : "Position";
-        if (auto replaced = state.document.timeline.replace_track(std::move(*track)); !replaced)
+    if (!track.keys.empty()) {
+        if (track.label == (orbit ? "Position" : "Focus point")) track.label = orbit ? "Focus point" : "Position";
+        auto candidate = animation;
+        if (auto replaced = candidate.replace_track(std::move(track)); !replaced)
             return invalid(replaced.error().message);
+        state.document.timeline = std::move(candidate);
     }
     camera->transform.position = *base;
     lens->orbit = orbit;

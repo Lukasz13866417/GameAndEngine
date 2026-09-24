@@ -319,8 +319,10 @@ while the eye turns and dollies around it. So the old tracks carry over key for
 key and the path is unchanged: position is the old target, focus and zoom are
 distance and zoom, and rotation takes yaw's and pitch's key times. A cut in yaw
 or pitch while the other moves keeps both via a key one millisecond before the
-cut. Only if merging yaw and pitch needs more keys than a track holds is
-rotation thinned, those extra keys first, so every old key keeps its value. A
+cut. If the merged rotation would exceed a track's key limit or the scene's
+remaining key budget, those extra keys are dropped first (their segment then
+holds), and only if that is not enough are other rotation keys dropped, so
+every old scene loads. A
 scene that already had camera instances drops the unused shot, as does a scene
 already at the instance limit. An orbiting eye beyond the scene's coordinate
 range is clamped into it. Saving writes version 5.

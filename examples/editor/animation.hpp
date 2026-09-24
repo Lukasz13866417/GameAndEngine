@@ -35,7 +35,8 @@ struct SceneValues {
 [[nodiscard]] SceneValues evaluate_scene(const State&, vng::f32 time);
 [[nodiscard]] SceneInstance evaluate_instance(const State&, const SceneInstance&, vng::f32 time);
 // Placement queries must not copy an instance's editable boundary or settings.
-// An orbiting camera's position is its eye, placed around its focus point.
+// The position is where the instance shows: for an orbiting camera, its eye,
+// placed around the focus point it stores.
 [[nodiscard]] InstanceTransform evaluate_transform(const State&, const SceneInstance&, vng::f32 time);
 // The position value that shows an instance at `placed` at `time`: `placed`
 // itself, or for an orbiting camera the focus point its eye there looks at.
@@ -57,10 +58,15 @@ struct SceneValues {
 [[nodiscard]] vng::content::Result<vng::u32> ensure_camera(State&, const CameraPose&, std::string name = "Camera");
 [[nodiscard]] vng::content::Result<void> key_camera(State&, vng::u32 camera, vng::f32 time, const CameraPose&,
     vng::timeline::Interpolation = vng::timeline::Interpolation::linear);
-// Places a camera by its focus point (orbit) or by its eye, rewriting its
-// position and position keys so it stays where it is at time zero and at
-// every key; only the path between keys changes.
+// Places a camera by its focus point (orbit) or by its eye. Its position
+// values are rewritten, with position keys added where only its rotation or
+// focus was keyed, so it stays where it is at time zero and at each of its
+// keys; only the path between keys changes.
 [[nodiscard]] vng::content::Result<void> set_camera_orbit(State&, vng::u32 camera, bool orbit);
+// A camera position value at `time` re-expressed for the other placement: the
+// focus point an eye there looks at (to orbit), or the eye around a focus point.
+[[nodiscard]] vng::Vec3 switch_placement(const State&, const SceneInstance& camera, vng::Vec3 value,
+                                         vng::f32 time, bool orbit);
 [[nodiscard]] vng::content::Result<void> validate_animation(const State&);
 [[nodiscard]] vng::content::Result<void> validate_animation(
     std::span<const AnimationProperty>, const vng::timeline::Timeline&, vng::f32 duration,

@@ -18,7 +18,12 @@ public:
     [[nodiscard]] vng::content::Result<Pasted> paste(State&) const;
 private:
     struct Instance { SceneInstance value; std::vector<vng::timeline::Track> tracks; };
-    struct Keyframe { std::string name; std::vector<KeyframeValue> values; vng::f32 offset{}; };
+    // `orbits`: whether each camera whose position was copied orbited then,
+    // since that decides what its stored position means.
+    struct Keyframe {
+        std::string name; std::vector<KeyframeValue> values; vng::f32 offset{};
+        std::vector<std::pair<vng::u32, bool>> orbits;
+    };
     std::variant<std::monostate,std::vector<Instance>,std::vector<Keyframe>> contents_;
 };
 }
