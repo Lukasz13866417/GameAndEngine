@@ -334,8 +334,9 @@ metadata and **Logs → Interaction timing** measurements/export.
   at, which moves in a straight line between keys while the camera turns and
   dollies around it, so a shot that keys a turn around a subject keeps the
   subject framed. Switching the setting rewrites those values, adding position
-  keys where only the camera's rotation or focus was keyed, so it stays where
-  it is at each of its keys and only its path between them changes. Moving the
+  keys at the camera's other keys (and a millisecond before a cut in its
+  rotation or focus), so it stays where it is at each of its keys, keeps its
+  cuts, and only its path between them changes. Moving the
   camera in the viewport moves its focus point along with it. The setting is
   not keyed. Several cameras can exist, but only one is
   **active** at any timestamp; **Set active here** keys the switch at the selected

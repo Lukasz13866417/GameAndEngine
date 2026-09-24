@@ -240,6 +240,22 @@ TEST_CASE("Animated surface edits reject playback without partially applying oth
     CHECK(f.state.document.timeline == keys);
 }
 
+TEST_CASE("The inspector's position gizmo puts an orbiting camera's eye where it is dropped", "[editor][effects][camera]") {
+    Fixture f;
+    f.state.viewport.editor_camera = {0, 0, 10, {}, 1};
+    const auto camera = instantiate(f.state, BlueprintId::camera);
+    REQUIRE(camera);
+    REQUIRE(set_camera_orbit(f.state, *camera, true));
+    f.state.viewport.selected_object = *camera;
+    f.describe();
+    REQUIRE(f.dispatch("position", {}, editor::Phase::begin));
+    REQUIRE(f.dispatch("position", {{"position", Vec3{3, 1, 12}}}, editor::Phase::commit));
+    const auto eye = f.evaluated().transform.position;
+    CHECK(eye.x == Catch::Approx(3)); CHECK(eye.y == Catch::Approx(1)); CHECK(eye.z == Catch::Approx(12));
+    const auto stored = find_instance(f.state, *camera)->transform.position; // Its focus point.
+    CHECK(stored.x == Catch::Approx(3)); CHECK(stored.y == Catch::Approx(1)); CHECK(stored.z == Catch::Approx(2));
+}
+
 TEST_CASE("Native position gesture cancellation restores its exact pre-gesture animation track", "[editor][effects]") {
     Fixture f;
     REQUIRE(key_property(f.state, {1, "position"}, 6, Vec3{4, 0, 0}));

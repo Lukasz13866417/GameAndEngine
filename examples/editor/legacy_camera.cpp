@@ -66,15 +66,6 @@ struct Shot {
     }
 };
 
-// A time a millisecond before the cut (halfway, in a shorter gap), or failing
-// that the latest float before it; none when no float lies between.
-std::optional<f32> just_before(f32 cut, f32 after) {
-    f32 time = cut - std::min(1e-3F, (cut - after) * .5F);
-    if (!(after < time && time < cut)) time = std::nextafter(cut, after);
-    if (!(after < time && time < cut)) return {};
-    return time;
-}
-
 // Rotation is {-pitch, yaw, 0}, linear wherever yaw and pitch both are, so a
 // key at each of their key times reproduces both. A cut in one while the
 // other still moves becomes a key just before the cut followed by a held key
@@ -100,7 +91,7 @@ Turn rotation_keys(const Component<f32>& yaw, const Component<f32>& pitch) {
         const f32 a = *std::prev(time), b = *time;
         if (const auto left = before(b), to = at(b); left == to) {
             add({b, to, Interpolation::linear});
-        } else if (const auto freeze = just_before(b, a); at(a) == left || !freeze) {
+        } else if (const auto freeze = moment_before(b, a); at(a) == left || !freeze) {
             // Nothing moved before the cut, or there is no room to keep the motion.
             add({b, to, Interpolation::hold});
         } else {

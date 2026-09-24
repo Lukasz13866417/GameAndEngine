@@ -1269,6 +1269,19 @@ TEST_CASE("Legacy camera shots keep their orbit paths, cuts and per-track interp
         // A keyframe added anywhere stores where the camera is and changes nothing else.
         REQUIRE(project::add_keyframe(loaded, 2));
         CHECK(deviation(loaded, reference, 0, 8, .01F).eye < 1e-5F);
+        // Placing a still shot that cuts by its eye instead keeps it still until the cut.
+        const std::string still = "yaw = 0; pitch = 0; distance = 8; zoom = 1; camera_target = [0,0,0];";
+        const auto cut_text = legacy_scene(value, still, legacy_track("yaw", {{0, 0.F, true}, {5, 90.F, true}}));
+        auto cutting = project::decode(cut_text);
+        REQUIRE(cutting);
+        const auto cut_reference = legacy_reference(cut_text);
+        for (const bool orbit : {false, true}) {
+            REQUIRE(project::set_camera_orbit(*cutting, project::active_camera(*cutting, 0)->id, orbit));
+            for (const auto worst : {deviation(*cutting, cut_reference, 0, 4.998F, .002F), deviation(*cutting, cut_reference, 5, 8, .01F)}) {
+                CHECK(worst.eye < 1e-5F);
+                CHECK(worst.target < 1e-5F);
+            }
+        }
         // Saving a view at time zero puts the camera exactly there, and saving
         // it again changes nothing, whether or not the target was animated.
         auto [turning, ignored] = load(legacy_track("yaw", {{0, 0.F, true}, {4, 90.F}}));

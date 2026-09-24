@@ -59,10 +59,16 @@ struct SceneValues {
 [[nodiscard]] vng::content::Result<void> key_camera(State&, vng::u32 camera, vng::f32 time, const CameraPose&,
     vng::timeline::Interpolation = vng::timeline::Interpolation::linear);
 // Places a camera by its focus point (orbit) or by its eye. Its position
-// values are rewritten, with position keys added where only its rotation or
-// focus was keyed, so it stays where it is at time zero and at each of its
-// keys; only the path between keys changes.
+// values are rewritten, with position keys added at its other keys, so it
+// stays where it is at time zero and at each of its keys. A cut in its
+// rotation or focus stays a cut: the eye holds for the millisecond before it,
+// as migrated shots do. Otherwise only the path between keys changes.
 [[nodiscard]] vng::content::Result<void> set_camera_orbit(State&, vng::u32 camera, bool orbit);
+// A time a millisecond before `cut` (halfway, when `after` is closer), or
+// failing that the latest float before it; none when no float lies between.
+// A key there, followed by a held key at the cut, keeps a cut in one camera
+// property from bending the motion of another.
+[[nodiscard]] std::optional<vng::f32> moment_before(vng::f32 cut, vng::f32 after);
 // A camera position value at `time` re-expressed for the other placement: the
 // focus point an eye there looks at (to orbit), or the eye around a focus point.
 [[nodiscard]] vng::Vec3 switch_placement(const State&, const SceneInstance& camera, vng::Vec3 value,

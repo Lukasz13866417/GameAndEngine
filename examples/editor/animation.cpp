@@ -218,6 +218,13 @@ content::Result<void> key_camera(State& state, u32 id, f32 time, const CameraPos
     return edit_property_keys(state, time, keys);
 }
 
+std::optional<f32> moment_before(f32 cut, f32 after) {
+    f32 time = cut - std::min(1e-3F, (cut - after) * .5F);
+    if (!(after < time && time < cut)) time = std::nextafter(cut, after);
+    if (!(after < time && time < cut)) return {};
+    return time;
+}
+
 Vec3 switch_placement(const State& state, const SceneInstance& camera, Vec3 value, f32 time, bool orbit) {
     const auto evaluated = evaluate_instance(state, camera, time);
     const auto focus = std::get<CameraSettings>(evaluated.settings).focus;
@@ -234,21 +241,50 @@ content::Result<void> set_camera_orbit(State& state, u32 id, bool orbit) {
     const auto* existing = animation.find({id, "position"});
     timeline::Track track = existing ? *existing
         : timeline::Track{{id, "position"}, orbit ? "Position" : "Focus point", camera->name, {}};
-    // Pin the eye wherever only rotation or focus is keyed: a key there with
-    // the value the camera has now keeps it in place once the path changes.
-    // The value lies on the stored path, so a linear pin leaves that path as
-    // it is; only the first key of a track that started later must now hold,
-    // to keep its cut from the base value.
-    const auto first = track.keys.empty() ? std::optional<f32>{} : track.keys.front().time;
-    for (const auto* property : {"rotation", "focus"})
-        if (const auto* turned = animation.find({id, property}))
-            for (const auto& key : turned->keys) {
-                const auto next = std::ranges::lower_bound(track.keys, key.time, {}, &timeline::Keyframe::time);
-                if (next != track.keys.end() && next->time == key.time) continue;
-                auto value = camera->transform.position;
-                if (const auto sampled = animation.sample(track.target, key.time)) value = std::get<Vec3>(*sampled);
-                track.keys.insert(next, {key.time, value, timeline::Interpolation::linear});
+    // Pin the eye at every key of the camera: a position key there with the
+    // value the camera has now keeps it in place once the path changes. The
+    // value lies on the stored path, so a linear pin leaves that path as it
+    // is; only the first key of a track that started later must now hold, to
+    // keep its cut from the base value.
+    std::set<f32> times;
+    for (const auto& other : animation.tracks())
+        if (other.target.object == id) for (const auto& key : other.keys) times.insert(key.time);
+    // Whether the camera's rotation or focus jumps at `time`: its key there
+    // holds (or starts the track) with a value other than the one before it.
+    const auto cuts = [&](f32 time) {
+        const std::pair<const char*, timeline::Value> sources[] = {{"rotation", camera->transform.rotation},
+                                                                   {"focus", lens->focus}};
+        for (const auto& [property, base] : sources)
+            if (const auto* source = animation.find({id, property})) {
+                const auto key = std::ranges::lower_bound(source->keys, time, {}, &timeline::Keyframe::time);
+                if (key == source->keys.end() || key->time != time) continue;
+                if (key == source->keys.begin() ? key->value != base
+                                                : key->incoming == timeline::Interpolation::hold && key->value != (key - 1)->value)
+                    return true;
             }
+        return false;
+    };
+    const auto first = track.keys.empty() ? std::optional<f32>{} : track.keys.front().time;
+    const auto pin = [&](f32 time, timeline::Interpolation incoming) {
+        const auto next = std::ranges::lower_bound(track.keys, time, {}, &timeline::Keyframe::time);
+        if (next != track.keys.end() && next->time == time) {
+            if (incoming == timeline::Interpolation::hold) next->incoming = incoming;
+            return;
+        }
+        auto value = camera->transform.position;
+        if (const auto sampled = animation.sample(track.target, time)) value = std::get<Vec3>(*sampled);
+        track.keys.insert(next, {time, value, incoming});
+    };
+    std::optional<f32> previous;
+    for (const auto time : times) {
+        // At a cut the other placement would swing the eye into it; the eye
+        // just before holds instead, as it does in a migrated shot.
+        if (cuts(time) && time > 0)
+            if (const auto before = moment_before(time, previous.value_or(0)))
+                pin(*before, timeline::Interpolation::linear), pin(time, timeline::Interpolation::hold);
+        pin(time, timeline::Interpolation::linear);
+        previous = time;
+    }
     if (first && track.keys.front().time < *first)
         std::ranges::find(track.keys, *first, &timeline::Keyframe::time)->incoming = timeline::Interpolation::hold;
     // Then store the same eye the other way, at time zero and at every key.

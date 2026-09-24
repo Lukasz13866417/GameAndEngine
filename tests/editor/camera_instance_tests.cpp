@@ -252,6 +252,39 @@ TEST_CASE("An orbiting camera is placed by its focus point and swings around it 
         CHECK(step < .1F); // No cut appears inside the held stretch.
     }
 
+    // A cut in rotation or focus stays a cut: the eye before it does not start
+    // gliding toward where the other placement puts it after the cut.
+    for (const bool orbit_first : {false, true}) {
+        auto cutting = scene();
+        cutting.document.timeline_duration = 10;
+        const auto cut = add_camera(cutting, {0, 0, 10, {}, 1});
+        if (orbit_first) REQUIRE(set_camera_orbit(cutting, cut, true));
+        REQUIRE(key_property(cutting, {cut, "rotation"}, 5, Vec3{0, 90, 0}, timeline::Interpolation::hold));
+        REQUIRE(key_property(cutting, {cut, "focus"}, 7, 30.F, timeline::Interpolation::hold));
+        REQUIRE(key_property(cutting, {cut, "zoom"}, 3, 2.F));
+        const auto cut_eye = [&](f32 time) { return evaluate_transform(cutting, *find_instance(cutting, cut), time).position; };
+        std::vector<Vec3> before;
+        const std::array<f32, 8> samples{0, 1, 3, 4.99F, 5, 6, 6.99F, 7};
+        for (const auto time : samples) before.push_back(cut_eye(time));
+        REQUIRE(set_camera_orbit(cutting, cut, !orbit_first));
+        index = 0;
+        for (const auto time : samples) CHECK(near(cut_eye(time), before[index++]));
+    }
+    // Every key of the camera keeps its eye, including zoom and active ones:
+    // an active key is where the scene cuts to it.
+    auto cued = scene();
+    cued.document.timeline_duration = 10;
+    const auto cue = add_camera(cued, {0, 0, 10, {}, 1});
+    REQUIRE(key_property(cued, {cue, "position"}, 10, Vec3{20, 0, 10}));
+    REQUIRE(key_property(cued, {cue, "rotation"}, 10, Vec3{0, 90, 0}));
+    REQUIRE(key_property(cued, {cue, "zoom"}, 3, 2.F));
+    REQUIRE(key_property(cued, {cue, "active"}, 5, true, timeline::Interpolation::hold));
+    const auto cue_eye = [&](f32 time) { return evaluate_transform(cued, *find_instance(cued, cue), time).position; };
+    const auto at_three = cue_eye(3), at_five = cue_eye(5);
+    REQUIRE(set_camera_orbit(cued, cue, true));
+    CHECK(near(cue_eye(3), at_three));
+    CHECK(near(cue_eye(5), at_five));
+
     // A copied keyframe pastes the same eye after the camera switched placement.
     EditClipboard clipboard;
     REQUIRE(clipboard.copy_keyframe(pinned, 4));
