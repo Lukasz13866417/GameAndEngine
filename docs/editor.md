@@ -333,11 +333,15 @@ metadata and **Logs → Interaction timing** measurements/export.
   keyframe and clears the others there, so the simulation cuts between cameras.
   Independent Play and the demos render through the active camera.
   Cameras use the Move, Rotate, Free rotate and **Forward / back** gizmos and draw
-  a camera glyph in the preview (body, lens, film reels and the view frustum):
-  bright for the active camera, orange when selected. Clicking the body selects
-  the camera like any other instance. A floating **CAMERA** panel then appears in
+  a compact cinema-camera model in the preview: beveled housing, stepped lens
+  barrel, blue glass, side grip, carry handle, rear screen and viewfinder. The
+  view frustum stays wireframe; gold marks the active camera, orange selection.
+  These are editor-only decorations, with no effect on the actual shot. Clicking
+  any solid part selects the camera (empty space inside the handle does not).
+  A floating **CAMERA** panel then appears in
   the viewport beside the glyph (or in the viewport's top-right corner while you
-  look through that camera) and offers **Inspect**
+  look through that camera). It follows the displayed camera during held pan,
+  orbit and zoom gestures, including in a popped-out viewport, and offers **Inspect**
   (look through the camera read-only; playback and scrubbing follow it, navigation
   is blocked), **Enter** (start from the camera and roam freely; nothing is authored
   until **Save this camera** writes the editor view into the camera at the selected
@@ -355,12 +359,20 @@ metadata and **Logs → Interaction timing** measurements/export.
   **Escape, RMB or losing focus** restores the exact starting geometry. The
   **Mesh gizmo** menu also offers ordinary draggable Move/Rotate/Scale handles
   and the MMB-driven **Free rotate** halo.
-  Rotation gizmos also accept **arrow keys**: Left/Up turn positively,
-  Right/Down negatively. Hold an arrow for continuous rotation (60 degrees/second
+  Click a ring, move arrow or scale handle to keep it **selected after release**.
+  Its highlight and arrow-key target persist when the mouse moves away, during
+  camera navigation, and while using UI controls. An outside **viewport click**
+  clears the handle on release, not on press. Rotation's **Left/Right** turn
+  around the selected axis; **Up/Down** turn in a perpendicular plane (Euler
+  X/Z use Y, Y uses X; ships use the next body axis). A blueprint's single-axis
+  heading ring remains constrained to that axis. Hold an arrow for continuous rotation (60 degrees/second
   at sensitivity 1; Shift is ten times finer). With Move selected,
-  Left/Right and Up/Down move in camera-relative orthogonal directions; a
-  constrained drag keeps its axis. Arrows also work during G/R, including R+X/Y/Z,
-  independently of the OS keyboard-repeat delay/rate. Enter/LMB confirms a keyboard gesture; Esc/RMB
+  Left/Right follows a clicked axis and Up/Down uses a perpendicular world axis;
+  without a clicked handle they use camera-relative directions. Custom forward/back
+  handles retain their blueprint constraint. A clicked scale square supports
+  Right/Up to enlarge and Left/Down to shrink. Arrows also work during G/R, including R+X/Y/Z,
+  independently of the OS keyboard-repeat delay/rate. Enter or a completed viewport
+  click confirms a handle's keyboard gesture; Esc/RMB
   cancels. Ctrl+arrows remain reserved for gizmo cycling; text fields retain
   their normal arrow-key editing.
   Camera navigation remains available during a transform: **Ctrl+MMB drag**
@@ -389,8 +401,14 @@ metadata and **Logs → Interaction timing** measurements/export.
   distance. The reference includes the draft placement and uses the same vertex
   centroid as whole-mesh gizmos. Toggling does not snap the view or edit geometry.
   This is an opt-in session preference for mesh editing (not Walk mode).
-  Wheel scrolling keeps its usual behavior. With the
+  Wheel, Ctrl-drag and Shift-drag pan movement slow progressively near the actual transformed
+  mesh surface for close detail work, using its accelerated picking index rather
+  than a bounding sphere. Optical zoom is also gentler nearby. Wheel movement
+  keeps its camera-forward direction. With the
   toggle on, Ctrl-drag is an object-centered dolly even if wheel zoom is enabled.
+  In an embedded viewport these controls tuck away while Camera settings is open,
+  without disabling centering; they return when the menu closes. A detached
+  viewport keeps its controls because Camera settings is in the other window.
   Mode 5 also offers **Bake camera transforms...**, with independent **Rotation**
   and **Scale** checkboxes and a **Bake to mesh draft** confirmation. Rotation
   transfers the inverse viewing change relative to the standard mesh view into
@@ -1132,10 +1150,10 @@ Diagnostic/evidence captures and explicit screenshot readback remain synchronous
 This transport still performs CPU image copies and a UI texture upload; it is
 not zero-copy GPU sharing. A later GPU-sharing transport can replace that boundary.
 
-IPC uses bounded, nonblocking Unix messages (32 MiB logical message, fragmented;
+IPC uses bounded, nonblocking Unix messages (64 MiB logical message, fragmented;
 64 MiB outgoing queue). Schema/event codecs are deterministic and versioned.
 The project reserves envelope space within that scene limit. Individual meshes
-accept at most 65,536 vertices, 16 MiB source text and 16 MiB decoded data;
+accept at most 131,072 vertices, 32 MiB source text and 32 MiB decoded data;
 the bundled spaceship fits these limits. Imported-asset vertex patches carry
 their blueprint identity, so updates and rollback address the correct GPU buffer.
 Scene revisions reject stale edits; worker generations reject events

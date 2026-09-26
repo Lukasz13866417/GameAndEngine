@@ -100,6 +100,26 @@ TEST_CASE("A multi-ship attitude gesture turns each local frame and undoes atomi
     REQUIRE(session.begin_attitude(*other,selected)); REQUIRE(session.attitude(2,-60)); REQUIRE(session.cancel());
     CHECK(session.state().document.instances==loaded->document.instances);
     CHECK(session.state().document.timeline==loaded->document.timeline);
+    // Keyboard horizontal + perpendicular turns compose on each ship's own
+    // blueprint frame, including the individual-centers mode.
+    for(auto pivot:{PivotMode::individual,PivotMode::selection}) {
+        const auto before=session.state();
+        REQUIRE(session.begin_attitude(*other,selected,{pivot}));
+        REQUIRE(session.attitude(std::array<double,3>{12,-9,0}));
+        const auto basis=blueprint_attitude_axes(before,find_instance(before,*other)->blueprint);
+        const auto primary=evaluate_transform(before,*find_instance(before,*other),2).rotation;
+        const auto changed=rotation_math::turn(rotation_math::turn(primary,(*basis)[0],12),(*basis)[1],-9);
+        const auto delta=rotation_math::multiply(rotation_math::matrix(changed),rotation_math::transpose(rotation_math::matrix(primary)));
+        for(auto id:selected) {
+            const auto old=evaluate_transform(before,*find_instance(before,id),2).rotation;
+            const auto axes=blueprint_attitude_axes(before,find_instance(before,id)->blueprint);
+            const auto expected=pivot==PivotMode::individual?
+                rotation_math::turn(rotation_math::turn(old,(*axes)[0],12),(*axes)[1],-9):
+                rotation_math::euler(rotation_math::multiply(delta,rotation_math::matrix(old)),old);
+            CHECK(evaluate_transform(session.state(),*find_instance(session.state(),id),2).rotation==expected);
+        }
+        REQUIRE(session.cancel());CHECK(session.state().document.timeline==before.document.timeline);
+    }
     const std::array<u32,2> mixed{1,2};
     CHECK_FALSE(session.begin_attitude(1,mixed)); CHECK_FALSE(session.busy());
 }

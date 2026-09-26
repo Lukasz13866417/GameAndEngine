@@ -1,4 +1,5 @@
 #pragma once
+#include "component_debug.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -30,6 +31,12 @@ public:
     void open(const std::filesystem::path& start = {});
     void close();
     [[nodiscard]] bool visible() const noexcept { return visible_; }
+    [[nodiscard]] DebugReport debug_report() const {
+        return {.name=std::string(spec_.title),.role="file picker",.situation=visible_?"Picking":"Closed",
+            .owned={{"directory",directory_.string()},{"selection",selected_?selected_->string():"none"},
+                {"entries",std::to_string(entries_.size())},{"filename draft",last_filename_}}};
+    }
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
     [[nodiscard]] std::optional<std::filesystem::path>
     poll(std::span<const vng::input::Event> raw = {});
     void error(std::string_view message);

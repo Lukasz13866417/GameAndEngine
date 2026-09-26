@@ -10,7 +10,7 @@
 namespace editor_example {
 namespace {
 using namespace vng;
-constexpr std::size_t max_vertices = 65536;
+constexpr std::size_t max_vertices = editor::max_mesh_vertices;
 constexpr std::size_t header_size = 28, entry_size = 16;
 constexpr u64 max_revision = (u64{1} << 53) - 1;
 constexpr std::array<char, 8> magic{'V', 'N', 'G', 'V', 'T', 'X', 0, 1};
@@ -38,7 +38,7 @@ content::Result<void> validate(const VertexEdit& edit) {
     if (!edit.blueprint || edit.blueprint == 2)
         return invalid("Vertex edit requires a mesh blueprint identity");
     if (edit.vertices.size() > max_vertices)
-        return invalid("Vertex edit exceeds the 65536-vertex limit");
+        return invalid("Vertex edit exceeds the editor vertex limit");
     std::bitset<max_vertices> seen;
     for (const auto& vertex : edit.vertices) {
         if (vertex.index >= max_vertices)

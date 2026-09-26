@@ -19,7 +19,7 @@ auto invalid(std::string message) {
 content::Result<void> validate(const SelectionEdit& edit) {
     if (!edit.base_revision || edit.revision <= edit.base_revision || edit.revision > max_revision)
         return invalid("Selection edit requires 1 <= base < target <= 2^53-1");
-    if (edit.selected_vertex >= 65536)
+    if (edit.selected_vertex >= editor::max_mesh_vertices)
         return invalid("Selection vertex exceeds the mesh vertex limit");
     return {};
 }

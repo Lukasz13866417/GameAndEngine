@@ -47,7 +47,8 @@ Vec3 on_circle(Vec3 center, Vec3 u, Vec3 v, f32 radius, f64 angle) {
 }
 } // namespace
 
-void RotationTool::cancel() noexcept {
+void RotationTool::cancel(bool clear_selection) noexcept {
+    if(clear_selection)selection_.clear();
     dragging_ = visible_ = false;
     keyboard_=false;
     ghost_ = target_.rotation_degrees;
@@ -176,7 +177,9 @@ void RotationTool::move(vng::Vec2 pointer) {
         constexpr f64 degrees_per_pixel=.25;
         const auto yaw=rotation_math::matrix(rotation_math::turn({},camera_.up,(pointer.x-start_.x)*degrees_per_pixel));
         const auto pitch=rotation_math::matrix(rotation_math::turn({},camera_.right,(pointer.y-start_.y)*degrees_per_pixel));
-        const auto spin=rotation_math::matrix(rotation_math::turn({},scale(camera_.forward,-1),keyboard_angle_));
+        const auto spin=rotation_math::multiply(
+            rotation_math::matrix(rotation_math::turn({},camera_.right,keyboard_tilt_)),
+            rotation_math::matrix(rotation_math::turn({},scale(camera_.forward,-1),keyboard_angle_)));
         const auto delta=rotation_math::multiply(rotation_math::multiply(spin,rotation_math::multiply(pitch,yaw)),rotation_math::matrix(segment_delta_));
         delta_=rotation_math::euler(delta,delta_);
         ghost_=rotation_math::euler(rotation_math::multiply(delta,rotation_math::matrix(target_.rotation_degrees)),ghost_);
@@ -197,12 +200,25 @@ void RotationTool::move(vng::Vec2 pointer) {
 void RotationTool::apply_turn() {
     const auto degrees=accumulated_angle_*degrees_per_radian+keyboard_angle_;
     if(target_.local_axes)
-        ghost_=rotation_math::turn(target_.rotation_degrees,(*target_.local_axes)[axis_],degrees);
+        ghost_=rotation_math::attitude(target_.rotation_degrees,*target_.local_axes,local_turns());
     else {
         ghost_ = target_.rotation_degrees;
         ghost_[axis_] = static_cast<f32>(std::clamp(
             static_cast<f64>(ghost_[axis_]) + degrees, -360.0, 360.0));
+        if(!target_.only_axis)ghost_[perpendicular_axis()]=static_cast<f32>(std::clamp(
+            static_cast<f64>(ghost_[perpendicular_axis()])+keyboard_tilt_,-360.0,360.0));
     }
+}
+vng::u32 RotationTool::perpendicular_axis() const {
+    // Euler X is always perpendicular to Y; Y is always perpendicular to Z.
+    // X and Z need not be orthogonal after an authored Y rotation.
+    return target_.local_axes ? (axis_+1)%3 : (axis_==1?0:1);
+}
+std::array<vng::f64,3> RotationTool::local_turns() const noexcept {
+    std::array<vng::f64,3> result{};
+    result[axis_]=turn().degrees;
+    if(!target_.only_axis)result[perpendicular_axis()]=keyboard_tilt_;
+    return result;
 }
 RotationTool::Turn RotationTool::turn() const noexcept { return {axis_,accumulated_angle_*degrees_per_radian+keyboard_angle_}; }
 
@@ -212,6 +228,9 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
                      std::span<const vng::input::Event> raw, bool enabled, float arrow_step) {
     using namespace vng;
     handled_ = false;
+    if(target.stamp.object!=target_.stamp.object || target.stamp.generation!=target_.stamp.generation ||
+       target.local_axes!=target_.local_axes || target.free_rotation!=target_.free_rotation || target.only_axis!=target_.only_axis)
+        selection_.clear();
     if(target.only_axis && *target.only_axis>=3)enabled=false;
     if(target.local_axes) for(unsigned i=0;i<3;++i) {
         const auto axis=(*target.local_axes)[i];
@@ -225,7 +244,8 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
         !std::isfinite(camera.projection[0][0]) || !std::isfinite(camera.projection[1][1]) ||
         camera.projection[0][0] == 0 || camera.projection[1][1] == 0) {
         handled_ = dragging_;
-        cancel();
+        if(!dragging_)for(const auto& event:raw)selection_.update(event,unhandled,viewport);
+        cancel(enabled); // Temporary UI/input suppression is not deselection.
         return {};
     }
     if (dragging_ && (target.stamp != target_.stamp || target.position != target_.position ||
@@ -243,7 +263,7 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
     geometry();
     if(reframe) {
         start_=pointer_;
-        if(target_.free_rotation) {segment_delta_=delta_;keyboard_angle_=0;}
+        if(target_.free_rotation) {segment_delta_=delta_;keyboard_angle_=keyboard_tilt_=0;}
         else {
             accumulated_angle_+=keyboard_angle_/degrees_per_radian;keyboard_angle_=0;
             segment_angle_=accumulated_angle_;drag_plane_=planes_[axis_];
@@ -262,26 +282,30 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
     };
     const auto events = raw.empty() ? unhandled : raw;
     for (const auto& event : events) {
+        const bool clicked=(!dragging_ || keyboard_) && selection_.update(event,unhandled,viewport_);
         if(auto arrow=transform_arrow(event,arrow_step);arrow && (dragging_ || (visible_ && viewport_.contains(event.position) &&
             std::ranges::any_of(unhandled,[&](const auto& e){return e.kind==event.kind&&e.key==event.key;})))) {
             if(!dragging_) {
-                axis_=target_.only_axis.value_or(hit_axis(event.position).value_or(2));
-                pointer_=start_=event.position;segment_delta_={};segment_angle_=accumulated_angle_=keyboard_angle_=0;keyboard_=dragging_=true;
+                axis_=target_.only_axis.value_or(selection_.axis().value_or(hit_axis(event.position).value_or(2)));
+                selection_.select(axis_);
+                pointer_=start_=event.position;segment_delta_={};segment_angle_=accumulated_angle_=keyboard_angle_=keyboard_tilt_=0;keyboard_=dragging_=true;
             }
-            keyboard_angle_+=rotation_arrow(*arrow);handled_=true;
+            if(target_.only_axis)keyboard_angle_+=rotation_arrow(*arrow);
+            else {keyboard_angle_-=arrow->x;keyboard_tilt_-=arrow->y;}
+            handled_=true;
             if(target_.free_rotation)move(pointer_);else apply_turn();
             geometry();continue;
         }
         if (dragging_) {
             if(keyboard_ && ((event.kind==input::EventKind::key_down&&event.key==input::Key::enter) ||
-                (event.kind==input::EventKind::pointer_down&&event.button==0))) {
+                clicked)) {
                 handled_=true;dragging_=keyboard_=false;return ghost_;
             }
             if (event.kind == input::EventKind::focus_lost ||
                 (event.kind == input::EventKind::key_down && event.key == input::Key::escape) ||
-                (event.kind == input::EventKind::pointer_down && event.button == 1)) {
+                (event.kind == input::EventKind::pointer_down && event.button == 1 && (!keyboard_ || begins(event)))) {
                 handled_ = true;
-                cancel();
+                cancel(event.kind!=input::EventKind::pointer_down);
                 geometry();
                 return {};
             }
@@ -305,7 +329,8 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
         if (target_.free_rotation) {
             if(!visible_ || !finite(event.position) || !viewport_.contains(event.position) ||
                event.modifiers.shift || event.modifiers.control || event.modifiers.alt || event.modifiers.super) continue;
-            pointer_=start_=event.position;segment_delta_=delta_={};segment_angle_=keyboard_angle_=0;keyboard_=false;dragging_=handled_=true;
+            pointer_=start_=event.position;segment_delta_=delta_={};segment_angle_=keyboard_angle_=keyboard_tilt_=0;keyboard_=false;dragging_=handled_=true;
+            selection_.select(0);
             continue;
         }
         const auto picked = hit(event.position);
@@ -314,7 +339,7 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
         drag_plane_ = planes_[axis_];
         pointer_=start_ = event.position;
         segment_angle_=accumulated_angle_ = 0;
-        keyboard_angle_=0;keyboard_=false;
+        keyboard_angle_=keyboard_tilt_=0;keyboard_=false;
         const auto initial = angle(start_, drag_plane_);
         const auto view_direction = std::abs(camera_.projection[2][3]) > .5F
             ? unit(sub(target_.position, camera_.position)) : camera_.forward;
@@ -341,6 +366,7 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
                                  static_cast<f32>(tangent.y / length)};
         }
         dragging_ = handled_ = true;
+        selection_.select(axis_);
     }
     if (dragging_) geometry();
     return {};
@@ -355,7 +381,7 @@ void RotationTool::append(vng::ui::DrawList& list, const vng::text::Font& font, 
         if (target_.free_rotation && axis!=0) continue;
         if (only_axis >= 0 && axis != static_cast<u32>(only_axis)) continue;
         const auto& ring = rings_[axis];
-        const bool active = dragging_ && (target_.free_rotation || axis == axis_);
+        const bool active = (dragging_ && (target_.free_rotation || axis == axis_)) || selection_.axis()==axis;
         const auto color = active ? Vec4{1, .8F, .15F, 1} : target_.free_rotation ? Vec4{.3F,.85F,1,1} : colors[target_.local_axes && axis<2 ? 1-axis : axis];
         const f32 radius = active ? 2.2F : 1.65F;
         for (std::size_t i = 0; i < ring_segments; ++i) {

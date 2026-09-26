@@ -71,10 +71,10 @@ TEST_CASE("Vertex patch wire format is deterministic bounded little endian binar
     CHECK(empty->vertices.empty());
 
     project::VertexEdit maximum{1, 2, {}};
-    for (u32 i = 0; i < 65536; ++i)
+    for (u32 i = 0; i < vng::editor::max_mesh_vertices; ++i)
         maximum.vertices.push_back({i, {static_cast<f32>(i), 0, 0}});
     const auto maximum_bytes = encoded(maximum);
-    CHECK(maximum_bytes.size() == 28 + 65536 * 16);
+    CHECK(maximum_bytes.size() == 28 + vng::editor::max_mesh_vertices * 16);
     auto roundtrip = project::decode_edit(maximum_bytes);
     REQUIRE(roundtrip);
     CHECK(*roundtrip == maximum);
@@ -102,9 +102,9 @@ TEST_CASE("Malformed vertex patch bytes and invalid records are rejected before 
     malformed_word(8, 2, 8);
     malformed_word(16, 1, 8);
     malformed_word(16, u64{1} << 53, 8);
-    malformed_word(24, 65537, 4);
+    malformed_word(24, vng::editor::max_mesh_vertices+1, 4);
     malformed_word(24, 0xffffffff, 4);
-    malformed_word(28, 65536, 4);
+    malformed_word(28, vng::editor::max_mesh_vertices, 4);
     malformed_word(44, 0, 4);          // duplicate of first index
     malformed_word(32, 0x7fc00000, 4); // NaN
     malformed_word(36, 0x7f800000, 4); // +inf
@@ -112,7 +112,7 @@ TEST_CASE("Malformed vertex patch bytes and invalid records are rejected before 
     CHECK_FALSE(project::encode_edit({0, 2, {}}));
     CHECK_FALSE(project::encode_edit({1, 1, {}}));
     CHECK_FALSE(project::encode_edit({1, 2, {{0, {}}, {0, {}}}}));
-    CHECK_FALSE(project::encode_edit({1, 2, {{65536, {}}}}));
+    CHECK_FALSE(project::encode_edit({1, 2, {{vng::editor::max_mesh_vertices, {}}}}));
     CHECK_FALSE(project::encode_edit({1, 2, {{0, {std::numeric_limits<f32>::infinity(), 0, 0}}}}));
 
     // Deterministic mutation corpus reaches framing, every integer byte and

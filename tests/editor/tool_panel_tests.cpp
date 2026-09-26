@@ -3,6 +3,8 @@
 #include "../../examples/editor/mesh_operation_tool.hpp"
 #include "../../examples/editor/gizmo_input.hpp"
 #include "../../examples/editor/mesh_navigation.hpp"
+#include "../../examples/editor/camera_panel.hpp"
+#include "../../examples/editor/selection_input.hpp"
 #include <vng/ui/inspection.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
@@ -33,13 +35,51 @@ struct Fixture {
     }
 };
 struct CustomTool final : ToolOptions {
-    bool available{true};int calls{};
+    bool available{true};int calls{};u64 revision{},executed_revision{};
+    u64 options_revision()const override{return revision;}
     std::string_view title() const override{return "Blueprint custom tool";}
     bool options_available() const override{return available;}
     void describe_options(editor::Inspector& ui) override {
-        ui.action("custom",[this]{++calls;},"Custom action");
+        ui.action("custom",[this,described_revision=revision]{++calls;executed_revision=described_revision;},"Custom action");
     }
 };
+}
+
+TEST_CASE("Gizmo option revisions refresh same-owner menus and reopen a changed gizmo", "[editor][ui][tool-options]") {
+    CustomTool source;GizmoInput input;Fixture f;
+    REQUIRE(input.show(true,&source));f.panel.show(input);f.pump();
+    f.click("Custom action");CHECK(source.calls==1);
+    f.click("Close tool options");CHECK_FALSE(f.panel.opened());
+    CHECK_FALSE(input.show(true,&source));
+    ++source.revision;
+    REQUIRE(input.show(true,&source));f.panel.show(input,true);f.pump();
+    CHECK(f.panel.opened());f.click("Custom action");CHECK(source.calls==2);CHECK(source.executed_revision==1);
+    ++source.revision;f.panel.validate();f.pump();
+    f.click("Custom action");CHECK(source.calls==3);CHECK(source.executed_revision==2);
+}
+
+TEST_CASE("Focused handles defer outside selection until a click or box drag completes", "[editor][ui][gizmo-focus]") {
+    SelectionInput input;
+    const ui::Rect viewport{0,0,640,480};
+    const std::array down{input::Event{.kind=input::EventKind::pointer_down,.position={100,100}}};
+    const std::array up{input::Event{.kind=input::EventKind::pointer_up,.position={100,100}}};
+    REQUIRE(input.route(down,down,viewport,true,true).empty());
+    REQUIRE(input.route({}, {},viewport,true,true).empty());
+    const auto clicked=input.route(up,up,viewport,false,true); // Tool focus has cleared on release.
+    REQUIRE(clicked.size()==2);CHECK(clicked[0].kind==input::EventKind::pointer_down);
+    CHECK(clicked[1].kind==input::EventKind::pointer_up);CHECK(input.available(clicked[0]));
+    REQUIRE(input.route(down,down,viewport,true,true).empty());
+    const auto ui_release=input.route(up,{},viewport,true,true);
+    REQUIRE(ui_release.size()==1);CHECK(ui_release[0].kind==input::EventKind::pointer_up);
+    REQUIRE(input.route(down,down,viewport,true,true).empty());
+    const std::array move{input::Event{.kind=input::EventKind::pointer_move,.position={150,130}}};
+    const auto dragging=input.route(move,move,viewport,true,true);
+    REQUIRE(dragging.size()==2);CHECK(dragging[0].position==down[0].position);
+    CHECK(dragging[1].kind==input::EventKind::pointer_move);
+    // Without a focused handle, selection retains its immediate response.
+    REQUIRE(input.route(down,down,viewport,false,true).size()==1);
+    REQUIRE(input.route(down,down,viewport,true,true).empty());
+    input.cancel();CHECK(input.route(up,up,viewport,true,true).size()==1);
 }
 TEST_CASE("Tool panel hosts custom blueprint actions at the viewport bottom left", "[editor][ui][tool-options]") {
     CustomTool tool;Fixture f;f.panel.show(tool);f.pump();
@@ -50,6 +90,38 @@ TEST_CASE("Tool panel hosts custom blueprint actions at the viewport bottom left
     f.panel.show(tool);CHECK_FALSE(f.panel.opened()); // Dismissal sticks for this operation.
     f.panel.show(tool,true);CHECK(f.panel.opened());
     tool.available=false;f.panel.validate();CHECK_FALSE(f.panel.opened());
+}
+TEST_CASE("Camera action panel follows projected anchors and stays within the viewport", "[editor][ui][camera-panel]") {
+    Fixture f;
+    auto host=f.screen.column().padding(8).gap(6);
+    CameraPanel panel{host};
+    SceneInstance instance{7,BlueprintId::camera,"Shot",CameraSettings{}, {}};
+    panel.sync(&instance,{},true,false);
+    auto view=gfx::Camera{};
+    view.set_position({0,0,10}).look_at({});
+    const ui::Rect viewport{100,100,800,600};
+    const auto place=[&](const gfx::Camera& camera,ui::Rect bounds,std::optional<Vec3> anchor) {
+        panel.layout(bounds,camera,{800,600},anchor);f.pump();return host.bounds();
+    };
+    const auto before=place(view,viewport,Vec3{});
+    auto pan=view;pan.move_by({2,0,0});
+    const auto after=place(pan,viewport,Vec3{});
+    CHECK(after.x<before.x-30);CHECK(after.y==before.y);
+    CHECK(panel.contains({after.x+10,after.y+10}));
+    CHECK(f.widget("Enter").bounds.x>=after.x);
+    f.click("Enter");CHECK(panel.enter_clicked()); // Hit testing follows the moved controls too.
+    // Resizing/detachment changes only the viewport coordinate space.
+    const auto detached=place(pan,{0,0,800,600},Vec3{});
+    CHECK(detached.x==Catch::Approx(after.x-100));CHECK(detached.y==Catch::Approx(after.y-100));
+    const auto fallback=place(view,viewport,std::nullopt);
+    CHECK(fallback.x==viewport.x+viewport.width-fallback.width-12);
+    CHECK(fallback.y==viewport.y+12);
+    for(const auto point:{Vec3{0,0,11},Vec3{100,0,0}}) {
+        const auto offscreen=place(view,viewport,point); // Behind camera or off-screen.
+        CHECK(offscreen.x==fallback.x);CHECK(offscreen.y==fallback.y);
+    }
+    const auto tiny=place(view,{0,0,200,150},Vec3{});
+    CHECK(tiny.x>=0);CHECK(tiny.y>=0);CHECK(tiny.x+tiny.width<=200);CHECK(tiny.y+tiny.height<=150);
 }
 TEST_CASE("Whole mesh camera control uses the displayed draft center and stays viewport-local", "[editor][ui][mesh-origin]") {
     content::vmesh::Document d;d.vertex_count=3;
@@ -68,6 +140,18 @@ TEST_CASE("Whole mesh camera control uses the displayed draft center and stays v
     state.document.mesh_placements[BlueprintId::mesh].draft=placement;
     CHECK(*controls.origin(state)==Vec3{5,3,3});
     CHECK(state.viewport.editor_camera==camera_before);CHECK(state.document.revision==1);
+    // Camera settings covers the embedded viewport controls, not their state.
+    controls.layout({100,100,800,600},true,true,false,true,true);f.pump();
+    REQUIRE(controls.origin(state));CHECK(*controls.origin(state)==Vec3{5,3,3});
+    CHECK_FALSE(controls.contains({w.bounds.x+5,w.bounds.y+5}));
+    const auto covered=f.screen.inspect();REQUIRE(covered);
+    CHECK_FALSE(std::ranges::any_of(covered->widgets,[](const auto& item){
+        return item.visible&&item.label=="Mesh-centered camera";
+    }));
+    // Closing settings (or showing a detached viewport) restores the controls.
+    controls.layout({100,100,800,600},true,true);f.pump();
+    CHECK(f.widget("Mesh-centered camera").visible);
+    REQUIRE(controls.origin(state));CHECK(*controls.origin(state)==Vec3{5,3,3});
     controls.layout({100,100,800,600},true,true,true);f.pump();
     CHECK(f.widget("Mesh-centered camera").bounds.y>152); // Below FPS overlay.
     controls.layout({100,100,800,600},false,false);f.pump();

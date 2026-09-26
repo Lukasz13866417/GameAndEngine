@@ -157,14 +157,17 @@ CageAction CageTool::update(const gfx::CameraSnapshot& camera,
         if(!enabled)box_.cancel();else for(const auto& event:raw)box_event(event);
         return action;
     }
+    const bool selected_handle=transform_.selected_handle();
     auto result=transform_.update(selected_points(),{object_,selection_revision_,1},camera,viewport,input,raw,
         enabled&&components_&&pivot().has_value(),{},arrow_step);
     handled_=transform_.handled();
     action.began=result.began;action.changed=result.changed;action.finished=result.finished;action.cancelled=result.cancelled;
     action.points=std::move(result.points);
     if(!action.points.empty())for(const auto& p:action.points)for(unsigned c=0;c<3;++c)action.position[c]+=p.position[c]/static_cast<float>(action.points.size());
-    if(!was&&!dragging()&&!handled_&&enabled)for(const auto& event:input) {
+    const auto selection_events=selection_input_.route(raw.empty()?input:raw,input,viewport,selected_handle,!was&&!dragging()&&!handled_&&enabled);
+    if(!was&&!dragging()&&!handled_&&enabled)for(const auto& event:selection_events) {
         if(box_.active()){box_event(event);continue;}
+        if(!selection_input_.available(event))continue;
         if(components_&&event.kind==input::EventKind::key_down&&event.key==input::Key::a&&!event.modifiers.control) {
             if(event.modifiers.shift)select_elements(mode_,{});else select_all();handled_=true;continue;
         }

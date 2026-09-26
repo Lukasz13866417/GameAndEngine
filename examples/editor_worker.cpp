@@ -397,7 +397,12 @@ public:
         const auto rendered_pose = playing_
             ? (play_camera_override_ ? *play_camera_ : project::evaluate_camera(*state_, time))
             : zoom_.pose();
-        const auto rendered_camera = project::camera(rendered_pose,state_->viewport.mode,settings_.maximum_viewing_distance);
+        // Following the shot renders the camera instance's own eye.
+        const bool follows_shot = state_->viewport.mode == project::ViewMode::scene &&
+            (playing_ ? !play_camera_override_ : state_->viewport.pilot_camera && zoom_.settled());
+        const auto rendered_camera = follows_shot
+            ? project::render_camera(*state_, time, settings_.maximum_viewing_distance)
+            : project::camera(rendered_pose,state_->viewport.mode,settings_.maximum_viewing_distance);
         render_trace_ = active_trace_;
         render_trace_.render_started_ns = vng::monotonic_ns();
         next_frame_ = now + project::frame_interval(playing_ ? settings_.play_fps : settings_.preview_fps);

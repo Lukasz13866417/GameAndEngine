@@ -1,6 +1,7 @@
 #pragma once
 
 #include "project.hpp"
+#include "component_debug.hpp"
 #include <functional>
 #include <vng/input/input.hpp>
 #include <vng/ui/ui.hpp>
@@ -15,6 +16,7 @@ class ScaleTool;
 class MeshTools;
 class WorldBoundsTool;
 class SurfacePartTool;
+class SocketPickTool;
 // Read-only evidence from the actual editor loop, after composing a frame.
 // References and capture callbacks are valid only during observe(). Actions
 // enter through input(), never through direct document/widget mutations.
@@ -53,6 +55,9 @@ struct EditorObservation {
     vng::Vec3 rotation_origin{};
     const SurfacePartTool* mesh_part_gizmo{};
     bool blueprint_pending{};
+    const SocketPickTool* mesh_socket_gizmo{};
+    // On-demand, owned diagnostics. Never gathered automatically per frame.
+    std::function<DebugReport()> component_diagnostics;
 };
 
 // Optional example-level input driver. Production runs do not construct it,

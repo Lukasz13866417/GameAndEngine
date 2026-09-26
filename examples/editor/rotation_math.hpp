@@ -69,4 +69,9 @@ inline vng::Vec3 turn(vng::Vec3 start, vng::Vec3 axis, double degrees) {
         for(unsigned k=0;k<3;++k) result[r][col]+=original[r][k]*delta[k][col];
     return euler(result,start);
 }
+inline vng::Vec3 attitude(vng::Vec3 start,const std::array<vng::Vec3,3>& axes,
+                         const std::array<double,3>& degrees) {
+    for(unsigned i=0;i<3;++i)start=turn(start,axes[i],degrees[i]);
+    return start;
+}
 } // namespace editor_example::rotation_math

@@ -1,6 +1,7 @@
 #pragma once
 #include <vng/content/vmesh.hpp>
 #include "earth_clouds.hpp"
+#include "earth_infrastructure.hpp"
 
 namespace example::earth {
 // Offline, deterministic asset authoring. The result is an ordinary editable,

@@ -54,7 +54,7 @@ public:
         const auto& state = editing_.state();
         RotationGizmo description{};
         const auto* instance = find_instance(state, state.viewport.selected_object);
-        if (instance && state.viewport.mode == ViewMode::scene && (enabled || active())) {
+        if (instance && state.viewport.mode == ViewMode::scene) {
             const auto transform = evaluate_transform(state, *instance, state.viewport.time);
             enabled = enabled && evaluate_visibility(state, *instance, state.viewport.time);
             description = {{instance->id, generation, state.document.revision},
@@ -90,9 +90,8 @@ public:
         }
         auto value = result ? result : tool_.preview_rotation();
         if (active() && value) {
-            const auto turn=tool_.turn();
             if (auto moved = free_rotation ? editing_.rotate_by(tool_.rotation_delta()) :
-                attitude ? editing_.attitude(turn.axis,turn.degrees) : editing_.rotate(*value); moved) change.changed = *moved;
+                attitude ? editing_.attitude(tool_.local_turns()) : editing_.rotate(*value); moved) change.changed = *moved;
             else return std::unexpected(moved.error());
         }
         if (active() && !tool_.dragging()) {

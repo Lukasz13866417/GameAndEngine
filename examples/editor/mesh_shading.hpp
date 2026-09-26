@@ -2,6 +2,7 @@
 
 #include "../file_mesh_types.hpp"
 #include "mesh_draw.hpp"
+#include "../support/earth_tunnel_sizes.hpp"
 #include <vng/content/vmesh_schema.hpp>
 #include <vng/render_opengl/program_runtime.hpp>
 #include <vng/shader/shader.hpp>
@@ -20,9 +21,21 @@ struct WorldNormal : vng::gfx::Semantic<vng::Vec3> {};
 using Surface = vng::gfx::Record<Normal, Emission>;
 using Mesh = vng::gfx::Mesh<Vertex, Surface>;
 using Program = vng::render::TypedOpenGLProgramRuntime<vng::Mat4, Lighting>;
-enum class LightingStyle { standard, illustrated };
+// Matte: rough surfaces such as bare rock, diffuse without a highlight.
+// Regolith: illustrated night lighting for airless ground, whose faint rim
+// does not glow like an atmosphere at grazing angles.
+enum class LightingStyle { standard, illustrated, illustrated_night, tunnel, tunnel_departure, tunnel_departure_night, matte,
+                           regolith };
 inline LightingStyle lighting_style(const vng::content::vmesh::Document& document) {
     const auto found=document.metadata.find("render/lighting");
+    const auto emission=document.metadata.find("render/emission");
+    if(found!=document.metadata.end() && found->second=="tunnel")return LightingStyle::tunnel;
+    if(found!=document.metadata.end() && found->second=="matte")return LightingStyle::matte;
+    if(found!=document.metadata.end() && found->second=="regolith")return LightingStyle::regolith;
+    if(found!=document.metadata.end() && found->second=="tunnel_departure_night")return LightingStyle::tunnel_departure_night;
+    if(found!=document.metadata.end() && found->second=="tunnel_departure")return LightingStyle::tunnel_departure;
+    if(found!=document.metadata.end()&&found->second=="illustrated"&&
+       emission!=document.metadata.end()&&emission->second=="night")return LightingStyle::illustrated_night;
     return found!=document.metadata.end() && found->second=="illustrated"
         ? LightingStyle::illustrated : LightingStyle::standard;
 }
@@ -60,9 +73,12 @@ inline auto shade(Stage& s, vng::dsl::Expr<Lighting> lights, LightingStyle style
     const auto color = s.input(Color{}).xyz();
     const auto sunlight = s.constant(vng::Vec3{2.8F, 1.95F, 1.2F});
     auto lit = color * (s.constant(vng::Vec3{.09F, .13F, .21F})
-        + sunlight * diffuse + s.constant(vng::Vec3{.07F, .12F, .23F}) * fill)
-        + sunlight * (specular32 * .22F);
-    if(style==LightingStyle::illustrated) {
+        + sunlight * diffuse + s.constant(vng::Vec3{.07F, .12F, .23F}) * fill);
+    // A white highlight independent of albedo reads as a wet glint on rock.
+    if (style != LightingStyle::matte) lit = lit + sunlight * (specular32 * .22F);
+    const bool night_side=style==LightingStyle::illustrated_night || style==LightingStyle::tunnel_departure_night ||
+        style==LightingStyle::regolith;
+    if(style==LightingStyle::illustrated || night_side) {
         // This is a host-time code-emission choice, not a per-fragment branch.
         // Broad lighting bands, cool shadows, restrained gloss and a thin rim.
         const auto facing=vng::dsl::dot(normal,light);
@@ -73,15 +89,63 @@ inline auto shade(Stage& s, vng::dsl::Expr<Lighting> lights, LightingStyle style
         const auto high=ease((facing-.55F)/.15F);
         const auto rim=1.F-vng::dsl::max(vng::dsl::dot(normal,eye),0.F);
         const auto rim2=rim*rim, rim4=rim2*rim2;
-        lit=color*(s.constant(vng::Vec3{.07F,.16F,.32F})+s.constant(vng::Vec3{.85F,1.03F,1.04F})*day+
-            s.constant(vng::Vec3{.22F,.24F,.23F})*high)+s.constant(vng::Vec3{.015F,.22F,.5F})*rim4*(.25F+.75F*day);
+        const auto shadow=night_side?vng::Vec3{.018F,.045F,.10F}:vng::Vec3{.07F,.16F,.32F};
+        const auto rim_strength=style==LightingStyle::regolith?.25F:1.F;
+        lit=color*(s.constant(shadow)+s.constant(vng::Vec3{.85F,1.03F,1.04F})*day+
+            s.constant(vng::Vec3{.22F,.24F,.23F})*high)+s.constant(vng::Vec3{.015F*rim_strength,.22F*rim_strength,.5F*rim_strength})*rim4*(.25F+.75F*day);
     }
     // Zero normals opt out of lighting. Old colored meshes retain exactly
     // their former unlit output rather than acquiring arbitrary normals.
     const auto surface = vng::dsl::select(vng::dsl::dot(source_normal, source_normal) > 1.0e-12F,
         lit, color);
-    const auto radiance = vng::dsl::vec4((surface + color * vng::dsl::max(s.input(Emission{}), 0.0F))
-        * lights.get(Brightness{}), 1.0F);
+    auto emission=vng::dsl::max(s.input(Emission{}),0.F);
+    if(night_side) {
+        // Smooth twilight transition, evaluated against the scene light. The
+        // same neutral DSL is used by instanced and diagnostic render paths.
+        const auto night=vng::dsl::clamp((.12F-vng::dsl::dot(normal,light))/.30F,0.F,1.F);
+        emission=emission*(.025F+.975F*night*night*(3.F-2.F*night));
+    }
+    auto hdr = (surface + color * emission) * lights.get(Brightness{});
+    if(style==LightingStyle::tunnel || (style==LightingStyle::tunnel_departure || style==LightingStyle::tunnel_departure_night)) {
+        // Kilometre-scale aerial perspective. Distance is evaluated per pixel,
+        // not baked into the mesh: moving the editor camera remains correct.
+        // The near-white distant veil suggests light scattered down the bore, not
+        // a visible far portal. This is an art-directed single-scatter proxy,
+        // not a volumetric light/shadow simulation.
+        const auto delta=lights.get(Eye{})-world;
+        const auto distance2=vng::dsl::dot(delta,delta);
+        auto optical_depth=distance2/(18.F*18.F);
+        if(style==LightingStyle::tunnel) {
+            // The slow study bends in X/Z. Its interior haze must not turn
+            // the same shell white when viewed from an exterior editor camera.
+            const auto eye=lights.get(Eye{});
+            const auto z=eye.z();
+            const auto center_x=z*z/(6371.F+vng::dsl::sqrt(vng::dsl::max(6371.F*6371.F-z*z,.001F)));
+            const auto radial2=(eye.x()-center_x)*(eye.x()-center_x)+eye.y()*eye.y();
+            optical_depth=optical_depth*vng::dsl::select(radial2<s.constant(example::earth::cinematic_tunnel_radius_km*example::earth::cinematic_tunnel_radius_km),1.F,0.F)
+                *vng::dsl::select(z<12.F,1.F,0.F)*vng::dsl::select(z>-1000.F,1.F,0.F);
+        }
+        if((style==LightingStyle::tunnel_departure || style==LightingStyle::tunnel_departure_night)) {
+            // The departure scene's throat is Z=0, with the tube along +Z.
+            // Fade out the interior lighting at the real opening. Do not fog
+            // an exterior ship or Earth merely because it is far from the eye.
+            const auto eye_z=vng::dsl::max(lights.get(Eye{}).z(),0.F);
+            // Exterior geometry is veiled by the depth-tested portal pass,
+            // including materials (Earth) that do not opt into tunnel lighting.
+            // Do not double-fog the terminal behind that veil.
+            optical_depth=optical_depth*vng::dsl::select(world.z()>1.F,1.F,0.F)*vng::dsl::clamp(eye_z/4.F,0.F,1.F);
+            const auto eye=lights.get(Eye{});
+            const auto center_y=-eye_z*eye_z/(6371.F+vng::dsl::sqrt(vng::dsl::max(6371.F*6371.F-eye_z*eye_z,.001F)));
+            const auto radial2=eye.x()*eye.x()+(eye.y()-center_y)*(eye.y()-center_y);
+            optical_depth=optical_depth*vng::dsl::select(radial2<s.constant(example::earth::cinematic_tunnel_radius_km*example::earth::cinematic_tunnel_radius_km),1.F,0.F)*vng::dsl::select(eye_z<1000.F,1.F,0.F);
+        }
+        // Match the mouth veil's falloff, avoiding a bright flat disk against
+        // walls that were using a different distance-to-transmission curve.
+        const auto transmission=(style==LightingStyle::tunnel_departure || style==LightingStyle::tunnel_departure_night)
+            ? vng::dsl::exp(-optical_depth) : 1.F/(1.F+optical_depth);
+        hdr=hdr*transmission+s.constant(vng::Vec3{4.2F,4.05F,3.7F})*(1.F-transmission);
+    }
+    const auto radiance = vng::dsl::vec4(hdr, 1.0F);
     s.observe(SurfaceColor{}, radiance);
     s.observe(WorldPosition{}, world);
     s.observe(WorldNormal{}, normal);

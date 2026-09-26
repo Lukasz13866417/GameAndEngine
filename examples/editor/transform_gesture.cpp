@@ -50,13 +50,17 @@ void TransformGesture::motion(Vec2 p) {
             -std::atan2(p.y-center_.y,p.x-center_.x))/rotation_math::radians : (p.x-start_pointer_.x)*.5;
         Vec3 axis{-camera_.forward.x,-camera_.forward.y,-camera_.forward.z};
         if(axis_>=0) { axis={}; axis[static_cast<unsigned>(axis_)]=1; }
-        const auto delta=rotation_math::matrix(rotation_math::turn({},axis,angle+keyboard_angle_));
+        Vec3 perpendicular=camera_.right;
+        if(axis_>=0) {perpendicular={};perpendicular[axis_==1?0:1]=1;}
+        const auto delta=rotation_math::multiply(
+            rotation_math::matrix(rotation_math::turn({},perpendicular,keyboard_tilt_)),
+            rotation_math::matrix(rotation_math::turn({},axis,angle+keyboard_angle_)));
         angles_=rotation_math::euler(rotation_math::multiply(delta,rotation_math::matrix(base_angles_)),angles_);
     }
 }
 void TransformGesture::reframe(const gfx::CameraSnapshot& camera) {
     camera_=camera;base_delta_=delta_;base_angles_=angles_;base_factor_=factor_;
-    start_pointer_=pointer_;keyboard_pixels_={};keyboard_angle_=0;
+    start_pointer_=pointer_;keyboard_pixels_={};keyboard_angle_=keyboard_tilt_=0;
     Vec4 clip{};
     for(unsigned r=0;r<4;++r) {
         clip[r]=camera.view_projection[3][r];
@@ -102,7 +106,7 @@ TransformAction TransformGesture::update(editor::Stamp stamp,Vec3 pivot,const gf
             else if(kind_==TransformKind::rotate)visual_.emplace<RotationTool>();
             else visual_.emplace<ScaleTool>();
             delta_=base_delta_={}; angles_=base_angles_={}; factor_=base_factor_=1; axis_=-1; local_scale_=gizmos.local_scale_rotation.has_value();
-            keyboard_pixels_={};keyboard_angle_=0;
+            keyboard_pixels_={};keyboard_angle_=keyboard_tilt_=0;
             pointer_=start_pointer_=e.position;
             Vec4 clip{};
             for(unsigned r=0;r<4;++r) {clip[r]=camera.view_projection[3][r];for(unsigned c=0;c<3;++c)clip[r]+=camera.view_projection[c][r]*pivot[c];}
@@ -115,7 +119,7 @@ TransformAction TransformGesture::update(editor::Stamp stamp,Vec3 pivot,const gf
         }
         handled_=true;
         if(auto arrow=transform_arrow(e,arrow_step);arrow && kind_!=TransformKind::scale) {
-            if(kind_==TransformKind::rotate)keyboard_angle_+=rotation_arrow(*arrow);
+            if(kind_==TransformKind::rotate) {keyboard_angle_-=arrow->x;keyboard_tilt_-=arrow->y;}
             else {keyboard_pixels_.x+=arrow->x*5;keyboard_pixels_.y+=arrow->y*5;}
             motion(pointer_);result.changed=true;
         }

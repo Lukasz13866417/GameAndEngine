@@ -214,7 +214,7 @@ TEST_CASE("Successful loading establishes the filename and failed loading preser
     CHECK_FALSE(file.load({}));
     CHECK(file.path() == std::optional{valid});
     const auto oversized = temporary.path / "oversized.vscene";
-    write(oversized, std::string(32 * 1024 * 1024, 'x'));
+    write(oversized, std::string(64 * 1024 * 1024, 'x'));
     CHECK_FALSE(file.load(oversized));
     CHECK(file.path() == std::optional{valid});
     no_temporaries(temporary.path);

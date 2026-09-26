@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <expected>
 #include <numbers>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -62,6 +63,9 @@ struct CameraSnapshot final {
     Mat4 view{Mat4::identity()};
     Mat4 projection{Mat4::identity()};
     Mat4 view_projection{Mat4::identity()};
+    // Retain the lens so a backend can build another depth convention without
+    // subtracting nearly equal, already-rounded projection coefficients.
+    std::optional<CameraLens> lens;
 
     friend constexpr bool operator==(const CameraSnapshot&, const CameraSnapshot&) = default;
 };
@@ -403,6 +407,7 @@ public:
             .view = view,
             .projection = *projection,
             .view_projection = view_projection,
+            .lens = lens_,
         };
     }
 

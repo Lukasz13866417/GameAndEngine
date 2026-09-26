@@ -2,6 +2,7 @@
 
 #include "box_selection.hpp"
 #include "navigation.hpp"
+#include "camera_navigation.hpp"
 #include "camera_walk.hpp"
 #include "region_editor.hpp"
 #include "rotation_interaction.hpp"
@@ -11,6 +12,7 @@
 #include "mesh_transform.hpp"
 #include "instance_transform.hpp"
 #include "surface_part_tool.hpp"
+#include "socket_pick_tool.hpp"
 #include "gizmo_input.hpp"
 #include <functional>
 #include <type_traits>
@@ -30,9 +32,26 @@ public:
                         vng::ui::Container creation, vng::ui::Container inspector, vng::ui::Container popup)
         : regions(controls, creation, inspector, popup), instances(editing), rotation(editing), mesh(editing), editing_(editing) {}
 
-    NavigationTool navigation;
+    struct Navigate {};
+    [[nodiscard]] const CameraNavigation& camera_navigation() const { return navigation_; }
+    [[nodiscard]] DebugReport debug_report() const {
+        const auto name=[](ViewportTool tool) {
+            constexpr std::array names{"none","navigation","boundary","bounds","instances","translation",
+                "rotation","scale","components","mesh part","pivot","selection"};
+            return std::string(names[static_cast<std::size_t>(tool)]);
+        };
+        return {.name="interaction",.role="viewport tool arbitration and gesture ownership",.situation=name(active()),
+            .owned={{"handled this batch",name(handled_)},{"selected handle",debug_bool(selected_handle())},
+                {"transforming",debug_bool(transforming())},{"instance gesture",debug_bool(instances.active())},
+                {"region selected",debug_bool(regions.selected())},{"region gesture",debug_bool(regions.dragging())},
+                {"region menu",debug_bool(regions.menu_open())},{"bounds gesture",debug_bool(bounds.dragging())},
+                {"move gesture",debug_bool(translation.dragging())},{"rotate gesture",debug_bool(rotation.dragging())},
+                {"scale gesture",debug_bool(scale.dragging())},{"mesh gesture",debug_bool(mesh.active())},
+                {"part gesture",debug_bool(mesh_part.dragging())},{"box selection",debug_bool(selection_box.active())}},
+            .children={navigation_.debug_report()}};
+    }
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
     GizmoInput gizmo_input;
-    CameraWalk walk;
     RegionEditor regions;
     WorldBoundsTool bounds;
     InstanceTransformInteraction instances;
@@ -41,8 +60,10 @@ public:
     ScaleTool scale;
     MeshTransform mesh;
     SurfacePartTool mesh_part;
+    SocketPickTool mesh_sockets;
     TranslationTool pivot;
     BoxSelection selection_box;
+    SelectionInput selection_input;
     InstanceProjection instance_projection;
 
     void begin_frame() {
@@ -63,11 +84,18 @@ public:
         if (mesh.active() || editing_.active(EditGesture::vertices) || editing_.active(EditGesture::mesh_transform)) return ViewportTool::components;
         if (mesh_part.dragging() || editing_.active(EditGesture::mesh_draft)) return ViewportTool::mesh_part;
         if (pivot.dragging()) return ViewportTool::pivot;
-        if (navigation.dragging() || walk.moving() || editing_.active(EditGesture::camera)) return ViewportTool::navigation;
+        if (navigation_.pointer().dragging() || navigation_.walking().moving() || editing_.active(EditGesture::camera)) return ViewportTool::navigation;
         if (selection_box.active() || editing_.active(EditGesture::vertices)) return ViewportTool::selection;
         return ViewportTool::none;
     }
     [[nodiscard]] bool busy() const { return active() != ViewportTool::none; }
+    [[nodiscard]] bool selected_handle() const {
+        return (translation.visible() && translation.selected_axis().has_value()) ||
+            (rotation.visible() && rotation.tool().selected_axis().has_value()) ||
+            (scale.visible() && scale.selected()) || (mesh.visible() && mesh.selected_handle()) ||
+            (mesh_part.visible() && (mesh_part.rotation().selected_axis().has_value()||mesh_part.altitude().selected_axis().has_value())) ||
+            (pivot.visible() && pivot.selected_axis().has_value());
+    }
     [[nodiscard]] bool transforming() const {
         const auto owner=active();
         return owner!=ViewportTool::none && owner!=ViewportTool::navigation && owner!=ViewportTool::selection;
@@ -117,8 +145,7 @@ public:
         }
         auto rotated = rotation.cancel();
         if (!rotated) return std::unexpected(rotated.error());
-        navigation.cancel();
-        walk.active(false);
+        navigation_.cancel();
         regions.cancel();
         bounds.cancel();
         translation.cancel();
@@ -128,6 +155,7 @@ public:
         instances.reset();
         pivot.cancel();
         selection_box.cancel();
+        selection_input.cancel();
         handled_ = ViewportTool::none;
         return changed;
     }
@@ -145,11 +173,24 @@ public:
     }
 
 private:
+    friend struct Dispatcher;
+    NavigationReply handle(const Navigate&,const NavigationContext& context) {
+        if(context.cancel) navigation_.cancel_pointer();
+        if(context.walk_active) navigation_.walking(*context.walk_active);
+        if(!context.frame) return {};
+        const bool allowed=context.enabled && accepts(ViewportTool::navigation);
+        NavigationReply reply;
+        if(!allowed) reply=dispatch(navigation_,CameraNavigation::Unavailable{},*context.frame);
+        else if(navigation_.walking().active()) reply=dispatch(navigation_,CameraNavigation::Walking{},*context.frame);
+        else reply=dispatch(navigation_,CameraNavigation::Orbiting{},*context.frame);
+        observe(ViewportTool::navigation,allowed);
+        return reply;
+    }
     void observe(ViewportTool tool, bool allowed) {
         if (!allowed) return;
         bool handled{};
         switch (tool) {
-        case ViewportTool::navigation: handled = navigation.handledPointer() || walk.moving(); break;
+        case ViewportTool::navigation: handled = navigation_.pointer().handledPointer() || navigation_.walking().moving(); break;
         case ViewportTool::boundary: handled = regions.handled() || regions.component_editing(); break;
         case ViewportTool::bounds: handled = bounds.handledPointer(); break;
         case ViewportTool::instances: handled = instances.handled(); break;
@@ -165,6 +206,7 @@ private:
         if (handled) handled_ = tool;
     }
     EditingSession& editing_;
+    CameraNavigation navigation_;
     ViewportTool handled_{ViewportTool::none};
 };
 } // namespace editor_example

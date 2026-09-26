@@ -156,6 +156,20 @@ Separating the target from the view matters for future off-screen targets,
 multiple editor views, and pass scheduling. Camera-free work uses
 `RenderView::without_camera(extent)`.
 
+For large scenes with floating-point depth attachments, set
+`.depth_mapping = vng::render::DepthMapping::reversed` in the frame description.
+Keep `.clear_depth = 1` and `DepthCompare::less`: these remain logical settings.
+The backend encodes clears and comparisons and adapts the generated camera
+projection. OpenGL uses zero-to-one clip depth, rebuilding its projection from
+the snapshot's retained lens rather than subtracting rounded matrix values.
+All passes sharing a depth attachment must select the same mapping. The editor
+uses it for scene rendering, effects and depth-tested annotations; ordinary UI
+frames retain the standard mapping.
+
+Expert shaders writing clip Z or fragment depth directly must match the chosen
+encoding. Native framebuffer depth readback stays native; diagnostic captures
+convert to their documented canonical depth channel.
+
 For the default window framebuffer, the frame's color encoding must match the
 physical attachment encoding queried by `Device`. The GLFW/OpenGL integration
 requests an sRGB attachment by default and validates what the window system

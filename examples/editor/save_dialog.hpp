@@ -1,4 +1,5 @@
 #pragma once
+#include "component_debug.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -23,6 +24,11 @@ public:
     void open(const std::filesystem::path& initial);
     void close();
     [[nodiscard]] bool visible() const noexcept { return visible_; }
+    [[nodiscard]] DebugReport debug_report() const {
+        return {.name="save",.role="save path and replacement confirmation",.situation=visible_?"ChoosingPath":"Closed",
+            .owned={{"filename draft",last_filename_},{"replacement pending",replacement_?replacement_->string():"none"}}};
+    }
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
     [[nodiscard]] std::optional<SaveRequest> poll(std::span<const vng::input::Event> raw = {});
     void error(std::string_view message);
 

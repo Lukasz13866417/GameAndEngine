@@ -8,6 +8,7 @@
 #include <vng/core/types.hpp>
 #include <vng/render/color.hpp>
 #include <vng/render/backend.hpp>
+#include <vng/render/depth_mapping.hpp>
 
 namespace vng::render {
 
@@ -31,6 +32,10 @@ struct FrameDesc final {
 
     std::optional<std::array<f32, 4>> clear_color;
     std::optional<f32> clear_depth;
+    // All passes sharing a depth attachment must use the same mapping.
+    // Generated camera parameters are adapted by the backend; expert shaders
+    // writing clip positions or fragment depth directly must match the mapping.
+    DepthMapping depth_mapping{DepthMapping::standard};
 
     friend constexpr bool operator==(const FrameDesc&, const FrameDesc&) = default;
 };

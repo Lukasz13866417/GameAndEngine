@@ -6,12 +6,12 @@
 namespace vng::editor {
 content::vmesh::Limits mesh_limits() {
     content::vmesh::Limits value;
-    value.max_source_bytes=16U*1024U*1024U;
-    value.max_decoded_bytes=16U*1024U*1024U;
-    value.max_vertices=65536;
-    value.max_faces=131072;
-    value.max_edges=262144;
-    value.max_scalar_values=2U*1024U*1024U;
+    value.max_source_bytes=32U*1024U*1024U;
+    value.max_decoded_bytes=32U*1024U*1024U;
+    value.max_vertices=max_mesh_vertices;
+    value.max_faces=max_mesh_vertices*2;
+    value.max_edges=max_mesh_vertices*4;
+    value.max_scalar_values=4U*1024U*1024U;
     return value;
 }
 namespace {

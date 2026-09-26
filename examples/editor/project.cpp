@@ -133,7 +133,8 @@ content::Result<void> validate_state(const State& s) {
     if (!valid_world_bounds(s.document.world_bounds)) return invalid("Invalid world bounds");
     const auto& environment = s.document.environment;
     if (environment.stars > 20000 || !range(environment.exposure, .01F, 10) ||
-        !range(environment.bloom_threshold, 0, 100) || !range(environment.bloom_strength, 0, 1))
+        !range(environment.bloom_threshold, 0, 100) || !range(environment.bloom_strength, 0, 1) ||
+        !range(environment.view_distance, 0, 4 * scene_coordinate_limit))
         return invalid("Scene environment exceeds editor limits");
     if (static_cast<u32>(s.viewport.mode) > static_cast<u32>(ViewMode::sun))
         return invalid("Unknown editor view mode");
@@ -686,7 +687,9 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
     o << "environment = { stars = " << environment.stars
       << "; star_seed = " << environment.star_seed << "; exposure = " << environment.exposure
       << "; bloom_threshold = " << environment.bloom_threshold
-      << "; bloom_strength = " << environment.bloom_strength << "; };\n";
+      << "; bloom_strength = " << environment.bloom_strength;
+    if (environment.view_distance > 0) o << "; view_distance = " << environment.view_distance;
+    o << "; };\n";
     o << "view = { mode = " << static_cast<int>(s.viewport.mode)
       << "; inspected_mesh = " << static_cast<u32>(s.viewport.inspected_mesh)
       << "; selected = " << s.viewport.selected_object
@@ -721,7 +724,7 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
     o << "    ];\n};\n";
     auto result = o.str();
     if (result.size() > max_scene_bytes)
-        return invalid("Editor scene exceeds the 32 MiB preview limit");
+        return invalid("Editor scene exceeds the 64 MiB preview limit");
     return result;
 }
 } // namespace
@@ -761,7 +764,7 @@ content::Result<State> decode(std::string_view source) {
             const auto e = member.value;
             s.document.environment = {e.get_or<u32>("stars", 0), e.get_or<u32>("star_seed", 32),
                 e.get_or<f32>("exposure", .9F), e.get_or<f32>("bloom_threshold", 6.5F),
-                e.get_or<f32>("bloom_strength", 0)};
+                e.get_or<f32>("bloom_strength", 0), e.get_or<f32>("view_distance", 0)};
         }
         s.document.next_blueprint_id = r.get_or<u32>("next_blueprint_id", 3);
         for(const auto member:r.members()) if(member.name=="mesh_placements") {
@@ -1062,7 +1065,7 @@ content::Result<State> load_scene(const std::filesystem::path& path) {
         file.read(buffer, sizeof buffer);
         data.append(buffer, static_cast<std::size_t>(file.gcount()));
         if (data.size() > max_scene_bytes)
-            return invalid("Scene exceeds 32 MiB");
+            return invalid("Scene exceeds 64 MiB");
     }
     if (!file.eof())
         return invalid("Failed reading scene");

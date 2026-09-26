@@ -4,6 +4,9 @@ The editor still has two processes. UI/document authoring runs in the editor;
 effect callbacks, playback sampling and OpenGL rendering run on the worker's
 context-owning thread. This refactor does not add a render graph or simulation thread.
 
+See [editor components](editor_components.md) for typed situations, private
+handlers, the live root-to-leaf dispatch path and component diagnostics.
+
 ## Ownership
 
 | Owner | Data | Changes when |

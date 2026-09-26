@@ -1,4 +1,5 @@
 #include "../../examples/editor/selection_edits.hpp"
+#include "../../examples/editor/edits.hpp"
 #include "../../examples/editor/preview_updates.hpp"
 #include "../../examples/editor/project.hpp"
 
@@ -47,6 +48,20 @@ void word(std::string& bytes, std::size_t offset, u64 value, unsigned width) {
 }
 } // namespace
 
+TEST_CASE("Dense tunnel blueprints remain selectable and patchable beyond 64K vertices", "[editor][selection][wire]") {
+    auto state=scene();
+    state.document.mesh_assets.front().geometry=mesh(70001);
+    const SelectionEdit selection{1,2,8,70000};
+    auto decoded=decode_selection_edit(encode(selection));REQUIRE(decoded);
+    REQUIRE(apply_selection_edit(state,*decoded));
+    CHECK(state.viewport.selected_vertex==70000);
+    const VertexEdit edit{2,3,{{70000,{1,2,3}}},3};
+    auto bytes=encode_edit(edit);REQUIRE(bytes);
+    auto patch=decode_edit(*bytes);REQUIRE(patch);
+    REQUIRE(apply_edit(state,*patch));
+    CHECK(state.document.mesh_assets.front().geometry.position(70000)==Vec3{1,2,3});
+}
+
 TEST_CASE("Selection packets are deterministic fixed-size view state", "[editor][selection][wire]") {
     const SelectionEdit edit{0x010203040506ULL, 0x010203040510ULL, 0x0708090a, 65535};
     const auto bytes = encode(edit);
@@ -73,7 +88,7 @@ TEST_CASE("Selection packets are deterministic fixed-size view state", "[editor]
     rejected(8, 0, 8);
     rejected(16, edit.base_revision, 8);
     rejected(16, u64{1} << 53, 8);
-    rejected(28, 65536, 4);
+    rejected(28, vng::editor::max_mesh_vertices, 4);
     CHECK_FALSE(encode_selection_edit({1, 1, 0, 0}));
     CHECK_FALSE(encode_selection_edit({1, 2, 0, std::numeric_limits<u32>::max()}));
     REQUIRE(decode_selection_edit(encode({1, 2, 0, 0})));
@@ -121,7 +136,7 @@ TEST_CASE("Invalid selection is rejected atomically against the destination mesh
         edit.selected_object = 2;
         edit.selected_vertex = 1;
     }
-    SECTION("global vertex bound") { edit.selected_object = 8; edit.selected_vertex = 65536; }
+    SECTION("global vertex bound") { edit.selected_object = 8; edit.selected_vertex = vng::editor::max_mesh_vertices; }
     SECTION("stale revision") { edit.base_revision = 2; edit.revision = 3; }
     SECTION("zero baseline") { edit.base_revision = 0; }
     SECTION("revision does not advance") { edit.revision = 1; }

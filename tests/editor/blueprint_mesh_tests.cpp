@@ -4,6 +4,7 @@
 #include "../../examples/editor/preview_updates.hpp"
 #include "../../examples/support/earth_assets.hpp"
 #include <catch2/catch_test_macros.hpp>
+#include "../../examples/support/earth_connections.hpp"
 #include <catch2/catch_approx.hpp>
 #include <algorithm>
 
@@ -74,9 +75,11 @@ TEST_CASE("Camera bake is one undoable draft placement and saves through the mes
 }
 TEST_CASE("Blueprint mesh controls are declared by identity, not display names or instances", "[editor][blueprint-mesh]") {
     editor::Inspector ui{3,1,1};std::optional<MeshDraftEdit> request;
-    REQUIRE(describe_blueprint_mesh(ui,mesh(),[&](MeshDraftEdit r){request=std::move(r);}));
-    REQUIRE(ui.schema().controls.size()==1);
+    const auto description=describe_blueprint_mesh(ui,mesh(),[&](MeshDraftEdit r){request=std::move(r);});
+    REQUIRE(description);CHECK(description->placements.size()==7);CHECK(description->menus.size()==1);
+    REQUIRE(ui.schema().controls.size()==2);
     CHECK(ui.schema().controls[0].fields.size()==7);
+    CHECK(ui.schema().controls[1].key=="earth_infrastructure");
     const editor::Event apply{ui.schema().stamp,"earth_clouds",editor::Phase::apply,{{"visible",false},{"coverage",1.5F},{"edge_scatter",1.25F}}};
     REQUIRE(ui.dispatch(apply));REQUIRE(request);
     auto result=request->apply(mesh());REQUIRE(result);CHECK(result->size()==3);
@@ -86,6 +89,58 @@ TEST_CASE("Blueprint mesh controls are declared by identity, not display names o
     editor::Inspector none{4,1,1};
     REQUIRE(describe_blueprint_mesh(none,mesh(ordinary),[](MeshDraftEdit){FAIL("Unexpected controls");}));
     CHECK(none.schema().controls.empty());
+}
+
+TEST_CASE("Tunnel class picker applies a blueprint-owned width edit", "[editor][blueprint-mesh][tunnel-classes]") {
+    auto generated=earth::add_infrastructure(earth::make_mesh({.visible=false}),earth::InfrastructureKind::skyway,{0,0});REQUIRE(generated);
+    auto geometry=editor::EditableMesh::create(*generated);REQUIRE(geometry);
+    editor::Inspector ui{3,1,1};
+    auto description=describe_blueprint_mesh(ui,*geometry,[](MeshDraftEdit){},{std::string(earth::infrastructure_part_field),1});
+    REQUIRE(description);
+    const auto choice=std::ranges::find(description->choices,"Tunnel size class (nominal bore)",&MeshPartChoice::label);
+    REQUIRE(choice!=description->choices.end());REQUIRE(choice->options.size()==3);
+    CHECK(choice->selected==std::size_t(earth::TunnelSizeClass::trunk));
+    auto edited=choice->choose(0).apply(*geometry);REQUIRE(edited);
+    CHECK(earth::infrastructure_parts(edited->document())->front().tunnel_class==earth::TunnelSizeClass::local);
+    CHECK(edited->document().faces==geometry->document().faces);
+    CHECK(edited->document().vertex_count==geometry->document().vertex_count);
+    CHECK(edited->document().vertex_fields!=geometry->document().vertex_fields);
+}
+TEST_CASE("Bezier mode exposes blueprint-owned movable deletable controls", "[editor][blueprint-mesh][bezier]") {
+    auto source=earth::add_infrastructure(earth::make_mesh({.visible=false}),earth::InfrastructureKind::skyway,{0,0});REQUIRE(source);
+    auto geometry=editor::EditableMesh::create(*source);REQUIRE(geometry);
+    editor::Inspector ui{3,1,1};
+    const MeshPartId id{std::string(earth::infrastructure_part_field),1};
+    auto description=describe_blueprint_mesh(ui,*geometry,[](MeshDraftEdit){},id);REQUIRE(description);
+    auto mode=std::ranges::find(description->choices,"Tunnel path",&MeshPartChoice::label);REQUIRE(mode!=description->choices.end());
+    auto enabled=mode->choose(1).apply(*geometry);REQUIRE(enabled);
+    editor::Inspector next_ui{3,2,1};
+    description=describe_blueprint_mesh(next_ui,*enabled,[](MeshDraftEdit){},id);REQUIRE(description);
+    auto gizmo=std::ranges::find(description->gizmos,"Bezier control points",&MeshPartGizmo::label);REQUIRE(gizmo!=description->gizmos.end());
+    REQUIRE(gizmo->handles.size()==2);CHECK(gizmo->handles[0].surface.radial_range.has_value());CHECK(bool(gizmo->options));
+    std::optional<MeshDraftEdit> command;
+    editor::Inspector menu{3,2,1};gizmo->options(menu,[&](MeshDraftEdit e){command=std::move(e);});
+    REQUIRE(menu.dispatch({menu.schema().stamp,"add_bezier_control",editor::Phase::activate,{}}));REQUIRE(command);
+    auto elevated=command->apply(*enabled);REQUIRE(elevated);
+    auto before=earth::infrastructure_parts(enabled->document())->front(),after=earth::infrastructure_parts(elevated->document())->front();
+    REQUIRE(after.bezier_controls->size()==3);
+    auto old_curve=earth::TunnelCurve::create(before,std::span{&before,1},{}),new_curve=earth::TunnelCurve::create(after,std::span{&after,1},{});
+    REQUIRE(old_curve);REQUIRE(new_curve);
+    for(unsigned i=0;i<=20;++i) {
+        auto a=old_curve->sample(f32(i)/20).position,b=new_curve->sample(f32(i)/20).position;
+        CHECK(std::hypot(a.x-b.x,a.y-b.y,a.z-b.z)<1e-6F);
+    }
+    REQUIRE(menu.dispatch({menu.schema().stamp,"bezier_sampling",editor::Phase::apply,{{"segments",u32{64}}}}));
+    REQUIRE(command);auto sampled=command->apply(*enabled);REQUIRE(sampled);
+    CHECK(earth::infrastructure_parts(sampled->document())->front().curve_segments==64);
+    auto point=gizmo->handles[0].surface.position;point.y+=.03F;
+    auto moved=gizmo->handles[0].move(point).apply(*enabled);REQUIRE(moved);
+    CHECK(earth::infrastructure_parts(moved->document())->front().bezier_controls->front()==point);
+    auto erased=gizmo->handles[0].erase().apply(*enabled);REQUIRE(erased);
+    CHECK(earth::infrastructure_parts(erased->document())->front().bezier_controls->size()==1);
+    mode=std::ranges::find(description->choices,"Tunnel path",&MeshPartChoice::label);REQUIRE(mode!=description->choices.end());
+    auto automatic=mode->choose(0).apply(*enabled);REQUIRE(automatic);
+    CHECK_FALSE(earth::infrastructure_parts(automatic->document())->front().bezier_controls);
 }
 TEST_CASE("Cloud rebuilds preserve terrain and metadata and reject cross-layer connections", "[editor][blueprint-mesh]") {
     auto original=source();
@@ -140,7 +195,7 @@ TEST_CASE("Procedural mesh authoring is draft-only, undoable, persistent and rev
 TEST_CASE("Earth declares named formation edits as ordinary blueprint controls", "[editor][blueprint-mesh]") {
     auto generated=earth::rebuild_clouds(source(),{.visible=false});REQUIRE(generated);
     editor::Inspector ui{3,1,1};std::optional<MeshDraftEdit> request;
-    auto parts=describe_blueprint_mesh(ui,mesh(*generated),[&](MeshDraftEdit r){request=std::move(r);},15);
+    auto parts=describe_blueprint_mesh(ui,mesh(*generated),[&](MeshDraftEdit r){request=std::move(r);},{"earth/cloud",15});
     REQUIRE(parts);CHECK(parts->parts.size()==17);CHECK(parts->parts.at(14).label=="Atlantic spiral");
     // A selected formation exposes its placement and heading edits plus the
     // catalog actions. The whole-mesh cloud rebuild belongs to the unselected view.

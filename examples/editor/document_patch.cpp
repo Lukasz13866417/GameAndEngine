@@ -456,7 +456,7 @@ content::Result<DocumentPatch> decode_patch(std::string_view bytes) {
         check(vertices <= 256 && properties <= max_properties && markers <= timeline::max_total_keys, "Patch counts exceed limits");
         if (in.flag()) patch.duration = in.scalar();
         for (u64 i = 0; i < vertices; ++i) {
-            auto edit = decode_edit(in.string(32 + 65536 * 16));
+            auto edit = decode_edit(in.string(32 + vng::editor::max_mesh_vertices * 16));
             check(bool(edit), edit ? "" : edit.error().message);
             patch.vertices.push_back(std::move(*edit));
         }

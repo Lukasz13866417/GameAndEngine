@@ -29,3 +29,23 @@ TEST_CASE("Uniform scale handle captures only available presses and commits raw 
     CHECK(pump(escape).cancelled); CHECK_FALSE(tool.dragging());
     (void)pump({}); REQUIRE(pump(another).began); CHECK(pump({},true,false).cancelled);
 }
+
+TEST_CASE("Scale handles stay selected and normalized arrows scale the object", "[editor][ui][scale][gizmo-focus]") {
+    ScaleTool tool;
+    gfx::Camera camera;camera.set_position({0,0,8}).look_at({});
+    const auto snapshot=*camera.snapshot({640,480});
+    const auto pump=[&](std::span<const input::Event> events,bool available=true,float step=1.F) {
+        return tool.update({1,1,1},{},1,snapshot,{0,0,640,480},
+            available?events:std::span<const input::Event>{},events,true,{},step);
+    };
+    pump({});
+    const auto p=tool.handle();
+    const std::array click{input::Event{.kind=input::EventKind::pointer_down,.position=p},
+        input::Event{.kind=input::EventKind::pointer_up,.position=p}};
+    REQUIRE(pump(click).finished);REQUIRE(tool.selected());CHECK_FALSE(tool.dragging());
+    const std::array right{input::Event{.kind=input::EventKind::key_down,.position={100,100},.key=input::Key::right}};
+    const auto scaled=pump(right,true,2.F);CHECK(scaled.began);CHECK(scaled.changed);CHECK(scaled.value>1.05F);
+    pump(click,false);CHECK(tool.selected());CHECK(tool.dragging());
+    CHECK_FALSE(pump(std::span{click}.first(1)).finished);CHECK(tool.selected());
+    CHECK(pump(std::span{click}.last(1)).finished);CHECK_FALSE(tool.selected());CHECK_FALSE(tool.dragging());
+}

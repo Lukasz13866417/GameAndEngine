@@ -36,6 +36,7 @@ std::optional<Vec2> SurfaceMoveTool::project(Vec3 p) const {
 }
 std::optional<Vec3> SurfaceMoveTool::on_surface(Vec2 p) const {
     if(!target_||!std::isfinite(p.x)||!std::isfinite(p.y))return {};
+    if(target_->path)return on_path(p);
     const auto x=(2*(p.x-viewport_.x)/viewport_.width-1)/camera_.projection[0][0];
     const auto y=(1-2*(p.y-viewport_.y)/viewport_.height)/camera_.projection[1][1];
     const auto offset=add(mul(camera_.right,x),mul(camera_.up,y));
@@ -55,6 +56,29 @@ std::optional<Vec3> SurfaceMoveTool::on_surface(Vec2 p) const {
     if(dot(radial,radial)<1e-12)return {};
     return add(target_->center,mul(unit(radial),target_->radius));
 }
+std::optional<Vec3> SurfaceMoveTool::on_path(Vec2 p) const {
+    const auto& path=*target_->path;
+    double nearest=std::numeric_limits<double>::infinity();std::optional<Vec3> result;
+    const auto depth=[&](Vec3 local) {
+        const auto world=example::mesh_frame::point(target_->frame,local);
+        return camera_.view_projection[3][3]+camera_.view_projection[0][3]*world.x+
+            camera_.view_projection[1][3]*world.y+camera_.view_projection[2][3]*world.z;
+    };
+    for(std::size_t i=1;i<path.points.size();++i) {
+        const auto a=project(path.points[i-1]),b=project(path.points[i]);if(!a||!b)continue;
+        const double x=b->x-a->x,y=b->y-a->y,length=x*x+y*y;
+        if(length<1e-12)continue;
+        const auto f=std::clamp(((p.x-a->x)*x+(p.y-a->y)*y)/length,0.,1.);
+        const auto dx=p.x-a->x-x*f,dy=p.y-a->y-y*f,distance=dx*dx+dy*dy;
+        if(distance>=nearest)continue;
+        nearest=distance;
+        // Perspective-correct interpolation of the screen-space segment.
+        const auto wa=depth(path.points[i-1]),wb=depth(path.points[i]);
+        const auto local=f*wa/((1-f)*wb+f*wa);
+        result=add(path.points[i-1],mul(sub(path.points[i],path.points[i-1]),local));
+    }
+    return result;
+}
 void SurfaceMoveTool::geometry() {
     handle_.reset();
     if(!target_)return;
@@ -72,6 +96,7 @@ SurfacePartAction SurfaceMoveTool::update(const std::optional<SurfaceMove>& targ
     SurfacePartAction action;handled_=false;
     const auto inverse=example::mesh_frame::inverse(target?target->frame:Mat4::identity());
     const bool valid=visible&&target&&target->radius>0&&std::isfinite(target->radius)&&
+        (!target->path||target->path->valid())&&
         inverse.has_value()&&
         gfx::camera_detail::finite(target->center)&&gfx::camera_detail::finite(target->position)&&
         dot(sub(target->position,target->center),sub(target->position,target->center))>1e-12&&
@@ -99,8 +124,11 @@ SurfacePartAction SurfaceMoveTool::update(const std::optional<SurfaceMove>& targ
             offset_={event.position.x-handle_->x,event.position.y-handle_->y};
         }
         if(dragging_ && arrow && handle_) {
-            if(auto p=on_surface({handle_->x+arrow->x*5,handle_->y+arrow->y*5})) {
-                ghost_=*p;action.changed=true;geometry();
+            const auto next=target_->path ? std::optional{target_->path->sample(
+                target_->path->parameter(ghost_)+(arrow->x+arrow->y)*.01F)} :
+                on_surface({handle_->x+arrow->x*5,handle_->y+arrow->y*5});
+            if(auto p=next) {
+                action.changed|=*p!=ghost_;ghost_=*p;geometry();
                 if(handle_)offset_={pointer_.x-handle_->x,pointer_.y-handle_->y};
             }
             handled_=true;continue;
@@ -118,9 +146,13 @@ SurfacePartAction SurfaceMoveTool::update(const std::optional<SurfaceMove>& targ
             }
             const bool release=!keyboard_&&event.kind==input::EventKind::pointer_up&&event.button==0;
             if(event.kind==input::EventKind::pointer_move||release) {
+                const bool moved=event.position!=pointer_;
                 pointer_=event.position;
                 handled_=true;
-                if(auto position=on_surface({event.position.x-offset_.x,event.position.y-offset_.y});position&&*position!=ghost_) {
+                // Selecting a path handle must not author a tiny snap from an
+                // exact curve point to the sampled polyline on mouse release.
+                if(auto position=target_->path&&!moved?std::optional<Vec3>{}:
+                    on_surface({event.position.x-offset_.x,event.position.y-offset_.y});position&&*position!=ghost_) {
                     ghost_=*position;action.changed=true;
                 }
                 if(release){action.finished=true;dragging_=false;break;}
@@ -138,7 +170,14 @@ SurfacePartAction SurfaceMoveTool::update(const std::optional<SurfaceMove>& targ
     }
     geometry();action.position=ghost_;return action;
 }
-void SurfaceMoveTool::append(ui::DrawList& list,const text::Font& font,bool pending,double seconds) const {
+void SurfaceMoveTool::append_marker(ui::DrawList& list,const text::Font& font) const {
+    if(!handle_||!target_)return;
+    const auto p=*handle_;
+    constexpr Vec4 color{.65F,.85F,1,1};
+    list.commands.emplace_back(ui::BoxDraw{{p.x-6,p.y-6,12,12},viewport_,{.035F,.12F,.16F,1},color,6,2});
+    list.commands.emplace_back(ui::TextDraw{target_->label,{p.x+14,p.y-17},viewport_,font,13,color});
+}
+void SurfaceMoveTool::append(ui::DrawList& list,const text::Font& font,bool pending,double seconds,bool compact_label) const {
     constexpr Vec4 color{.2F,.85F,1,1};
     if(handle_&&target_) {
         const auto p=*handle_;
@@ -146,7 +185,13 @@ void SurfaceMoveTool::append(ui::DrawList& list,const text::Font& font,bool pend
         const auto reference=std::abs(radial.y)<.95F?Vec3{0,1,0}:Vec3{0,0,1};
         const auto east=unit(gfx::camera_detail::cross(reference,radial));
         const auto north=gfx::camera_detail::cross(radial,east);
-        for(auto tangent:{east,north}) {
+        if(target_->path) {
+            std::optional<Vec2> previous;
+            for(const auto& local:target_->path->points) {
+                auto point=project(local);if(point&&previous)line(list,viewport_,*previous,*point,color);
+                previous=point;
+            }
+        } else for(auto tangent:{east,north}) {
             std::optional<Vec2> previous;
             for(int i=-8;i<=8;++i) {
                 const auto a=double(i)*.018;
@@ -156,7 +201,10 @@ void SurfaceMoveTool::append(ui::DrawList& list,const text::Font& font,bool pend
             }
         }
         list.commands.emplace_back(ui::BoxDraw{{p.x-7,p.y-7,14,14},viewport_,{.035F,.12F,.16F,1},color,7,2});
-        list.commands.emplace_back(ui::TextDraw{target_->label+" / move: G or drag",{p.x+15,p.y-18},viewport_,font,13,color});
+        // Multiple handles can be only a few pixels apart when zoomed out.
+        // Keep the active label below, and passive labels above, their handles.
+        list.commands.emplace_back(ui::TextDraw{compact_label?target_->label:target_->label+" / move: G or drag",
+            {p.x+15,p.y+(compact_label?12.F:-18.F)},viewport_,font,13,color});
     }
     if(pending&&viewport_.width>0) {
         const Vec2 p{viewport_.x+20,viewport_.y+23};

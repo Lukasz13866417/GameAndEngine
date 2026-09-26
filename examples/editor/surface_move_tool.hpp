@@ -14,7 +14,8 @@ public:
         const vng::gfx::CameraSnapshot&, vng::ui::Rect,
         std::span<const vng::input::Event> unhandled, std::span<const vng::input::Event> raw,
         bool visible, bool can_begin, float arrow_step = 1.F);
-    void append(vng::ui::DrawList&, const vng::text::Font&, bool pending, double seconds) const;
+    void append(vng::ui::DrawList&, const vng::text::Font&, bool pending, double seconds, bool compact_label = false) const;
+    void append_marker(vng::ui::DrawList&, const vng::text::Font&) const;
     void cancel();
     [[nodiscard]] bool dragging() const { return dragging_; }
     [[nodiscard]] bool handled() const { return handled_; }
@@ -32,6 +33,7 @@ private:
     bool dragging_{}, handled_{}, keyboard_{};
     [[nodiscard]] std::optional<vng::Vec2> project(vng::Vec3) const;
     [[nodiscard]] std::optional<vng::Vec3> on_surface(vng::Vec2) const;
+    [[nodiscard]] std::optional<vng::Vec3> on_path(vng::Vec2) const;
     void geometry();
 };
 }

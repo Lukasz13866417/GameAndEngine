@@ -63,6 +63,7 @@ private:
     vng::Vec2 pointer_{}, start_pointer_{}, center_{};
     vng::Vec2 keyboard_pixels_{};
     double keyboard_angle_{};
+    double keyboard_tilt_{};
     vng::f32 factor_{1};
     vng::f32 maximum_factor_{1000};
     int axis_{-1};

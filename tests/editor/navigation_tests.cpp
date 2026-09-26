@@ -34,7 +34,125 @@ State scene() {
     REQUIRE(mesh);
     return {.document = {.mesh = std::move(*mesh)}};
 }
+editor::EditableMesh navigation_cube() {
+    content::vmesh::Document document;
+    document.vertex_count=8;
+    document.vertex_fields={{"position",{content::vmesh::ScalarType::Float32,3},
+        std::vector<f32>{-1,-1,-1,1,-1,-1,1,1,-1,-1,1,-1,-1,-1,1,1,-1,1,1,1,1,-1,1,1}}};
+    document.faces={{0,2,1},{0,3,2},{4,5,6},{4,6,7},{0,1,5},{0,5,4},
+        {3,7,6},{3,6,2},{0,4,7},{0,7,3},{1,2,6},{1,6,5}};
+    auto result=editor::EditableMesh::create(std::move(document));REQUIRE(result);
+    return std::move(*result);
+}
 } // namespace
+
+TEST_CASE("Mesh-centered wheel and dolly slow near the surface rather than the center", "[editor][navigation][mesh-surface]") {
+    const auto mesh=navigation_cube();
+    for(bool drag:{false,true}) {
+        const auto step=[&](f32 eye) {
+            auto state=scene();state.viewport.mode=ViewMode::mesh;
+            state.viewport.editor_camera={0,0,8,{0,0,eye-8*.52F},1};
+            NavigationTool tool;tool.drag_origin(Vec3{},&mesh);
+            const auto before=camera(state).position().z;
+            const auto old=state.viewport.editor_camera;
+            const auto revision=state.document.revision;
+            if(drag)REQUIRE(update(tool,state,{event(Kind::pointer_down,{500,350},{.control=true}),event(Kind::pointer_up,{500,335})}));
+            else REQUIRE(update(tool,state,{wheel(1)}));
+            CHECK(state.viewport.editor_camera.distance==old.distance);
+            CHECK(state.viewport.editor_camera.zoom==old.zoom);
+            CHECK(state.document.revision==revision);
+            const auto after=camera(state).position().z;
+            CHECK(after>1);return before-after;
+        };
+        CHECK(step(2)==Catch::Approx(1-std::exp(-.15*.7)).margin(.000001));
+        CHECK(step(1.1F)==Catch::Approx(step(2)*.1F).margin(.000001));
+    }
+}
+
+TEST_CASE("Surface approach retains smooth fractional input and transformed geometry", "[editor][navigation][mesh-surface]") {
+    const auto mesh=navigation_cube();
+    // Rotation plus nonuniform scaling and translation; front face is z=13.
+    auto transform=Mat4::identity();transform[0]={0,0,3,0};transform[1]={0,2,0,0};transform[2]={-4,0,0,0};transform[3]={10,5,10,1};
+    auto whole=scene();whole.viewport.mode=ViewMode::mesh;
+    whole.viewport.editor_camera={0,0,8,{10,5,14-8*.52F},1};
+    auto split=whole;
+    NavigationTool single,fractional;single.drag_origin(Vec3{10,5,10},&mesh,transform);fractional.drag_origin(Vec3{10,5,10},&mesh,transform);
+    REQUIRE(update(single,whole,{wheel(1)}));
+    for(unsigned i=0;i<20;++i)REQUIRE(update(fractional,split,{wheel(.05F)}));
+    CHECK(camera(whole).position().z==Catch::Approx(13+std::exp(-.15*.7)).margin(.00001));
+    CHECK(camera(split).position().z==Catch::Approx(camera(whole).position().z).margin(.00002));
+    REQUIRE(update(single,whole,{wheel(-1)}));
+    CHECK(camera(whole).position().z==Catch::Approx(14).margin(.00001));
+    REQUIRE(update(single,whole,{wheel(100000)}));
+    CHECK(camera(whole).position().z>=13);CHECK(valid_camera_pose(whole.viewport.editor_camera));
+    REQUIRE(update(single,whole,{wheel(-1)}));
+}
+
+TEST_CASE("Close surface optical zoom is finer and disabling centered mode restores normal wheel", "[editor][navigation][mesh-surface]") {
+    const auto mesh=navigation_cube();
+    auto state=scene();state.viewport.mode=ViewMode::mesh;
+    state.viewport.editor_camera={0,0,8,{0,0,1.1F-8*.52F},1};
+    const auto before=state.viewport.editor_camera;
+    NavigationTool tool;tool.drag_origin(Vec3{},&mesh);tool.scroll_mode(NavigationTool::ScrollMode::zoom);
+    REQUIRE(update(tool,state,{wheel(1)}));
+    CHECK(state.viewport.editor_camera.zoom==Catch::Approx(std::exp(.15*.7*.1/1.1)).margin(.000001));
+    CHECK(state.viewport.editor_camera.target==before.target);
+    tool.drag_origin({});state.viewport.editor_camera=before;
+    REQUIRE(update(tool,state,{wheel(1)}));
+    CHECK(state.viewport.editor_camera.zoom==Catch::Approx(std::exp(.15)));
+    // A ray missing the mesh (or an invalid transform) keeps usable navigation.
+    tool.scroll_mode(NavigationTool::ScrollMode::move_forward);
+    tool.drag_origin(Vec3{10,0,0},&mesh);
+    REQUIRE(update(tool,state,{wheel(1)}));CHECK(valid_camera_pose(state.viewport.editor_camera));
+    auto singular=Mat4{};tool.drag_origin(Vec3{},&mesh,singular);
+    REQUIRE(update(tool,state,{wheel(-1)}));CHECK(valid_camera_pose(state.viewport.editor_camera));
+}
+
+TEST_CASE("Surface-aware scrolling preserves panned view direction and Alt boost", "[editor][navigation][mesh-surface]") {
+    const auto mesh=navigation_cube();
+    auto state=scene();state.viewport.mode=ViewMode::mesh;
+    state.viewport.editor_camera={0,0,8,{.5F,0,1.1F-8*.52F},1};
+    auto fast=state;
+    NavigationTool normal,boosted;normal.drag_origin(Vec3{},&mesh);boosted.drag_origin(Vec3{},&mesh);
+    REQUIRE(update(normal,state,{wheel(1)}));
+    auto input=wheel(1);input.modifiers.alt=input.modifiers.left_alt=true;
+    REQUIRE(update(boosted,fast,{input}));
+    CHECK(state.viewport.editor_camera.target.x==.5F);
+    CHECK(fast.viewport.editor_camera.target.x==.5F);
+    CHECK(camera(state).position().z==Catch::Approx(1+.1*std::exp(-.15*.7)).margin(.000001));
+    CHECK(camera(fast).position().z==Catch::Approx(1+.1*std::exp(-.6*.7)).margin(.000001));
+    // Alt accelerates approach, but even a large gesture does not cross a face.
+    input.scroll.y=10000;REQUIRE(update(boosted,fast,{input}));
+    CHECK(camera(fast).position().z>=1);
+}
+
+TEST_CASE("Mesh-centered pan slows at surface depth and retains lens speed and Alt boost", "[editor][navigation][mesh-surface]") {
+    const auto mesh=navigation_cube();
+    const auto pan=[&](f32 eye,f32 zoom,bool fast) {
+        auto state=scene();state.viewport.mode=ViewMode::mesh;
+        state.viewport.editor_camera={0,0,8,{0,0,eye-8*.52F},zoom};
+        const auto before=state.viewport.editor_camera;
+        const auto revision=state.document.revision;
+        NavigationTool tool;tool.drag_origin(Vec3{},&mesh);
+        const input::Modifiers modifiers{.shift=true,.alt=fast,.left_alt=fast};
+        REQUIRE(update(tool,state,{event(Kind::pointer_down,{500,350},modifiers),
+            event(Kind::pointer_up,{510,355},modifiers)}));
+        const auto after=state.viewport.editor_camera;
+        CHECK(after.target.z==before.target.z);CHECK(after.zoom==before.zoom);
+        CHECK(after.yaw==before.yaw);CHECK(after.pitch==before.pitch);
+        CHECK(state.document.revision==revision);
+        return after.target;
+    };
+    const auto far=pan(2,1,false),near=pan(1.1F,1,false);
+    const auto expected=2*std::tan(camera_vertical_fov*std::numbers::pi/360)/size.y*.7;
+    CHECK(far.x==Catch::Approx(-10*expected).margin(.000001));
+    CHECK(far.y==Catch::Approx(5*expected).margin(.000001));
+    CHECK(near.x==Catch::Approx(far.x*.1F).margin(.000001));
+    CHECK(near.y==Catch::Approx(far.y*.1F).margin(.000001));
+    const auto zoomed=pan(1.1F,2,false),fast=pan(1.1F,1,true);
+    CHECK(zoomed.x==Catch::Approx(near.x*.5F));CHECK(zoomed.y==Catch::Approx(near.y*.5F));
+    CHECK(fast.x==Catch::Approx(near.x*4));CHECK(fast.y==Catch::Approx(near.y*4));
+}
 
 TEST_CASE("Camera drags have independent configurable sensitivities", "[editor][navigation]") {
     for (auto modifiers : {input::Modifiers{}, input::Modifiers{.shift=true}, input::Modifiers{.control=true}}) {

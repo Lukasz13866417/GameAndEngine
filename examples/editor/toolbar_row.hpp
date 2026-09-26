@@ -1,4 +1,5 @@
 #pragma once
+#include "component_debug.hpp"
 #include <vng/ui/ui.hpp>
 #include <algorithm>
 #include <optional>
@@ -71,6 +72,12 @@ public:
     void enabled(bool value) { row_.enabled(value);menu_.enabled(value);if(!value)close(); }
     void close() { open_=false;menu_.visible(false); }
     bool opened() const { return open_; }
+    [[nodiscard]] DebugReport debug_report() const {
+        return {.name=name_,.role="retained toolbar groups and overflow menu",.situation=open_?"OverflowOpen":"Inline",
+            .owned={{"groups",std::to_string(items_.size())},
+                {"inline groups",visible_count_?std::to_string(*visible_count_):"not laid out"}}};
+    }
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
     // A flyout opened from an overflow item stays anchored to the visible
     // toolbar, even after closing the overflow hides the item's own bounds.
     vng::ui::Rect popup_anchor(const vng::ui::Button& control) const {

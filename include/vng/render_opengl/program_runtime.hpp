@@ -307,7 +307,7 @@ private:
             return std::unexpected(std::move(diagnostic_cursor.error()));
         }
         const auto invocation = make_invocation_identity(
-            source_mesh.topology_fingerprint(), view, options, state);
+            source_mesh.topology_fingerprint(), view, options, state,device.depth_mapping());
         const auto* camera = view.camera() ? &*view.camera() : nullptr;
         auto canonical = render_analysis_impl(
             device,
@@ -375,6 +375,7 @@ private:
             return std::unexpected(std::move(target.error()));
         }
         if (auto parameters = bind_camera_parameters(
+                device,
                 (*product)->program,
                 (*product)->source(),
                 camera);
@@ -476,7 +477,7 @@ private:
             return std::unexpected(std::move(program.error()));
         }
         if (auto parameters = bind_camera_parameters(
-                *analysis_program_, *analysis_source(), camera);
+                device,*analysis_program_, *analysis_source(), camera);
             !parameters) {
             return std::unexpected(std::move(parameters.error()));
         }
@@ -526,7 +527,7 @@ private:
                 !drawn) {
                 return std::unexpected(std::move(drawn.error()));
             }
-            return finish_analysis(std::move(manifest));
+            return finish_analysis(std::move(manifest),device.depth_mapping());
         }();
 
         auto restored = scope->restore();
@@ -589,6 +590,7 @@ private:
 
     [[nodiscard]] static std::expected<void, opengl::Diagnostic>
     bind_camera_parameters(
+        const opengl::Device& device,
         const opengl::Program& program,
         const glsl::ProgramSource& source,
         const gfx::CameraSnapshot* camera);
@@ -606,7 +608,7 @@ private:
         RasterOverride raster_override);
 
     [[nodiscard]] std::expected<analysis::AnalysisCapture, opengl::Diagnostic>
-    finish_analysis(analysis::AnalysisManifest manifest);
+    finish_analysis(analysis::AnalysisManifest manifest,DepthMapping mapping);
 
     [[nodiscard]] std::expected<void, opengl::Diagnostic> ensure_analysis_target(
         const opengl::Device& device,
@@ -653,7 +655,7 @@ private:
         gfx::MeshTopologyFingerprint topology,
         const RenderView& view,
         const AnalysisOptions& options,
-        const opengl::CaptureState& state) const;
+        const opengl::CaptureState& state,DepthMapping mapping) const;
 
     shader::GraphicsProgram program_;
     opengl::Program normal_program_;

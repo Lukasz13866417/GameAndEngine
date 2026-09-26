@@ -1,4 +1,5 @@
 #include "blueprint_mesh_controls.hpp"
+#include "earth_infrastructure_controls.hpp"
 #include "../support/earth_assets.hpp"
 #include "../support/mesh_frame.hpp"
 #include <algorithm>
@@ -26,7 +27,7 @@ MeshDraftEdit rotate_cloud(vng::u32 id,vng::f32 angle) {
 // gizmos/instance controls. Neither the application nor the UI adapter knows
 // what coverage or a spiral is.
 vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspector& ui,
-    const vng::editor::EditableMesh& mesh,SubmitMeshDraftEdit submit,vng::u32 selected_part) {
+    const vng::editor::EditableMesh& mesh,SubmitMeshDraftEdit submit,MeshPartId selected_part) {
     namespace earth=example::earth;
     using Settings=earth::CloudSettings;
     auto settings=earth::cloud_settings(mesh.document());
@@ -34,6 +35,8 @@ vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspec
     auto frame=example::mesh_frame::read(mesh.document());
     if(!frame)return std::unexpected(vng::editor::Diagnostic{frame.error().message});
     BlueprintMeshDescription description;
+    if(auto menus=append_infrastructure_menus(description,mesh.document());!menus)return std::unexpected(menus.error());
+    if(auto added=append_infrastructure_parts(description,mesh.document());!added)return std::unexpected(added.error());
     description.hint="Rebuild replaces hand edits in generated parts.";
     if(earth::has_cloud_ownership(mesh.document())) {
         for(auto kind:{earth::CloudKind::bank,earth::CloudKind::spiral})
@@ -44,11 +47,12 @@ vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspec
                     return vng::editor::EditableMesh::create(std::move(*result));
                 },true});
             },kind==earth::CloudKind::bank?"Add cloud bank":"Add spiral cloud");
-        description.part_field="earth/cloud";
         auto formations=earth::cloud_formations(mesh.document());
         if(!formations)return std::unexpected(vng::editor::Diagnostic{formations.error().message});
-        for(const auto& cloud:*formations)description.parts.push_back({cloud.id,std::string(cloud.name)});
-        const auto found=std::ranges::find(*formations,selected_part,&earth::CloudFormation::id);
+        std::vector<MeshPart> cloud_parts;
+        for(const auto& cloud:*formations)cloud_parts.push_back({{"earth/cloud",cloud.id},std::string(cloud.name)});
+        description.parts.insert(description.parts.begin(),cloud_parts.begin(),cloud_parts.end());
+        const auto found=std::ranges::find(*formations,selected_part.field=="earth/cloud"?selected_part.value:0,&earth::CloudFormation::id);
         if(found!=formations->end()) {
             struct Location {vng::f32 longitude,latitude;};
             auto edit=ui.edit("earth_cloud_location",Location{found->location.x,found->location.y},"Cloud formation / surface position");
@@ -72,14 +76,14 @@ vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspec
                 constexpr auto radians = std::numbers::pi_v<vng::f32>/180;
                 const auto lon = found->location.x*radians, lat = found->location.y*radians;
                 const auto radius = 1.F+.018F*settings->altitude;
-                description.gizmo = MeshPartGizmo{
+                description.gizmos.push_back({"Surface move / heading",{MeshPartHandle{
                     {{}, {radius*std::sin(lon)*std::cos(lat), radius*std::sin(lat), radius*std::cos(lon)*std::cos(lat)},
                         radius, std::string(found->name), *frame, true},
                     [id=found->id](vng::Vec3 point) {
                         const auto length = std::hypot(point.x,point.y,point.z);
                         return move_cloud(id,{std::atan2(point.x,point.z)/radians,
                             std::asin(std::clamp(point.y/length,-1.F,1.F))/radians});
-                    },[id=found->id](vng::f32 angle){return rotate_cloud(id,angle);}};
+                    },[id=found->id](vng::f32 angle){return rotate_cloud(id,angle);}}}});
             }
             description.hint=settings->visible
                 ? "G: move / R: turn / arrows: nudge."
@@ -87,7 +91,10 @@ vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspec
             return description;
         }
     } else description.hint="Rebuild once to edit formations (replaces clouds).";
-    if(!description.parts.empty()) description.hint="4: click a cloud / 5: whole mesh.\nRebuild replaces cloud hand edits.";
+    auto infrastructure_part=describe_infrastructure_parts(ui,description,mesh.document(),submit,selected_part);
+    if(!infrastructure_part)return std::unexpected(infrastructure_part.error());
+    if(*infrastructure_part)return description;
+    if(!description.parts.empty()) description.hint="4: click a part / 5: whole mesh.\nPlace: click Earth, then G / R to adjust.";
     auto clouds=ui.edit("earth_clouds",*settings,"Earth clouds / mesh draft");
     clouds.toggle("visible",&Settings::visible,"Clouds visible");
     clouds.slider("coverage",&Settings::coverage,.25F,2,"Coverage");
@@ -96,9 +103,30 @@ vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspec
     clouds.slider("edge_scatter",&Settings::edge_scatter,0,2,"Edge scatter");
     clouds.slider("altitude",&Settings::altitude,1,3,"Altitude");
     clouds.slider("relief",&Settings::relief,0,2,"Height variation");
-    clouds.apply("Rebuild clouds",[submit=std::move(submit)](const Settings& next) {
+    clouds.apply("Rebuild clouds",[submit](const Settings& next) {
         submit({"Clouds",[next](const vng::editor::EditableMesh& source)->vng::content::Result<vng::editor::EditableMesh> {
             auto rebuilt=earth::rebuild_clouds(source.document(),next);
+            if(!rebuilt)return std::unexpected(rebuilt.error());
+            return vng::editor::EditableMesh::create(std::move(*rebuilt));
+        }});
+    });
+    auto infrastructure=earth::infrastructure_settings(mesh.document());
+    if(!infrastructure)return std::unexpected(vng::editor::Diagnostic{infrastructure.error().message});
+    using Future=earth::InfrastructureSettings;
+    auto future=ui.edit("earth_infrastructure",*infrastructure,"Earth infrastructure / mesh draft");
+    future.toggle("night_lights",&Future::night_lights,"Night city lights");
+    future.toggle("skyways",&Future::skyways,"Raised skyway tunnels");
+    future.toggle("launch_hubs",&Future::launch_hubs,"Launch hubs");
+    future.toggle("large_structures",&Future::large_structures,"Terminals / joiners / elevators");
+    future.toggle("processors",&Future::processors,"Atmospheric processors");
+    future.slider("light_strength",&Future::light_strength,.1F,4,"Infrastructure brightness");
+    future.slider("city_density",&Future::city_density,.25F,2,"City density");
+    future.slider("skyway_height",&Future::skyway_height,.25F,3,"Skyway height");
+    future.slider("structure_size",&Future::structure_size,.5F,2,"Structure size");
+    future.slider("hub_height",&Future::hub_height,.5F,3,"Building height");
+    future.apply("Apply infrastructure",[submit=std::move(submit)](const Future& next) {
+        submit({"Infrastructure",[next](const vng::editor::EditableMesh& source)->vng::content::Result<vng::editor::EditableMesh> {
+            auto rebuilt=earth::rebuild_infrastructure(source.document(),next);
             if(!rebuilt)return std::unexpected(rebuilt.error());
             return vng::editor::EditableMesh::create(std::move(*rebuilt));
         }});
@@ -107,7 +135,7 @@ vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspec
 }
 }
 vng::editor::Result<BlueprintMeshDescription> describe_blueprint_mesh(vng::editor::Inspector& ui,
-    const vng::editor::EditableMesh& mesh,SubmitMeshDraftEdit submit,vng::u32 selected_part) {
+    const vng::editor::EditableMesh& mesh,SubmitMeshDraftEdit submit,MeshPartId selected_part) {
     if(example::earth::is_earth(mesh.document()))return describe_earth(ui,mesh,std::move(submit),selected_part);
     return BlueprintMeshDescription{};
 }

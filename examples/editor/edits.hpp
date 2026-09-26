@@ -35,7 +35,7 @@ struct VertexEdit {
 // count * {LE u32 index, three IEEE754 binary32 components}; 28 + 16*N bytes.
 // Wire v2 for imported blueprints adds LE u32 blueprint after count (32-byte
 // header). Default mesh retains v1 encoding for existing tools/fixtures.
-// Strictly bounded to the editor slice's 65536 vertices / +/-1e6 positions.
+// Strictly bounded to editor::max_mesh_vertices / +/-1e6 positions.
 [[nodiscard]] vng::content::Result<std::string> encode_edit(const VertexEdit&);
 [[nodiscard]] vng::content::Result<VertexEdit> decode_edit(std::string_view);
 

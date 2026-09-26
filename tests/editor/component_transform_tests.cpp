@@ -31,7 +31,7 @@ TEST_CASE("Transform arrow nudges compose with mouse movement and respect constr
             {.kind=Kind::key_down,.key=key}}).began);
         const auto turn=constrained.pump({{.kind=Kind::key_down,.key=Key::up}});
         REQUIRE(turn.changed);
-        Vec3 degrees{};degrees[axis]=1;
+        Vec3 degrees{};degrees[axis==1?0:1]=1;
         const auto expected=rotation_math::direction(degrees,{1,1,1});
         for(unsigned c=0;c<3;++c)
             CHECK(turn.points[1].position[c]==Catch::Approx(expected[c]).margin(1e-5));
@@ -42,11 +42,12 @@ TEST_CASE("Transform arrow nudges compose with mouse movement and respect constr
             {.kind=Kind::key_down,.key=Key::z}}).began);
         auto turn=f.pump({{.kind=Kind::key_down,.key=arrow}});REQUIRE(turn.changed);
         const auto expected=(arrow==Key::left||arrow==Key::up)?1.F:-1.F;
-        CHECK(turn.points[1].position.y==Catch::Approx(std::sin(expected*rotation_math::radians)).margin(1e-5));
+        const bool vertical=arrow==Key::up||arrow==Key::down;
+        CHECK((vertical?-turn.points[1].position.z:turn.points[1].position.y)==Catch::Approx(std::sin(expected*rotation_math::radians)).margin(1e-5));
         auto still=f.pump({{.kind=Kind::pointer_move,.position={460,300}}});
         CHECK(still.points[1].position==turn.points[1].position); // Mouse cannot erase a keyboard nudge.
         auto fine=f.pump({{.kind=Kind::key_down,.key=arrow,.modifiers={.shift=true},.repeat=true}});
-        CHECK(fine.points[1].position.y==Catch::Approx(std::sin(expected*1.1F*rotation_math::radians)).margin(1e-5));
+        CHECK((vertical?-fine.points[1].position.z:fine.points[1].position.y)==Catch::Approx(std::sin(expected*1.1F*rotation_math::radians)).margin(1e-5));
         CHECK(f.pump({{.kind=Kind::key_down,.key=Key::escape}}).cancelled);
     }
     Fixture f;REQUIRE(f.pump({{.kind=Kind::key_down,.position={400,300},.key=Key::g}}).began);
@@ -236,7 +237,9 @@ TEST_CASE("Whole mesh transforms need no selection and include normals and hidde
     MeshTransform transform{editing};Fixture view;
     const auto pump=[&](std::initializer_list<input::Event> events) {
         std::span<const input::Event> raw{events.begin(),events.size()};
-        return transform.update(selection,view.camera,{0,0,800,600},raw,raw,true);
+        auto result=transform.update(selection,view.camera,{0,0,800,600},raw,raw,true);
+        selection.transform_mode(transform.gizmo()); // Selection's owner accepts the tool's requested mode.
+        return result;
     };
     REQUIRE(pump({{.kind=input::EventKind::key_down,.position={460,300},.key=input::Key::r}}));
     REQUIRE(transform.active());CHECK(selection.selected().empty());

@@ -272,7 +272,13 @@ content::Result<content::vmesh::Document> make_savannah_variant(const content::v
     }
     const auto& positions=std::get<std::vector<f32>>(p->values);
     auto& colors=std::get<std::vector<f32>>(c->values);
+    const std::vector<u32>* infrastructure{};
+    if(const auto owned=field("earth/infrastructure");owned!=result.vertex_fields.end()) {
+        if(owned->type!=vm::FieldType{vm::ScalarType::UInt32,1})return invalid("Invalid Earth infrastructure ownership");
+        infrastructure=&std::get<std::vector<u32>>(owned->values);
+    }
     for(std::size_t i=0;i<source.vertex_count;++i)if(layers?(*layers)[i]==0:(*emissions)[i]>.03F) {
+        if(infrastructure&&(*infrastructure)[i])continue;
         auto local=example::mesh_frame::point(*inverse,{positions[i*3],positions[i*3+1],positions[i*3+2]});
         if(dot(local,local)<1.002F*1.002F)continue; // Leave the unit ocean shell unchanged.
         const auto n=unit(local);const auto uv=location(n);

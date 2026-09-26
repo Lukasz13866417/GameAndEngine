@@ -1,4 +1,5 @@
 #include <vng/opengl/commands.hpp>
+#include <vng/opengl/camera_projection.hpp>
 
 #include "context_state.hpp"
 
@@ -227,7 +228,7 @@ std::expected<void, Diagnostic> Commands::view(
             }
             if (auto uploaded = device_.state_->command_program->set_uniform_mat4(
                     parameter.location,
-                    view.camera()->view_projection);
+                    camera_projection(*view.camera(),device_.depth_mapping()));
                 !uploaded) {
                 return uploaded;
             }

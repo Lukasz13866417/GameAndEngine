@@ -102,7 +102,8 @@ vng_target_defaults(vng_content)
 if(VNG_BUILD_EDITOR)
     # CPU-only procedural authoring; no dependency back into editor or graphics.
     add_library(vng_earth_assets STATIC examples/support/earth_assets.cpp
-        examples/support/earth_clouds.cpp examples/support/earth_edit.cpp)
+        examples/support/earth_clouds.cpp examples/support/earth_edit.cpp examples/support/earth_infrastructure.cpp
+        examples/support/earth_infrastructure_edit.cpp examples/support/earth_structures.cpp examples/support/earth_connections.cpp)
     target_link_libraries(vng_earth_assets PUBLIC vng_content)
     vng_target_defaults(vng_earth_assets)
     add_library(vng_editor STATIC src/editor/inspector.cpp src/editor/mesh.cpp src/editor/mesh_topology.cpp src/editor/mesh_patch.cpp)
@@ -117,7 +118,7 @@ if(VNG_BUILD_EDITOR)
         examples/editor/rotation_edits.cpp examples/editor/scale_edits.cpp examples/editor/transform_pivot.cpp examples/editor/edit_clipboard.cpp
         examples/editor/selection_edits.cpp examples/editor/document_patch.cpp)
     target_link_libraries(vng_editor_project PUBLIC vng_editor vng_timeline vng_earth_assets)
-    target_sources(vng_editor_project PRIVATE examples/editor/blueprint_mesh_controls.cpp)
+    target_sources(vng_editor_project PRIVATE examples/editor/blueprint_mesh_controls.cpp examples/editor/earth_infrastructure_controls.cpp examples/editor/earth_scaffold_gizmos.cpp examples/editor/earth_bezier_gizmo.cpp)
     target_sources(vng_editor_project PRIVATE examples/editor/editing_session.cpp examples/editor/session_operations.cpp
         examples/editor/regions.cpp examples/editor/region_geometry.cpp examples/editor/region_edits.cpp
         examples/editor/region_instances.cpp examples/editor/camera_instances.cpp)
@@ -129,7 +130,10 @@ if(VNG_BUILD_EDITOR)
         # both link this; neither lists these sources again.
         add_library(vng_editor_ui STATIC
             examples/editor/inspector_panel.cpp examples/editor/timeline_panel.cpp examples/editor/tool_panel.cpp
-            examples/editor/blueprint_mesh_panel.cpp examples/editor/mesh_tools.cpp
+            examples/editor/blueprint_mesh_panel.cpp examples/editor/mesh_tools.cpp examples/editor/mesh_menu.cpp
+            examples/editor/mesh_editing.cpp
+            examples/editor/scene_lists.cpp
+            examples/editor/timeline_editing.cpp
             examples/editor/file_dialog.cpp examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp
             examples/editor/save_dialog.cpp
             examples/editor/translation_tool.cpp examples/editor/rotation_tool.cpp examples/editor/scale_tool.cpp
@@ -352,6 +356,8 @@ if(VNG_BUILD_TESTS)
                     tests/editor/settings_panel_tests.cpp tests/editor/view_selector_tests.cpp tests/editor/toolbar_row_tests.cpp
                     tests/editor/preview_fps_tests.cpp tests/editor/mesh_tools_tests.cpp tests/editor/instance_list_tests.cpp
                     tests/editor/tool_panel_tests.cpp tests/editor/region_ui_tests.cpp tests/editor/component_transform_tests.cpp
+                    tests/editor/component_dispatch_tests.cpp
+                    tests/editor/workspace_tests.cpp
                     tests/editor/instance_transform_tests.cpp)
                 target_link_libraries(vng_editor_ui_tests PRIVATE vng_editor_ui Catch2::Catch2WithMain)
                 target_compile_definitions(vng_editor_ui_tests PRIVATE VNG_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/fonts/DejaVuSans.ttf")
@@ -716,7 +722,7 @@ if(VNG_BUILD_EXAMPLES)
     target_link_libraries(vng_make_fleet PRIVATE vng_content)
     vng_target_defaults(vng_make_fleet)
     if(TARGET vng_editor_project)
-        add_library(vng_earth_scene STATIC examples/scenes/earth_scene.cpp)
+        add_library(vng_earth_scene STATIC examples/scenes/earth_scene.cpp examples/scenes/earth_network.cpp)
         target_link_libraries(vng_earth_scene PUBLIC vng_editor_project)
         vng_target_defaults(vng_earth_scene)
         add_executable(vng_make_earth EXCLUDE_FROM_ALL examples/tools/make_earth.cpp)
@@ -742,6 +748,17 @@ if(VNG_BUILD_EXAMPLES)
         add_executable(vng_make_asteroid_scene EXCLUDE_FROM_ALL examples/tools/make_asteroid_scene.cpp)
         target_link_libraries(vng_make_asteroid_scene PRIVATE vng_asteroid_scene)
         vng_target_defaults(vng_make_asteroid_scene)
+        add_library(vng_tunnel_scene STATIC examples/scenes/tunnel_scene.cpp examples/scenes/tunnel_departure.cpp
+            examples/scenes/departure_voyage.cpp examples/scenes/key_batch.cpp examples/support/space_assets.cpp)
+        # The voyage reuses the belt's rock recipes.
+        target_link_libraries(vng_tunnel_scene PUBLIC vng_asteroid_scene)
+        vng_target_defaults(vng_tunnel_scene)
+        add_executable(vng_make_tunnel_scene EXCLUDE_FROM_ALL examples/tools/make_tunnel_scene.cpp)
+        target_link_libraries(vng_make_tunnel_scene PRIVATE vng_tunnel_scene)
+        vng_target_defaults(vng_make_tunnel_scene)
+        add_executable(vng_make_tunnel_departure EXCLUDE_FROM_ALL examples/tools/make_tunnel_departure.cpp)
+        target_link_libraries(vng_make_tunnel_departure PRIVATE vng_tunnel_scene)
+        vng_target_defaults(vng_make_tunnel_departure)
         add_library(vng_solar_system_scene STATIC examples/scenes/solar_system_scene.cpp)
         target_link_libraries(vng_solar_system_scene PUBLIC vng_asteroid_scene)
         vng_target_defaults(vng_solar_system_scene)
@@ -761,6 +778,12 @@ if(VNG_BUILD_EXAMPLES)
                 VNG_ASTEROID_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
             vng_target_defaults(vng_asteroid_scene_tests)
             add_test(NAME vng_asteroid_scene_tests COMMAND vng_asteroid_scene_tests)
+            add_executable(vng_tunnel_scene_tests tests/examples/tunnel_scene_tests.cpp)
+            target_link_libraries(vng_tunnel_scene_tests PRIVATE vng_tunnel_scene Catch2::Catch2WithMain)
+            target_compile_definitions(vng_tunnel_scene_tests PRIVATE
+                VNG_TUNNEL_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
+            vng_target_defaults(vng_tunnel_scene_tests)
+            add_test(NAME vng_tunnel_scene_tests COMMAND vng_tunnel_scene_tests)
             add_executable(vng_solar_system_scene_tests tests/examples/solar_system_scene_tests.cpp)
             target_link_libraries(vng_solar_system_scene_tests PRIVATE vng_solar_system_scene Catch2::Catch2WithMain)
             target_compile_definitions(vng_solar_system_scene_tests PRIVATE
@@ -868,6 +891,11 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
         target_compile_definitions(vng_asteroid_fleet_demo PRIVATE
             VNG_ASTEROID_SCENE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/asteroid_fleet.vscene")
         vng_target_defaults(vng_asteroid_fleet_demo)
+        add_executable(vng_tunnel_demo examples/tunnel.cpp)
+        target_link_libraries(vng_tunnel_demo PRIVATE vng_scene_demo_support)
+        target_compile_definitions(vng_tunnel_demo PRIVATE
+            VNG_TUNNEL_SCENE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/tunnel_departure.vscene")
+        vng_target_defaults(vng_tunnel_demo)
         add_executable(vng_solar_system_demo examples/solar_system.cpp)
         target_link_libraries(vng_solar_system_demo PRIVATE vng_scene_demo_support vng_solar_system_scene)
         target_compile_definitions(vng_solar_system_demo PRIVATE
@@ -882,6 +910,12 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
             target_compile_definitions(vng_earth_render_tests PRIVATE VNG_EARTH_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
             vng_target_defaults(vng_earth_render_tests)
             add_test(NAME vng_earth_render_tests COMMAND vng_earth_render_tests)
+            add_executable(vng_tunnel_render_tests tests/examples/tunnel_render_tests.cpp)
+            target_link_libraries(vng_tunnel_render_tests PRIVATE vng_editor_runtime vng_tunnel_scene vng_example_support Catch2::Catch2WithMain)
+            target_compile_definitions(vng_tunnel_render_tests PRIVATE VNG_TUNNEL_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
+            vng_target_defaults(vng_tunnel_render_tests)
+            add_test(NAME vng_tunnel_render_tests COMMAND vng_tunnel_render_tests)
+            set_tests_properties(vng_tunnel_render_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "opengl")
             set_tests_properties(vng_earth_render_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "editor;examples;opengl")
             add_executable(vng_editor_runtime_tests tests/editor/runtime_tests.cpp tests/editor/mesh_batch_tests.cpp)
             target_link_libraries(vng_editor_runtime_tests PRIVATE vng_editor_runtime vng_asteroid_scene vng_example_support vng_glad_dependency Catch2::Catch2WithMain)
