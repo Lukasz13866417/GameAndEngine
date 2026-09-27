@@ -1,4 +1,4 @@
-#include "navigation.hpp"
+#include "camera_pointer_logic.hpp"
 #include <vng/input/routing.hpp>
 #include "../support/mesh_frame.hpp"
 
@@ -19,7 +19,7 @@ bool contains(Vec2 origin, Vec2 size, Vec2 p) {
 }
 } // namespace
 
-void NavigationTool::drag_origin(std::optional<Vec3> origin,const editor::EditableMesh* mesh,Mat4 transform) {
+void CameraPointerLogic::drag_origin(std::optional<Vec3> origin,const editor::EditableMesh* mesh,Mat4 transform) {
     if(origin&&(!std::isfinite(origin->x)||!std::isfinite(origin->y)||!std::isfinite(origin->z)))origin.reset();
     drag_origin_=origin;
     surface_=nullptr;
@@ -28,7 +28,7 @@ void NavigationTool::drag_origin(std::optional<Vec3> origin,const editor::Editab
     }
 }
 
-std::optional<double> NavigationTool::surface_distance(Vec3 eye,Vec3 center) const {
+std::optional<double> CameraPointerLogic::surface_distance(Vec3 eye,Vec3 center) const {
     if(!surface_)return {};
     const double distance=std::hypot(double(center.x)-eye.x,double(center.y)-eye.y,double(center.z)-eye.z);
     if(distance<=0)return {};
@@ -48,7 +48,7 @@ std::optional<double> NavigationTool::surface_distance(Vec3 eye,Vec3 center) con
     return hit->distance;
 }
 
-void NavigationTool::approach(CameraPose& s,ViewMode view,Vec3 center,double amount) {
+void CameraPointerLogic::approach(CameraPose& s,ViewMode view,Vec3 center,double amount) {
     const auto eye=camera(s,view).position();
     const auto distance=std::hypot(double(center.x)-eye.x,double(center.y)-eye.y,double(center.z)-eye.z);
     if(distance<=0)return;
@@ -71,7 +71,7 @@ void NavigationTool::approach(CameraPose& s,ViewMode view,Vec3 center,double amo
     for(unsigned i=0;i<3;++i)s.target[i]=static_cast<float>(s.target[i]+delta[i]*fraction);
 }
 
-void NavigationTool::scroll(CameraPose& s, ViewMode view, double amount) {
+void CameraPointerLogic::scroll(CameraPose& s, ViewMode view, double amount) {
     if (scroll_mode_ == ScrollMode::zoom) {
         if(view==ViewMode::mesh&&drag_origin_) {
             const auto eye=camera(s,view).position();
@@ -108,12 +108,12 @@ void NavigationTool::scroll(CameraPose& s, ViewMode view, double amount) {
         s.target[i] = static_cast<float>(s.target[i] + forward[i] * step * fraction);
 }
 
-void NavigationTool::cancel() noexcept {
+void CameraPointerLogic::cancel() noexcept {
     cancelled_ |= dragging_;
     dragging_ = false;
 }
 
-void NavigationTool::move(CameraPose& s, ViewMode view, bool& smooth_zoom, Vec2 pointer, bool fast) {
+void CameraPointerLogic::move(CameraPose& s, ViewMode view, bool& smooth_zoom, Vec2 pointer, bool fast) {
     if (!finite(pointer))
         return;
     smooth_zoom = false;
@@ -189,12 +189,12 @@ void NavigationTool::move(CameraPose& s, ViewMode view, bool& smooth_zoom, Vec2 
     }
 }
 
-bool NavigationTool::update(State& s, Vec2 origin, Vec2 size,
+bool CameraPointerLogic::update(State& s, Vec2 origin, Vec2 size,
                             std::span<const input::Event> unhandled,
                             std::span<const input::Event> raw, bool enabled) {
     return update(view_camera(s), s.viewport.mode, s.viewport.smooth_zoom, origin, size, unhandled, raw, enabled);
 }
-bool NavigationTool::update(CameraPose& pose, ViewMode view, bool& smooth_zoom, Vec2 origin, Vec2 size,
+bool CameraPointerLogic::update(CameraPose& pose, ViewMode view, bool& smooth_zoom, Vec2 origin, Vec2 size,
                             std::span<const input::Event> unhandled,
                             std::span<const input::Event> raw, bool enabled) {
     handled_ = cancelled_ = false;

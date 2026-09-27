@@ -20,7 +20,7 @@ namespace editor_example {
 // Backpressure belongs beside the authored document, not in the transport.
 // Retain only the latest absolute value of each dirty vertex while one update
 // is in flight; never build a queue of historical mouse-move snapshots.
-class PreviewUpdates {
+class PreviewDeliveryLogic {
 public:
     [[nodiscard]] DebugReport debug_report() const {
         DebugReport report{.name="delivery",.role="per-worker authored change delivery",.situation="Tracking",

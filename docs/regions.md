@@ -106,7 +106,7 @@ EditingSession
 
 Editor application
 ├── ordinary instance selection + GizmoSelector
-└── ViewportInteraction (capture, priority, cancellation)
+└── ViewportToolsUI (capture, priority, cancellation)
     └── RegionEditor (boundary inspector and RMB actions)
         └── CageTool (cached display cages and component selection)
             └── ComponentTransform (shared with mesh editing)

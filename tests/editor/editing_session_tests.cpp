@@ -1,7 +1,7 @@
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/instance_controls.hpp"
 #include "../../examples/editor/animation_camera_edit.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <array>
 #include <chrono>

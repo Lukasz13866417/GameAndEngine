@@ -1,6 +1,6 @@
 #include "../../examples/editor/selection_edits.hpp"
 #include "../../examples/editor/edits.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/project.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -36,7 +36,7 @@ std::string encode(const SelectionEdit& edit) {
     REQUIRE(bytes);
     return *bytes;
 }
-std::string packet(PreviewUpdates& updates, const State& state, u64 generation = 1) {
+std::string packet(PreviewDeliveryLogic& updates, const State& state, u64 generation = 1) {
     auto next = updates.next(generation, state);
     REQUIRE(next);
     REQUIRE(*next);
@@ -205,7 +205,7 @@ TEST_CASE("Selection packets cannot repair or silently replace a missing inspect
 TEST_CASE("Selection coalescing sends the newest click after the in-flight acknowledgement", "[editor][selection][updates]") {
     auto state = scene();
     auto worker = state;
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     CHECK(packet(updates, state).starts_with("snapshot\n"));
     updates.acknowledge(1, state.document.revision);
@@ -243,7 +243,7 @@ TEST_CASE("Selection coalescing sends the newest click after the in-flight ackno
 
 TEST_CASE("Mixed selection changes retain every pending edit in either order", "[editor][selection][updates]") {
     auto state = scene();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     (void)packet(updates, state);
     updates.acknowledge(1, 1);
@@ -265,7 +265,7 @@ TEST_CASE("Mixed selection changes retain every pending edit in either order", "
 
 TEST_CASE("Selection retry and independent peers retain the newest object", "[editor][selection][updates]") {
     auto state = scene();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     updates.add(2);
     (void)packet(updates, state, 1);

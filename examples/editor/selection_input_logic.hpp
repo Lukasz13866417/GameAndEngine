@@ -12,7 +12,7 @@ namespace editor_example {
 // an outside click to complete before changing the selected object/components.
 // Crossing the box-selection threshold still starts a drag from the original
 // press; a release over UI or a lost focus never invents a viewport click.
-class SelectionInput {
+class SelectionInputLogic {
 public:
     void cancel() { press_.reset(); }
     std::span<const vng::input::Event> route(std::span<const vng::input::Event> raw,

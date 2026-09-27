@@ -5,8 +5,8 @@
 #include "../../examples/editor/translation_tool.hpp"
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/gizmo_selector.hpp"
-#include "../../examples/editor/viewport_interaction.hpp"
-#include "../../examples/editor/workspace.hpp"
+#include "../../examples/editor/viewport_tools_ui.hpp"
+#include "../../examples/editor/workspace_ui.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
 #include <array>
@@ -136,7 +136,7 @@ TEST_CASE("MMB rotation moves a mixed selection around its shared center with on
     const std::array<u32,2> selected{1,2};
     const auto center=selection_center(instance_centers(state,1,selected));
     EditingSession editing{state};editing.select_keyframe(0);
-    RotationInteraction tool{editing};const auto camera=orthographic();
+    InstanceRotationGizmo tool{editing};const auto camera=orthographic();
     const auto update=[&](std::initializer_list<input::Event> events) {
         const std::span<const input::Event> input{events.begin(),events.size()};
         return execute(editing,tool,tool.update(1,camera,viewport,input,input,true,selected,false,{},true));
@@ -218,8 +218,8 @@ TEST_CASE("Blueprint manipulation describes common tools and instance-local auth
 TEST_CASE("Viewport owns gesture priority completion and rollback", "[editor][viewport][interaction]") {
     auto loaded = text::Font::load(VNG_TEST_FONT_PATH); REQUIRE(loaded);
     ui::Screen screen{ui::dark_theme(*loaded)};
-    EditingWorkspace editing{oriented_mesh()}; editing.select_keyframe(editing.state().viewport.time);
-    ViewportInteraction tools{editing.session(), screen.column(), screen.column(), screen.column(), screen.column()};
+    EditingWorkspaceUI editing{oriented_mesh()}; editing.select_keyframe(editing.state().viewport.time);
+    ViewportToolsUI tools{editing.session(), screen.column(), screen.column(), screen.column(), screen.column()};
     tools.begin_frame();
     REQUIRE(tools.accepts(ViewportTool::navigation));
     REQUIRE(editing.begin_move(1));
@@ -253,7 +253,7 @@ TEST_CASE("Viewport arbitration retains same-frame tool consumption and boundary
     auto state = oriented_mesh();
     auto region = instantiate(state, BlueprintId::region); REQUIRE(region);
     EditingSession editing{std::move(state)}; editing.select_keyframe(editing.state().viewport.time);
-    ViewportInteraction tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
+    ViewportToolsUI tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
     tools.selected(*region, GizmoMode::region_vertices);
     CHECK(tools.regions.tool().selected() == *region);
     tools.selected(1, GizmoMode::move);
@@ -263,7 +263,7 @@ TEST_CASE("Viewport arbitration retains same-frame tool consumption and boundary
     const auto camera = orthographic();
     tools.begin_frame();
     auto available=tools.accepts(ViewportTool::translation);
-    (void)dispatch(tools.translation,SceneMovement::Instance{{static_cast<u32>(schema.stamp.object),
+    (void)dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
             std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
             MoveGizmoContext{schema.stamp,camera,viewport,{},{},available});
     tools.observe(ViewportTool::translation,available);
@@ -272,7 +272,7 @@ TEST_CASE("Viewport arbitration retains same-frame tool consumption and boundary
         input::Event{.kind=input::EventKind::pointer_down, .position=*handle},
         input::Event{.kind=input::EventKind::pointer_up, .position={handle->x + 20, handle->y}}};
     available=tools.accepts(ViewportTool::translation);
-    auto moved=dispatch(tools.translation,SceneMovement::Instance{{static_cast<u32>(schema.stamp.object),
+    auto moved=dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
             std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
             MoveGizmoContext{schema.stamp,camera,viewport,events,events,available});
     tools.observe(ViewportTool::translation,available);
@@ -288,19 +288,19 @@ TEST_CASE("A captured viewport tool allows camera navigation but excludes other 
     auto loaded = text::Font::load(VNG_TEST_FONT_PATH); REQUIRE(loaded);
     ui::Screen screen{ui::dark_theme(*loaded)};
     EditingSession editing{oriented_mesh()}; editing.select_keyframe(editing.state().viewport.time);
-    ViewportInteraction tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
+    ViewportToolsUI tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
     const auto schema = local_position_gizmo(editing.state(), 1);
     const auto camera = orthographic();
     tools.begin_frame();
     auto available=tools.accepts(ViewportTool::translation);
-    (void)dispatch(tools.translation,SceneMovement::Instance{{static_cast<u32>(schema.stamp.object),
+    (void)dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
             std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
             MoveGizmoContext{schema.stamp,camera,viewport,{},{},available});
     tools.observe(ViewportTool::translation,available);
     const auto handle = tools.translation.handle("X"); REQUIRE(handle);
     const std::array press{input::Event{.kind=input::EventKind::pointer_down, .position=*handle}};
     available=tools.accepts(ViewportTool::translation);
-    (void)dispatch(tools.translation,SceneMovement::Instance{{static_cast<u32>(schema.stamp.object),
+    (void)dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
             std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
             MoveGizmoContext{schema.stamp,camera,viewport,press,press,available});
     tools.observe(ViewportTool::translation,available);
@@ -315,7 +315,7 @@ TEST_CASE("A captured viewport tool allows camera navigation but excludes other 
     // to the existing capture and must still complete the gesture.
     const std::array release{input::Event{.kind=input::EventKind::pointer_up, .position={900, handle->y}}};
     available=tools.accepts(ViewportTool::translation);CHECK(available);
-    auto moved=dispatch(tools.translation,SceneMovement::Instance{{static_cast<u32>(schema.stamp.object),
+    auto moved=dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
             std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
             MoveGizmoContext{schema.stamp,camera,viewport,{},release,available});
     tools.observe(ViewportTool::translation,available);

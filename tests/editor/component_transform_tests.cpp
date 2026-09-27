@@ -1,5 +1,5 @@
 #include "../../examples/editor/component_transform.hpp"
-#include "../../examples/editor/mesh_transform.hpp"
+#include "../../examples/editor/mesh_transform_gizmo.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -230,11 +230,11 @@ TEST_CASE("Whole mesh transforms need no selection and include normals and hidde
     EditingSession editing{std::move(state)};
     auto font=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(font);
     ui::Screen screen{ui::dark_theme(*font)};
-    MeshTools selection{screen.column(),screen.column()};selection.sync(editing.state());
+    MeshToolsUI selection{screen.column(),screen.column()};selection.sync(editing.state());
     selection.mode(MeshSelectMode::face);selection.select(0,false);REQUIRE(selection.hide_selected()==1);
     selection.mode(MeshSelectMode::whole);
     const auto mask=selection.visibility();
-    MeshTransform transform{editing};Fixture view;
+    MeshTransformGizmo transform{editing};Fixture view;
     const auto pump=[&](std::initializer_list<input::Event> events) {
         std::span<const input::Event> raw{events.begin(),events.size()};
         const auto before=editing.state().document;
@@ -296,8 +296,8 @@ TEST_CASE("Stale mesh transform proposals cannot change a successor transaction"
     EditingSession editing{std::move(state)};
     auto font=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(font);
     ui::Screen screen{ui::dark_theme(*font)};
-    MeshTools selection{screen.column(),screen.column()};selection.sync(editing.state());selection.mode(MeshSelectMode::whole);
-    MeshTransform transform{editing};Fixture view;
+    MeshToolsUI selection{screen.column(),screen.column()};selection.sync(editing.state());selection.mode(MeshSelectMode::whole);
+    MeshTransformGizmo transform{editing};Fixture view;
     const std::array begin{input::Event{.kind=input::EventKind::key_down,.position={460,300},.key=input::Key::s}};
     REQUIRE(execute(editing,transform,transform.update(selection,view.camera,{0,0,800,600},begin,begin,true)));
     const std::array move{input::Event{.kind=input::EventKind::pointer_move,.position={520,300}}};

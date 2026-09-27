@@ -1,6 +1,6 @@
 #include "app.hpp"
-#include "mesh_tools.hpp"
-#include "workspace.hpp"
+#include "mesh_tools_ui.hpp"
+#include "workspace_ui.hpp"
 #include "tool_panel.hpp"
 #include "mesh_overlay.hpp"
 #include "document_patch.hpp"
@@ -9,24 +9,24 @@
 #include "inspector_panel.hpp"
 #include "blueprint_mesh_panel.hpp"
 #include "translation_tool.hpp"
-#include "rotation_interaction.hpp"
+#include "instance_rotation_gizmo.hpp"
 #include "editing_session.hpp"
 #include "instance_controls.hpp"
 #include "scale_tool.hpp"
 #include "world_bounds_tool.hpp"
 #include "world_bounds_panel.hpp"
 #include "region_editor.hpp"
-#include "viewport_interaction.hpp"
+#include "viewport_tools_ui.hpp"
 #include "viewport_input.hpp"
 #include <numbers>
 #include "edit_clipboard.hpp"
 #include "edit_shortcuts.hpp"
-#include "preview_controller.hpp"
+#include "preview_logic.hpp"
 #include "viewport_session.hpp"
 #include "presented_view.hpp"
 #include "timing_panel.hpp"
 #include "preview_fps.hpp"
-#include "navigation.hpp"
+#include "camera_pointer_logic.hpp"
 #include "scroll_trace.hpp"
 #include "selection.hpp"
 #include "vertex_drag.hpp"
@@ -117,7 +117,7 @@ int run(const Options& options) {
         if (auto inspected = inspect_mesh(initial, initial.viewport.inspected_mesh); !inspected)
             return fail(inspected.error().message);
     }
-    EditingWorkspace workspace{std::move(initial), std::move(scene_file)};
+    EditingWorkspaceUI workspace{std::move(initial), std::move(scene_file)};
     auto& editing = workspace;
     if (auto configured = editing.timeline_track_limit(settings.timeline_track_limit); !configured)
         return fail(configured.error().message);
@@ -166,7 +166,7 @@ int run(const Options& options) {
         return fail(display.error().message);
     const auto build_command = options.automation ? std::vector<std::string>{"/usr/bin/true"}
         : std::vector<std::string>{"cmake", "--build", VNG_EDITOR_BUILD_DIR, "--target", "vng_editor_worker", "-j", "2"};
-    auto session = PreviewController::create(
+    auto session = PreviewLogic::create(
         {.build_command = build_command,
          .build_directory = VNG_EDITOR_SOURCE_DIR,
          .worker_executable = VNG_EDITOR_WORKER_PATH,
@@ -418,7 +418,7 @@ int run(const Options& options) {
     const auto& navigation = viewport_interaction.camera_navigation().pointer();
     const auto& walk = viewport_interaction.camera_navigation().walking();
     const auto navigate = [&](NavigationContext context) {
-        return dispatch(viewport_interaction,ViewportInteraction::Navigate{},context);
+        return dispatch(viewport_interaction,ViewportToolsUI::Navigate{},context);
     };
     DeleteTarget delete_target = DeleteTarget::object;
     const auto& candidates=session->candidates();
@@ -657,7 +657,7 @@ int run(const Options& options) {
             traced_revision = state.document.revision;
             document_origin = timings.interaction();
         }
-        const auto reply=dispatch(delivery,PreviewController::LiveLink{},DeliveryContext{
+        const auto reply=dispatch(delivery,PreviewLogic::LiveLink{},DeliveryContext{
             generation,state,document_origin,view_origin,true});
         if(!reply.error.empty()) status.text(reply.error);
     };
@@ -665,7 +665,7 @@ int run(const Options& options) {
         // Visibility is a reliable, change-only packet, never repeated in
         // camera navigation's latest-value mailbox.
         mesh_input();
-        const auto reply=dispatch(delivery,PreviewController::LiveLink{},DeliveryContext{
+        const auto reply=dispatch(delivery,PreviewLogic::LiveLink{},DeliveryContext{
             generation,state,document_origin,view_origin,false,VisibilityDelivery{mesh_tools.visibility(),mesh_tools.visibility_revision()}});
         if(reply.view_submission) scroll_trace.submitted(generation,view_state.sequence,*reply.view_submission);
         if(!reply.error.empty()) status.text(reply.error);
@@ -918,7 +918,7 @@ int run(const Options& options) {
         consume_edits();
         // Explicit Play initializes from the current document even with live
         // debugging disconnected. It does not enable the debug data stream.
-        const auto reply=dispatch(delivery,PreviewController::StartingIndependentPlay{},DeliveryContext{generation,state});
+        const auto reply=dispatch(delivery,PreviewLogic::StartingIndependentPlay{},DeliveryContext{generation,state});
         if(!reply.submitted) {status.text(reply.error);return;}
         diagnostic.value(false);
         playing = true;
@@ -1070,7 +1070,7 @@ int run(const Options& options) {
             } else if (event.kind == K::message) {
                 const std::string_view message = event.message;
                 if (message.starts_with("revision\n")) {
-                    // PreviewController owns revision acknowledgement.
+                    // PreviewLogic owns revision acknowledgement.
                 } else if (message.starts_with("resync\n")) {
                     status.text(message.substr(7));
                 } else if (message.starts_with("status\n") &&

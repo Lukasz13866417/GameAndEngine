@@ -1,4 +1,4 @@
-#include "../../examples/editor/mesh_tools.hpp"
+#include "../../examples/editor/mesh_tools_ui.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <iostream>
@@ -8,7 +8,7 @@ using namespace editor_example;
 struct Fixture {
     static text::Font font() {auto f=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(f);return *f;}
     ui::Screen screen{ui::dark_theme(font())};
-    MeshTools tools{screen.column().width(300).height(300),screen.column()};
+    MeshToolsUI tools{screen.column().width(300).height(300),screen.column()};
     State state=make();
     static State make() {
         content::vmesh::Document d;d.vertex_count=4;

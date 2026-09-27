@@ -1,4 +1,4 @@
-#include "mesh_tools.hpp"
+#include "mesh_tools_ui.hpp"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -9,7 +9,7 @@ using namespace vng;
 namespace {
 float area(Vec2 a,Vec2 b,Vec2 c) {return (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);}
 }
-MeshTools::MeshTools(ui::Container controls,ui::Container popup):menu_(popup),
+MeshToolsUI::MeshToolsUI(ui::Container controls,ui::Container popup):menu_(popup),
     modes_(controls.dropdown<MeshSelectMode>("Select",{{MeshSelectMode::vertex,"Vertices (1)"},
         {MeshSelectMode::edge,"Edges (2)"},{MeshSelectMode::face,"Faces (3)"},
         {MeshSelectMode::surface,"Surface (4)"},{MeshSelectMode::whole,"Whole mesh (5)"}})),
@@ -26,13 +26,13 @@ MeshTools::MeshTools(ui::Container controls,ui::Container popup):menu_(popup),
     controls.label("F: edge/face | H: hide | Alt+H: reveal").height(24);
     xray_=controls.checkbox("X-ray selection").value(false).height(26);
 }
-void MeshTools::reset() {
+void MeshToolsUI::reset() {
     if(!blueprint_ && selected_.empty()) {close();return;}
     blueprint_.reset(); revision_=0; selected_.clear();
     visibility_={};visible_faces_.clear();visible_edges_.clear();visible_vertices_.clear();
     ++visibility_revision_;++selection_revision_;++topology_revision_;close();
 }
-void MeshTools::sync(const State& state, bool accept_input) {
+void MeshToolsUI::sync(const State& state, bool accept_input) {
     const auto target=mesh_target(state); const auto* mesh=editable_mesh(state);
     if(!target || !mesh) { reset(); return; }
     if(blueprint_!=target->blueprint || (revision_!=state.document.revision &&
@@ -65,7 +65,7 @@ void MeshTools::sync(const State& state, bool accept_input) {
     if(ordered.size()>=2) summary+=" / line anchors: "+std::to_string(ordered[0])+", "+std::to_string(ordered[1]);
     summary_.text(summary);
 }
-void MeshTools::mode(MeshSelectMode value) {
+void MeshToolsUI::mode(MeshSelectMode value) {
     if(mode_!=value) { mode_=value; selected_.clear(); ++selection_revision_; close(); }
     modes_.value(value);
     transform_.enabled(value!=MeshSelectMode::surface);
@@ -74,7 +74,7 @@ void MeshTools::mode(MeshSelectMode value) {
     transform_help_.text(value==MeshSelectMode::whole?"R/S: transform | Ctrl+arrows: gizmo":"G/R/S: transform | Enter: confirm");
     xray_.enabled(component_mode());
 }
-bool MeshTools::cycle(int direction) {
+bool MeshToolsUI::cycle(int direction) {
     if(mode_==MeshSelectMode::surface || !direction)return false;
     constexpr std::array components{GizmoMode::move,GizmoMode::rotate,GizmoMode::scale,GizmoMode::free_rotate};
     const std::span<const GizmoMode> choices=mode_==MeshSelectMode::whole?std::span<const GizmoMode>{whole_mesh_gizmos}:std::span<const GizmoMode>{components};
@@ -82,7 +82,7 @@ bool MeshTools::cycle(int direction) {
     transform_mode(choices[(index+choices.size()+(direction>0?1:-1))%choices.size()]);
     return true;
 }
-void MeshTools::select(u32 id,bool extend) {
+void MeshToolsUI::select(u32 id,bool extend) {
     if(!visible(mode_,id)) return;
     auto found=std::ranges::find(selected_,id);
     if(!extend && selected_.size()==1 && found!=selected_.end()) return;
@@ -91,13 +91,13 @@ void MeshTools::select(u32 id,bool extend) {
     else if(found!=selected_.end())selected_.erase(found);
     else selected_.push_back(id);
 }
-void MeshTools::select_all(const editor::EditableMesh& mesh,bool clear) {
+void MeshToolsUI::select_all(const editor::EditableMesh& mesh,bool clear) {
     ++selection_revision_;
     selected_.clear(); if(clear || !component_mode()) return;
     const auto count=mode_==MeshSelectMode::vertex?mesh.size():mode_==MeshSelectMode::edge?edges_.size():mesh.document().faces.size();
     for(u32 i=0;i<count;++i) if(visible(mode_,i)) selected_.push_back(i);
 }
-void MeshTools::select(std::span<const u32> ids,editor::SelectionMode mode) {
+void MeshToolsUI::select(std::span<const u32> ids,editor::SelectionMode mode) {
     editor::Selection<u32> selection;
     if(mode!=editor::SelectionMode::replace) selection.select(selected_);
     selection.select(ids,mode);
@@ -106,7 +106,7 @@ void MeshTools::select(std::span<const u32> ids,editor::SelectionMode mode) {
     if(next!=selected_) {selected_=next;++selection_revision_;}
 }
 
-std::vector<u32> MeshTools::box(const State& state,ui::Rect rect,Extent2D extent,const gfx::Camera& camera) const {
+std::vector<u32> MeshToolsUI::box(const State& state,ui::Rect rect,Extent2D extent,const gfx::Camera& camera) const {
     if(!component_mode()) return {};
     const auto points=project_vertices(state,extent,&camera,false);
     // Bin projected faces once. Testing every candidate against every face was
@@ -155,7 +155,7 @@ std::vector<u32> MeshTools::box(const State& state,ui::Rect rect,Extent2D extent
     }
     return selected;
 }
-std::vector<u32> MeshTools::vertices(const editor::EditableMesh& mesh,bool weld) const {
+std::vector<u32> MeshToolsUI::vertices(const editor::EditableMesh& mesh,bool weld) const {
     std::vector<u32> result; std::set<u32> seen;
     const auto add=[&](u32 id){if(id<mesh.size() && visible(MeshSelectMode::vertex,id) && seen.insert(id).second) result.push_back(id);};
     for(auto id:selected_) {
@@ -185,7 +185,7 @@ std::vector<u32> MeshTools::vertices(const editor::EditableMesh& mesh,bool weld)
     }
     return result;
 }
-std::vector<gfx::Edge> MeshTools::edges(const editor::EditableMesh& mesh) const {
+std::vector<gfx::Edge> MeshToolsUI::edges(const editor::EditableMesh& mesh) const {
     std::vector<gfx::Edge> result;
     if(mode_==MeshSelectMode::edge) { for(auto id:selected_) if(id<edges_.size()) result.push_back(edges_[id]); return result; }
     std::set<std::pair<u32,u32>> pairs;
@@ -204,7 +204,7 @@ std::vector<gfx::Edge> MeshTools::edges(const editor::EditableMesh& mesh) const 
     for(auto [a,b]:pairs) result.emplace_back(a,b);
     return result;
 }
-std::optional<u32> MeshTools::pick(const State& state,Vec2 p,Extent2D extent,const gfx::Camera& camera,ui::Rect bounds) const {
+std::optional<u32> MeshToolsUI::pick(const State& state,Vec2 p,Extent2D extent,const gfx::Camera& camera,ui::Rect bounds) const {
     if(!component_mode()) return {};
     // Offscreen corners still belong to triangles covering the viewport.
     const auto points=project_vertices(state,extent,&camera,false);
@@ -257,16 +257,16 @@ std::optional<u32> MeshTools::pick(const State& state,Vec2 p,Extent2D extent,con
     }
     return found;
 }
-void MeshTools::open(Vec2 at,Vec2 screen,std::optional<ui::Rect> viewport) {
+void MeshToolsUI::open(Vec2 at,Vec2 screen,std::optional<ui::Rect> viewport) {
     if (!component_mode()) return;
     menu_.open(at, screen, viewport);
     (void)handle_menu(MeshMenuContext{{}, !visibility_.hidden_faces.empty(), false});
 }
-void MeshTools::close() { menu_.close(); }
-std::optional<MeshAction> MeshTools::poll(std::span<const input::Event> events) {
+void MeshToolsUI::close() { menu_.close(); }
+std::optional<MeshAction> MeshToolsUI::poll(std::span<const input::Event> events) {
     return handle_menu(MeshMenuContext{events, !visibility_.hidden_faces.empty()});
 }
-std::optional<MeshAction> MeshTools::handle_menu(const MeshMenuContext& context) {
+std::optional<MeshAction> MeshToolsUI::handle_menu(const MeshMenuContext& context) {
     // This owner already knows its selection mode. Pass that concrete situation
     // straight to the leaf instead of constructing a variant just to visit it.
     if (mode_ == MeshSelectMode::vertex)
@@ -277,7 +277,7 @@ std::optional<MeshAction> MeshTools::handle_menu(const MeshMenuContext& context)
         return menu_.handle(MeshMenu::Faces{selected_.size()}, context);
     return menu_.handle(MeshMenu::Inactive{}, context);
 }
-DebugReport MeshTools::debug_report() const {
+DebugReport MeshToolsUI::debug_report() const {
     const auto mode = mode_ == MeshSelectMode::vertex ? "Vertices" : mode_ == MeshSelectMode::edge ? "Edges" :
         mode_ == MeshSelectMode::face ? "Faces" : mode_ == MeshSelectMode::surface ? "Surface" : "Whole mesh";
     return {.name = "components", .role = "mesh component selection and visibility", .situation = mode,
@@ -288,12 +288,12 @@ DebugReport MeshTools::debug_report() const {
                   {"hidden faces", std::to_string(visibility_.hidden_faces.size())}},
         .children = {menu_.debug_report()}};
 }
-bool MeshTools::visible(MeshSelectMode mode,u32 id) const {
+bool MeshToolsUI::visible(MeshSelectMode mode,u32 id) const {
     if(mode==MeshSelectMode::surface || mode==MeshSelectMode::whole) return false;
     const auto& flags=mode==MeshSelectMode::face?visible_faces_:mode==MeshSelectMode::edge?visible_edges_:visible_vertices_;
     return id<flags.size() && flags[id];
 }
-void MeshTools::update_visibility() {
+void MeshToolsUI::update_visibility() {
     visible_faces_.assign(faces_.size(),true);
     if(visibility_.hidden_faces.empty()) {
         visible_vertices_.assign(count_,true);visible_edges_.assign(edges_.size(),true);
@@ -323,7 +323,7 @@ void MeshTools::update_visibility() {
     }
     ++visibility_revision_;++selection_revision_;
 }
-std::size_t MeshTools::hide_selected() {
+std::size_t MeshToolsUI::hide_selected() {
     if(selected_.empty()) return 0;
     std::vector<bool> chosen(mode_==MeshSelectMode::vertex?count_:mode_==MeshSelectMode::edge?edges_.size():faces_.size());
     for(auto id:selected_) if(id<chosen.size()) chosen[id]=true;
@@ -347,7 +347,7 @@ std::size_t MeshTools::hide_selected() {
     }
     return count;
 }
-std::size_t MeshTools::reveal_hidden() {
+std::size_t MeshToolsUI::reveal_hidden() {
     const auto count=visibility_.hidden_faces.size();
     if(count) {visibility_.hidden_faces.clear();update_visibility();close();}
     return count;

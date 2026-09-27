@@ -1,9 +1,9 @@
-#include "workspace.hpp"
+#include "workspace_ui.hpp"
 
 namespace editor_example {
 using namespace vng;
 
-ViewportInputReply EditingWorkspace::interact_viewport(const ViewportInputContext& context) {
+ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputContext& context) {
     auto& tools=interaction();
     tools.begin_step();
     auto& blueprint=blueprint_panel();
@@ -56,7 +56,7 @@ ViewportInputReply EditingWorkspace::interact_viewport(const ViewportInputContex
         gizmos.value()==GizmoMode::free_rotate&&instance&&evaluate_visibility(state,*instance,view.time);
     const bool free_mesh=view.mode==ViewMode::mesh&&eligibility.components&&components.transform_mode()==GizmoMode::free_rotate&&
         (components.mode()==MeshSelectMode::whole||!components.selected().empty());
-    reply.navigation=dispatch(tools,ViewportInteraction::Navigate{},NavigationContext{.frame=NavigationFrame{
+    reply.navigation=dispatch(tools,ViewportToolsUI::Navigate{},NavigationContext{.frame=NavigationFrame{
         .pose=reply.previous_camera,.mode=view.mode,.smooth_zoom=view.smooth_zoom,.viewport=viewport,
         .raw=input.raw,.unhandled=input.unhandled,.seconds=input.seconds,
         .drag_speeds=context.navigation.drag_speeds,.walk_speeds=context.navigation.walk_speeds,
@@ -74,7 +74,7 @@ ViewportInputReply EditingWorkspace::interact_viewport(const ViewportInputContex
         input.tool_menu,input.raw.pointer,input.raw.events,input.unhandled,static_cast<float>(input.frame_seconds),
         eligibility.enabled&&input.raw.focused&&!walk.active()&&input.keyboard_enabled&&
         (tools.transforming()||viewport.contains(input.raw.pointer)),
-        input.tick?GizmoInput::Phase::tick:GizmoInput::Phase::event);
+        input.tick?GizmoControls::Phase::tick:GizmoControls::Phase::event);
     const auto raw=tools.gizmo_input.events(),available_input=tools.gizmo_input.unhandled();
     const auto arrow_step=tools.gizmo_input.arrow_step();
     reply.selected_gizmo_handle=tools.selected_handle();
@@ -183,16 +183,16 @@ ViewportInputReply EditingWorkspace::interact_viewport(const ViewportInputContex
             const MoveGizmoContext movement{{view.selected_object,presented.generation,state.document.revision},*snapshot,viewport,
                 allowed?available_input:std::span<const input::Event>{},allowed?raw:std::span<const input::Event>{},
                 native?native_ready:!editing_.busy(),gizmos.value()!=GizmoMode::forward,arrow_step};
-            SceneMovement::Reply action;
-            if(!visible||(!native&&!scene_position))action=dispatch(tools.translation,SceneMovement::Inactive{},movement);
-            else if(native)action=dispatch(tools.translation,SceneMovement::Native{*native},movement);
+            SceneMoveGizmo::Reply action;
+            if(!visible||(!native&&!scene_position))action=dispatch(tools.translation,SceneMoveGizmo::Inactive{},movement);
+            else if(native)action=dispatch(tools.translation,SceneMoveGizmo::Native{*native},movement);
             else {
                 const auto transform=evaluate_transform(state,*instance,view.time);
                 std::vector<editor::TranslationAxis> axes;
                 if(!tools.translation.dragging()&&std::ranges::find(gizmos.common(),GizmoMode::forward)!=gizmos.common().end())
                     if(auto forward=blueprint_manipulation(state,instance->blueprint).forward)
                         axes.push_back({"Forward / back",rotation_math::direction(transform.rotation,*forward)});
-                action=dispatch(tools.translation,SceneMovement::Instance{{instance->id,transform.position},axes},movement);
+                action=dispatch(tools.translation,SceneMoveGizmo::Instance{{instance->id,transform.position},axes},movement);
             }
             tools.observe(ViewportTool::translation,allowed);
             if(action.cancelled&&editing_.active(EditGesture::move))finish_pose(ViewportTool::translation,true,"Move");
@@ -268,7 +268,7 @@ ViewportInputReply EditingWorkspace::interact_viewport(const ViewportInputContex
     return reply;
 }
 
-void EditingWorkspace::refresh_viewport_gizmos(const ViewportInputContext& context) {
+void EditingWorkspaceUI::refresh_viewport_gizmos(const ViewportInputContext& context) {
     const auto& state=editing_.state();const auto& view=state.viewport;
     const auto& presented=context.presented;
     const auto snapshot=presented.camera.snapshot(presented.extent);
@@ -285,8 +285,8 @@ void EditingWorkspace::refresh_viewport_gizmos(const ViewportInputContext& conte
         if(std::ranges::find(gizmos.common(),GizmoMode::forward)!=gizmos.common().end())
             if(auto forward=blueprint_manipulation(state,instance->blueprint).forward)
                 axes.push_back({"Forward / back",rotation_math::direction(transform.rotation,*forward)});
-        (void)dispatch(tools.translation,SceneMovement::Instance{{instance->id,transform.position},axes},movement);
-    } else (void)dispatch(tools.translation,SceneMovement::Inactive{},movement);
+        (void)dispatch(tools.translation,SceneMoveGizmo::Instance{{instance->id,transform.position},axes},movement);
+    } else (void)dispatch(tools.translation,SceneMoveGizmo::Inactive{},movement);
     (void)execute(tools.rotation,tools.rotation.update(presented.generation,*snapshot,presented.bounds,{},{},
         !pivot.moving()&&rotation_mode(gizmos.value())&&enabled&&presented.revision>=presented.minimum_overlay_revision,
         selected_instances().items(),gizmos.value()==GizmoMode::attitude,pivot.value(),gizmos.value()==GizmoMode::free_rotate));

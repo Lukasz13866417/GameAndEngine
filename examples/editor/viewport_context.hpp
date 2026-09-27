@@ -1,7 +1,7 @@
 #pragma once
 
-#include "camera_navigation.hpp"
-#include "mesh_editing.hpp"
+#include "camera_navigation_logic.hpp"
+#include "mesh_editing_ui.hpp"
 #include "workspace_selection.hpp"
 
 namespace editor_example {

@@ -1,4 +1,4 @@
-#include "../../examples/editor/workspace.hpp"
+#include "../../examples/editor/workspace_ui.hpp"
 #include <catch2/catch_test_macros.hpp>
 
 namespace {
@@ -19,7 +19,7 @@ struct PickingFixture {
         return state;
     }
     ui::Screen screen{ui::dark_theme(font())};
-    EditingWorkspace workspace{scene(),screen.column(),screen.column(),screen.column(),
+    EditingWorkspaceUI workspace{scene(),screen.column(),screen.column(),screen.column(),
         {screen.column(),screen.column(),screen.column(),screen.column(),screen.column()},
         {screen.column(),screen.column(),screen.column(),screen.column(),screen.column()},screen.column()};
     gfx::Camera camera;
@@ -68,7 +68,7 @@ TEST_CASE("Workspace selection owns gizmo capabilities without resetting unchang
     CHECK_FALSE(f.workspace.gizmo_selector().common().empty());
     const auto snapshot=f.camera.snapshot({800,600});REQUIRE(snapshot);
     auto& movement=f.workspace.interaction().translation;
-    (void)dispatch(movement,SceneMovement::Instance{{3,{-2,0,0}}},MoveGizmoContext{
+    (void)dispatch(movement,SceneMoveGizmo::Instance{{3,{-2,0,0}}},MoveGizmoContext{
         {3,1,f.workspace.state().document.revision},*snapshot,f.bounds});
     REQUIRE(movement.visible());
     f.workspace.reconcile_selection();

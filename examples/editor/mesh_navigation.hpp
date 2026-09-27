@@ -63,7 +63,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend class EditingViewport;
+    friend class EditingViewportUI;
     std::optional<CameraBakeOptions> handle(const MeshView& situation,const Context& context) {
         layout(context.viewport,true,situation.whole,context.show_fps,context.can_bake,context.covered);
         return context.poll_input && !context.covered ? poll() : std::nullopt;

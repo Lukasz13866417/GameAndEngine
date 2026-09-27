@@ -53,7 +53,7 @@ public:
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend class EditingWorkspace;
+    friend class EditingWorkspaceUI;
     SceneListsReply handle(const Browsing&,const SceneListsContext&);
     void close();
     void catalog(const SceneListCatalog&);

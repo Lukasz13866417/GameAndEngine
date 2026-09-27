@@ -2,22 +2,22 @@
 
 #include "box_selection.hpp"
 #include "component_dispatch.hpp"
-#include "navigation.hpp"
-#include "camera_navigation.hpp"
-#include "camera_walk.hpp"
+#include "camera_pointer_logic.hpp"
+#include "camera_navigation_logic.hpp"
+#include "camera_walk_logic.hpp"
 #include "region_editor.hpp"
-#include "rotation_interaction.hpp"
+#include "instance_rotation_gizmo.hpp"
 #include "scale_tool.hpp"
 #include "world_bounds_tool.hpp"
 #include "selection.hpp"
-#include "mesh_transform.hpp"
-#include "instance_transform.hpp"
+#include "mesh_transform_gizmo.hpp"
+#include "instance_transform_gizmo.hpp"
 #include "surface_part_tool.hpp"
 #include "socket_pick_tool.hpp"
-#include "gizmo_input.hpp"
+#include "gizmo_controls.hpp"
 #include "move_gizmo.hpp"
 #include "rotation_origin_movement.hpp"
-#include "scene_movement.hpp"
+#include "scene_move_gizmo.hpp"
 
 namespace editor_example {
 enum class ViewportTool { none, navigation, boundary, bounds, instances, translation, rotation, scale, components, mesh_part, pivot, selection };
@@ -28,14 +28,14 @@ enum class ViewportTool { none, navigation, boundary, bounds, instances, transla
 // navigation may temporarily borrow pointer input without taking that ownership.
 // Passive gizmos may still be presented by updating them with empty
 // input. Input availability must not be used as their visibility predicate.
-class ViewportInteraction {
+class ViewportToolsUI {
 public:
-    ViewportInteraction(const EditingSession& editing, vng::ui::Container controls,
+    ViewportToolsUI(const EditingSession& editing, vng::ui::Container controls,
                         vng::ui::Container creation, vng::ui::Container inspector, vng::ui::Container popup)
         : regions(controls, creation, inspector, popup), instances(editing), rotation(editing), mesh(editing), editing_(editing) {}
 
     struct Navigate {};
-    [[nodiscard]] const CameraNavigation& camera_navigation() const { return navigation_; }
+    [[nodiscard]] const CameraNavigationLogic& camera_navigation() const { return navigation_; }
     [[nodiscard]] DebugReport debug_report() const {
         const auto name=[](ViewportTool tool) {
             constexpr std::array names{"none","navigation","boundary","bounds","instances","translation",
@@ -53,19 +53,19 @@ public:
             .children={navigation_.debug_report(),translation.debug_report(),pivot.debug_report()}};
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
-    GizmoInput gizmo_input;
+    GizmoControls gizmo_input;
     RegionEditor regions;
     WorldBoundsTool bounds;
-    InstanceTransformInteraction instances;
-    SceneMovement translation;
-    RotationInteraction rotation;
+    InstanceTransformGizmo instances;
+    SceneMoveGizmo translation;
+    InstanceRotationGizmo rotation;
     ScaleTool scale;
-    MeshTransform mesh;
+    MeshTransformGizmo mesh;
     SurfacePartTool mesh_part;
     SocketPickTool mesh_sockets;
     MoveGizmo<RotationOriginMovement> pivot;
     BoxSelection selection_box;
-    SelectionInput selection_input;
+    SelectionInputLogic selection_input;
     InstanceProjection instance_projection;
 
     void begin_frame() {
@@ -157,9 +157,9 @@ private:
         if(!context.frame) return {};
         const bool allowed=context.enabled && accepts(ViewportTool::navigation);
         NavigationReply reply;
-        if(!allowed) reply=navigation_.handle(CameraNavigation::Unavailable{},*context.frame);
-        else if(navigation_.walking().active()) reply=navigation_.handle(CameraNavigation::Walking{},*context.frame);
-        else reply=navigation_.handle(CameraNavigation::Orbiting{},*context.frame);
+        if(!allowed) reply=navigation_.handle(CameraNavigationLogic::Unavailable{},*context.frame);
+        else if(navigation_.walking().active()) reply=navigation_.handle(CameraNavigationLogic::Walking{},*context.frame);
+        else reply=navigation_.handle(CameraNavigationLogic::Orbiting{},*context.frame);
         observe(ViewportTool::navigation,allowed);
         return reply;
     }
@@ -187,7 +187,7 @@ public:
     }
 private:
     const EditingSession& editing_;
-    CameraNavigation navigation_;
+    CameraNavigationLogic navigation_;
     ViewportTool handled_{ViewportTool::none};
 };
 } // namespace editor_example

@@ -9,7 +9,7 @@ namespace editor_example {
 // Turntable navigation in logical viewport pixels. Gesture capture starts only
 // from unhandled input, then follows raw input across panels until release.
 // Mutates the camera only: callers own revisioning and preview synchronization.
-class NavigationTool {
+class CameraPointerLogic {
 public:
     enum class ScrollMode { zoom, move_forward };
     void scroll_mode(ScrollMode mode) { if (mode != scroll_mode_) cancel(); scroll_mode_ = mode; }

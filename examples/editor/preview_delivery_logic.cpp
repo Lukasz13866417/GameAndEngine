@@ -1,4 +1,4 @@
-#include "preview_updates.hpp"
+#include "preview_delivery_logic.hpp"
 #include "project.hpp"
 #include "animation_camera_edit.hpp"
 #include "document_patch.hpp"
@@ -12,16 +12,16 @@ bool single_vertex_batch_only(const DocumentPatch& patch) {
         !patch.duration && !patch.world_bounds && patch.regions.empty() && patch.markers.empty();
 }
 }
-void PreviewUpdates::add(vng::u64 generation) { peers_.try_emplace(generation); }
-void PreviewUpdates::remove(vng::u64 generation) { peers_.erase(generation); }
-void PreviewUpdates::reset(vng::u64 generation) { peers_[generation] = Peer{}; }
-void PreviewUpdates::reject(vng::u64 generation) {
+void PreviewDeliveryLogic::add(vng::u64 generation) { peers_.try_emplace(generation); }
+void PreviewDeliveryLogic::remove(vng::u64 generation) { peers_.erase(generation); }
+void PreviewDeliveryLogic::reset(vng::u64 generation) { peers_[generation] = Peer{}; }
+void PreviewDeliveryLogic::reject(vng::u64 generation) {
     auto& peer = peers_[generation];
     peer.sent = 0; peer.changes = {.full = true}; peer.rejected = true;
     peer.camera = peer.camera_tracks = peer.playback = peer.selection = false;
 }
-void PreviewUpdates::changed() { changed(DocumentChanges{.full = true}); }
-void PreviewUpdates::changed(const DocumentChanges& changes) {
+void PreviewDeliveryLogic::changed() { changed(DocumentChanges{.full = true}); }
+void PreviewDeliveryLogic::changed(const DocumentChanges& changes) {
     for (auto& [id, peer] : peers_) {
         (void)id;
         peer.rejected = false;
@@ -29,51 +29,51 @@ void PreviewUpdates::changed(const DocumentChanges& changes) {
         peer.changes.merge(changes);
     }
 }
-void PreviewUpdates::changed(std::span<const vng::u32> vertices, vng::u32 blueprint) {
+void PreviewDeliveryLogic::changed(std::span<const vng::u32> vertices, vng::u32 blueprint) {
     if (vertices.empty()) return;
     DocumentChanges changes;
     changes.vertices[blueprint].insert(vertices.begin(), vertices.end());
     changed(changes);
 }
-void PreviewUpdates::camera_changed() {
+void PreviewDeliveryLogic::camera_changed() {
     for (auto& [id, peer] : peers_) { (void)id; peer.rejected = false; peer.camera = true; }
 }
-void PreviewUpdates::camera_tracks_changed() {
+void PreviewDeliveryLogic::camera_tracks_changed() {
     camera_changed();
     for (auto& [id, peer] : peers_) { (void)id; peer.camera_tracks = true; }
 }
 // Legacy revision-bearing selection/playback packets remain readable for old
 // clients. The application uses the independently sequenced view lane.
-void PreviewUpdates::playback_changed() {
+void PreviewDeliveryLogic::playback_changed() {
     for (auto& [id, peer] : peers_) { (void)id; peer.rejected = false; peer.playback = true; }
 }
-void PreviewUpdates::selection_changed() {
+void PreviewDeliveryLogic::selection_changed() {
     for (auto& [id, peer] : peers_) { (void)id; peer.rejected = false; peer.selection = true; }
 }
-void PreviewUpdates::position_changed(vng::u32 object) { transform_changed(object, "position"); }
-void PreviewUpdates::rotation_changed(vng::u32 object) { transform_changed(object, "rotation"); }
-void PreviewUpdates::scale_changed(vng::u32 object) { transform_changed(object, "scale"); }
-void PreviewUpdates::transform_changed(vng::u32 object, std::string_view property) {
+void PreviewDeliveryLogic::position_changed(vng::u32 object) { transform_changed(object, "position"); }
+void PreviewDeliveryLogic::rotation_changed(vng::u32 object) { transform_changed(object, "rotation"); }
+void PreviewDeliveryLogic::scale_changed(vng::u32 object) { transform_changed(object, "scale"); }
+void PreviewDeliveryLogic::transform_changed(vng::u32 object, std::string_view property) {
     DocumentChanges changes;
     if (!object) changes.full = true;
     else changes.properties.insert({object, std::string(property)});
     changed(changes);
 }
-void PreviewUpdates::acknowledge(vng::u64 generation, vng::u64 revision) {
+void PreviewDeliveryLogic::acknowledge(vng::u64 generation, vng::u64 revision) {
     auto found = peers_.find(generation);
     if (found == peers_.end() || !found->second.sent || found->second.sent != revision) return;
     found->second.base = revision; found->second.sent = 0;
 }
-void PreviewUpdates::accepted(vng::u64 generation, vng::u64 revision) {
+void PreviewDeliveryLogic::accepted(vng::u64 generation, vng::u64 revision) {
     peers_[generation] = Peer{.base = revision, .changes = {}};
 }
-bool PreviewUpdates::ready(vng::u64 generation, vng::u64 revision) const {
+bool PreviewDeliveryLogic::ready(vng::u64 generation, vng::u64 revision) const {
     const auto found = peers_.find(generation);
     if (found == peers_.end()) return false;
     const auto& p = found->second;
     return p.base == revision && !p.sent && !p.known && p.changes.empty() && !p.camera && !p.playback && !p.selection;
 }
-vng::content::Result<std::optional<std::string>> PreviewUpdates::next(vng::u64 generation, const State& state) {
+vng::content::Result<std::optional<std::string>> PreviewDeliveryLogic::next(vng::u64 generation, const State& state) {
     auto found = peers_.find(generation);
     if (found == peers_.end()) return std::optional<std::string>{};
     auto& peer = found->second;

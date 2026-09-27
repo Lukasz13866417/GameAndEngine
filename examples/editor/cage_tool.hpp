@@ -67,7 +67,7 @@ private:
     vng::input::Modifiers picked_modifiers_{};
     ComponentTransform transform_;
     BoxSelection box_;
-    SelectionInput selection_input_;
+    SelectionInputLogic selection_input_;
     void validate_selection();
 };
 } // namespace editor_example

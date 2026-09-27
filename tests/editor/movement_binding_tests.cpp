@@ -2,7 +2,7 @@
 #include "../../examples/editor/surface_altitude_movement.hpp"
 #include "../../examples/editor/rotation_origin_movement.hpp"
 #include "../../examples/editor/editing_session.hpp"
-#include "../../examples/editor/scene_movement.hpp"
+#include "../../examples/editor/scene_move_gizmo.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <type_traits>
@@ -190,11 +190,11 @@ TEST_CASE("Instance movement proposals preserve selection offsets transaction an
 
 TEST_CASE("Scene movement uses a fixed baseline across local document revisions without worker schemas", "[editor][ui][movement-binding]") {
     EditingSession editing{scene()};editing.select_keyframe(0);
-    SceneMovement gizmo;const auto view=camera();
+    SceneMoveGizmo gizmo;const auto view=camera();
     const auto pump=[&](std::initializer_list<input::Event> events) {
         const std::span<const input::Event> input{events.begin(),events.size()};
         const auto position=instance_transform(editing.state(),1)->position;
-        return dispatch(gizmo,SceneMovement::Instance{{1,position}},
+        return dispatch(gizmo,SceneMoveGizmo::Instance{{1,position}},
             MoveGizmoContext{{1,1,editing.state().document.revision},view,{0,0,800,600},input,input,!editing.busy()});
     };
     pump({});const auto start=gizmo.handle("X");REQUIRE(start);
@@ -211,19 +211,19 @@ TEST_CASE("Scene movement uses a fixed baseline across local document revisions 
     CHECK(done.finished);CHECK_FALSE(done.cancelled);REQUIRE(editing.commit());
     REQUIRE(editing.undo());near(instance_transform(editing.state(),1)->position,{});
     pump({});REQUIRE(pump({{.kind=input::EventKind::pointer_down,.position=*start,.button=0}}).began);
-    auto replaced=dispatch(gizmo,SceneMovement::Instance{{3,{5,0,0}}},
+    auto replaced=dispatch(gizmo,SceneMoveGizmo::Instance{{3,{5,0,0}}},
         MoveGizmoContext{{3,1,editing.state().document.revision},view,{0,0,800,600}});
     CHECK(replaced.cancelled);CHECK_FALSE(replaced.edit);CHECK_FALSE(gizmo.dragging());
 }
 
 TEST_CASE("Native custom gizmos retain their own edit protocol beside typed gizmos", "[editor][ui][movement-binding]") {
-    SceneMovement gizmo;const auto view=camera();
+    SceneMoveGizmo gizmo;const auto view=camera();
     editor::Inspector inspector{{7,2,4}};
     inspector.translation_gizmo("custom_endpoint",Vec3{},[](Vec3){});
     const auto schema=inspector.schema();
     const auto pump=[&](std::initializer_list<input::Event> events) {
         const std::span<const input::Event> input{events.begin(),events.size()};
-        return dispatch(gizmo,SceneMovement::Native{schema},MoveGizmoContext{schema.stamp,view,{0,0,800,600},input,input});
+        return dispatch(gizmo,SceneMoveGizmo::Native{schema},MoveGizmoContext{schema.stamp,view,{0,0,800,600},input,input});
     };
     pump({});const auto start=gizmo.handle("X");REQUIRE(start);
     auto result=pump({{.kind=input::EventKind::pointer_down,.position=*start,.button=0},
@@ -234,8 +234,8 @@ TEST_CASE("Native custom gizmos retain their own edit protocol beside typed gizm
 
 TEST_CASE("The scene host owns deactivation and exposes cancellation once for rollback", "[editor][ui][movement-binding]") {
     EditingSession editing{scene()};editing.select_keyframe(0);
-    SceneMovement host;const auto view=camera();
-    const SceneMovement::Instance target{{1,{}}};
+    SceneMoveGizmo host;const auto view=camera();
+    const SceneMoveGizmo::Instance target{{1,{}}};
     const auto pump=[&](std::initializer_list<input::Event> events) {
         const std::span<const input::Event> input{events.begin(),events.size()};
         return dispatch(host,target,MoveGizmoContext{{1,1,editing.state().document.revision},
@@ -247,11 +247,11 @@ TEST_CASE("The scene host owns deactivation and exposes cancellation once for ro
     const auto moved=pump({{.kind=input::EventKind::pointer_move,.position={start->x+60,start->y}}});
     REQUIRE(moved.edit);REQUIRE(editing.apply(*moved.edit));
     const MoveGizmoContext context{{1,1,editing.state().document.revision},view,{0,0,800,600}};
-    const auto cancelled=dispatch(host,SceneMovement::Inactive{},context);
+    const auto cancelled=dispatch(host,SceneMoveGizmo::Inactive{},context);
     REQUIRE(cancelled.cancelled);CHECK(cancelled.finished);CHECK_FALSE(cancelled.edit);
     REQUIRE(editing.cancel());near(instance_transform(editing.state(),1)->position,{});
     CHECK_FALSE(editing.can_undo());CHECK_FALSE(host.visible());CHECK_FALSE(host.dragging());
-    const auto idle=dispatch(host,SceneMovement::Inactive{},context);
+    const auto idle=dispatch(host,SceneMoveGizmo::Inactive{},context);
     CHECK_FALSE(idle.cancelled);CHECK_FALSE(idle.finished);CHECK_FALSE(host.handledPointer());
     CHECK_FALSE(pump({}).began);CHECK(host.visible());CHECK_FALSE(host.dragging());
 }

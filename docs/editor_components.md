@@ -1,6 +1,6 @@
 # Editor components: downward control and parent-polled results
 
-Start with `examples/editor/workspace.hpp`. A **situation** describes one of a
+Start with `examples/editor/workspace_ui.hpp`. A **situation** describes one of a
 component's fixed contexts, not an input event. The second argument carries
 named data and input for that call. There is no global `TreeInfo`, component
 registry, service locator, Visitor class or required base class.
@@ -17,37 +17,61 @@ or collected by `take_edit()` is a response to a parent call, not an upward
 callback. The parent applies domain changes and supplies acceptance/failure back
 down. A child does not reach through a sibling or an ancestor to change it.
 
+## Naming
+
+Names distinguish control-only behavior from components responsible for UI:
+
+| Role | Naming | Examples |
+| --- | --- | --- |
+| Control/input/delivery behavior without UI ownership | `Logic` suffix | `CameraNavigationLogic`, `CameraPointerLogic`, `CameraWalkLogic`, `SelectionInputLogic`, `PreviewLogic`, `PreviewDeliveryLogic` |
+| An owning UI branch whose role would otherwise be ambiguous | `UI` suffix | `EditingWorkspaceUI`, `EditingViewportUI`, `MeshEditingUI`, `MeshToolsUI`, `TimelineEditingUI`, `ViewportToolsUI` |
+| Visible interaction or controls | A specific UI noun | `SceneMoveGizmo`, `InstanceTransformGizmo`, `InstanceRotationGizmo`, `MeshTransformGizmo`, `MeshOperationControls`, `GizmoControls` |
+
+UI ownership includes child panels, menus, tool-option declarations and gizmo
+graphics, not just directly stored buttons. A `UI` component can coordinate its
+children and own local behavior; it is not restricted to drawing. Existing clear
+UI names such as `TimelinePanel`, `MeshMenu`, `RegionEditor` and `SceneLists`
+stay unchanged. Domain/data/resource names such as `EditingSession`,
+`WorkspaceSelection`, `PreviewMailbox` and `CameraPose` retain their concrete
+nouns: having methods does not by itself make something a control component.
+
+Headers and implementation filenames follow the component names. These are
+ordinary C++ names, not new marker interfaces or runtime layers. Diagnostic
+paths and serialized scene/protocol identifiers remain stable.
+
 ## Ownership
 
 ```text
 Application run() [host controller]
-├── EditingWorkspace [controller]
+├── EditingWorkspaceUI [UI owner + coordination]
 │   ├── EditingSession [domain]    document, drafts, transactions, history, files
 │   ├── WorkspaceSelection [state] shared scene-instance selection authority
-│   ├── EditingViewport
-│   │   │                         [controller: viewport authoring branch]
-│   │   ├── MeshEditing [controller]
-│   │   │   ├── MeshTools [controller + local component-selection/cache state]
+│   ├── EditingViewportUI
+│   │   │                         [UI owner: viewport authoring branch]
+│   │   ├── MeshEditingUI [UI owner + local edit coordination]
+│   │   │   ├── MeshToolsUI [UI + local component-selection/cache state]
 │   │   │   │   └── MeshMenu [UI]  vertices / edges / faces / inactive
-│   │   │   └── MeshOperationTool [UI + local operation-options state]
+│   │   │   └── MeshOperationControls [UI + local operation-options state]
 │   │   ├── MeshNavigationControls [UI] centered-camera / bake controls
 │   │   ├── ToolPanel [UI]         retained active-tool options
 │   │   ├── GizmoSelector / RotationPivotControls [UI + local tool choices]
 │   │   ├── BlueprintMeshPanel [controller + UI + owned CPU job]
-│   │   └── ViewportInteraction [controller]
-│   │       ├── CameraNavigation [controller: NavigationTool + CameraWalk]
-│   │       ├── SceneMovement [controller + gizmo graphics]
-│   │       ├── InstanceTransformInteraction / RotationInteraction / MeshTransform
+│   │   └── ViewportToolsUI [UI tools + input arbitration]
+│   │       ├── CameraNavigationLogic [logic: CameraPointerLogic + CameraWalkLogic]
+│   │       ├── GizmoControls [UI + sensitivity / held-key state]
+│   │       ├── SelectionInputLogic [logic: deferred clicks]
+│   │       ├── SceneMoveGizmo [interaction + gizmo graphics]
+│   │       ├── InstanceTransformGizmo / InstanceRotationGizmo / MeshTransformGizmo
 │   │       │                     [controller + gizmo graphics]
 │   │       ├── RegionEditor [controller + UI + boundary tools]
 │   │       ├── SurfacePartTool [controller + gizmo graphics]
 │   │       └── bounds / pivot / box selection / picking helpers
 │   ├── SceneLists [UI + catalog presentation]
-│   └── TimelineEditing [controller + local inspector/focus state]
+│   └── TimelineEditingUI [UI owner + local inspector/focus state]
 │       └── TimelinePanel [UI]     strip, key list, field drafts, range menu
-├── PreviewController [controller]
+├── PreviewLogic [logic]
 │   ├── PreviewSession [platform] build and worker processes / transport
-│   ├── PreviewUpdates [delivery state] ordered revisions, narrow coalescing
+│   ├── PreviewDeliveryLogic [logic] ordered revisions, narrow coalescing
 │   ├── PreviewMailbox [presentation state] completed-frame acceptance
 │   └── candidate workers / schemas / submitted views / extents [local state]
 └── windows, Screens, toolbars/dialogs and DisplaySurface [UI / platform]
@@ -59,7 +83,7 @@ local interaction; domain means authoring rules/data; platform means windows,
 workers or rendering realization. A gizmo naturally combines behavior and
 graphics and need not be split into artificial controller/view classes.
 
-`EditingWorkspace` constructs its session before the UI children. `initialize`
+`EditingWorkspaceUI` constructs its session before the UI children. `initialize`
 attaches the panel hosts, `attach_viewport_tools` constructs the viewport's
 interaction and blueprint tools, and `attach_manipulation` supplies the gizmo
 selector/pivot hosts. Child tools receive `const EditingSession&`
@@ -94,17 +118,17 @@ For `InspectMesh`, the relevant calls descend through these owners (excerpts;
 the actual methods also check which context sections were supplied):
 
 ```cpp
-// EditingWorkspace → EditingViewport
+// EditingWorkspaceUI → EditingViewportUI
 viewport_->handle(s, ViewportEditingContext{
     c.mesh, c.accept_input, c.presentation, c.poll_navigation, c.tools, transitioned
 });
 
-// EditingViewport → MeshEditing
+// EditingViewportUI → MeshEditingUI
 mesh_.handle(s, MeshEditingContext{
     c.mesh.value_or(MeshInput{}), c.accept_input
 });
 
-// MeshEditing uses its private MeshTools. That owner knows the selection mode.
+// MeshEditingUI uses its private MeshToolsUI. That owner knows the selection mode.
 // Both opening and polling the menu use this one local decision:
 if (mode_ == MeshSelectMode::vertex)
     return menu_.handle(MeshMenu::Vertices{selected_.size()}, context);
@@ -126,7 +150,7 @@ public:
     struct Inactive {};
     // Construction, open/close, and read-only observations omitted here.
 private:
-    friend class MeshTools;
+    friend class MeshToolsUI;
     std::optional<MeshAction> handle(const Vertices&, const MeshMenuContext&);
     std::optional<MeshAction> handle(const Edges&, const MeshMenuContext&);
     std::optional<MeshAction> handle(const Faces&, const MeshMenuContext&);
@@ -134,11 +158,11 @@ private:
 };
 ```
 
-Only `MeshTools` can call `menu.handle(...)`. It does not construct a menu variant
+Only `MeshToolsUI` can call `menu.handle(...)`. It does not construct a menu variant
 just to unpack it again. Other internal children likewise friend their immediate
-owner: EditingViewport friends EditingWorkspace; MeshEditing, camera controls
-and tool options friend EditingViewport; lists and timeline friend
-EditingWorkspace; CameraNavigation friends ViewportInteraction. They neither
+owner: EditingViewportUI friends EditingWorkspaceUI; MeshEditingUI, camera controls
+and tool options friend EditingViewportUI; lists and timeline friend
+EditingWorkspaceUI; CameraNavigationLogic friends ViewportToolsUI. They neither
 include their parents nor retain parent pointers. Their private handlers cannot
 be reached via the generic dispatcher either.
 
@@ -157,11 +181,11 @@ descendant to do so. `component_dispatch.hpp` contains the generic `std::visit`;
 missing handlers are compile-time errors and reference results stay references.
 No Visitor, registration mechanism or new wrapper is needed for direct calls.
 
-The menu returns a **local action**, not a success claim. MeshEditing turns it
+The menu returns a **local action**, not a success claim. MeshEditingUI turns it
 into an owned `MeshEditProposal` (blueprint, operation, vertex and edge IDs).
-EditingViewport returns that result to its caller; `EditingWorkspace::execute`
+EditingViewportUI returns that result to its caller; `EditingWorkspaceUI::execute`
 invokes `editing_.mesh_operation(...)`, then calls the viewport's
-`accept_operation(request, result)`. MeshEditing updates its selection and
+`accept_operation(request, result)`. MeshEditingUI updates its selection and
 operation options only in response to that accepted result.
 
 Thus the full scope belongs to the workspace, but mesh hit-testing, menu options,
@@ -181,7 +205,7 @@ const auto result = workspace.apply_pending(panel);
 // Inspect result before reporting an authored change.
 ```
 
-Inside `EditingWorkspace::apply_pending(BlueprintMeshPanel&)`, the essential
+Inside `EditingWorkspaceUI::apply_pending(BlueprintMeshPanel&)`, the essential
 calls are:
 
 ```cpp
@@ -238,18 +262,18 @@ document snapshots.
   not reconstruct the UI tree.
 - Input order is preserved: `2`, `A`, `H` in one batch switches to edges, selects
   them, then hides adjacent faces.
-- TimelineEditing proposes keyframe actions. The workspace applies them,
+- TimelineEditingUI proposes keyframe actions. The workspace applies them,
   acknowledges the result to the timeline child and updates authoring permission
   without waiting for preview completion.
-- If its inspector tab is hidden, TimelineEditing retains the latest object
+- If its inspector tab is hidden, TimelineEditingUI retains the latest object
   focus request. The parent supplies visibility when showing the tab; only then
   does the child reveal/focus the row. It never stores obsolete widget geometry.
 - Viewport presentation does not refresh list catalogs or timeline rows.
   Catalog synchronization and selection-only changes are explicit separate work.
-- CameraNavigation returns a proposed pose. It does not author a simulation
+- CameraNavigationLogic returns a proposed pose. It does not author a simulation
   camera or increment document revisions. Blocking input releases held keys;
   popout focus transfer preserves armed walk mode but not held keys.
-- PreviewController keeps reliable document/visibility packets separate from
+- PreviewLogic keeps reliable document/visibility packets separate from
   replaceable viewport requests. It never waits for a frame or ACK. Failed
   sends preserve/reset the appropriate delivery state for retry.
 
@@ -272,18 +296,18 @@ identical occurrences. Native window input is identified by its owner first.
 `ViewportInputSteps` (`viewport_input.hpp`) gives the viewport one received
 occurrence at a time, with the pointer/key/focus snapshot for that step. Each
 occurrence finishes its navigation → tools → picking descent before the next
-starts. `ViewportInteraction::begin_step()` resets routing consumption without
+starts. `ViewportToolsUI::begin_step()` resets routing consumption without
 discarding capture. The final empty tick advances held controls exactly once;
-`GizmoInput` event/tick phases keep arrow motion independent of batch size.
+`GizmoControls` event/tick phases keep arrow motion independent of batch size.
 
-For each step, the host calls `EditingWorkspace::interact_viewport` with a
+For each step, the host calls `EditingWorkspaceUI::interact_viewport` with a
 `ViewportInputContext`: borrowed input, presented camera/image metadata,
-navigation preferences and eligibility facts. `workspace_viewport.cpp` owns
+navigation preferences and eligibility facts. `workspace_ui_viewport.cpp` owns
 navigation/tool priority, proposals, transactions and immediate gizmo state.
 The returned `ViewportInputReply` tells the host what to present or send through
 the native preview path; it contains no callable mutation capability.
 
-`EditingWorkspace::pick_viewport(ViewportSelectionContext)` similarly owns
+`EditingWorkspaceUI::pick_viewport(ViewportSelectionContext)` similarly owns
 scene/mesh/part picking, rectangle selection, socket/placement interactions and
 mesh-context-menu opening. Region menus are handled by `interact_viewport`.
 `ViewportPickCapture` is stored under the viewport,
@@ -305,7 +329,7 @@ the rest of a frame. Mesh shortcut routing executes each proposed operation
 before delivering the next shortcut, so subdivision followed by select-all sees
 the new topology.
 
-Worker observations preserve order too. `PreviewController::poll()` collects a
+Worker observations preserve order too. `PreviewLogic::poll()` collects a
 batch without applying its entire lifecycle at once. Each `take_event()` applies
 one event's delivery/candidate/schema consequences and returns an `Observation`
 containing the event and whether its schema was successfully updated. The host
@@ -381,15 +405,15 @@ There are no `Active`/`Inactive` situation types or dispatcher friends on
 input batch. It returns a cancellation only for an unfinished gesture; repeated
 cleanup is safe. The parent owns activation, not a flag duplicated in each gizmo.
 
-Inside the editor, `SceneMovement` still has meaningful instance/native/hidden
+Inside the editor, `SceneMoveGizmo` still has meaningful instance/native/hidden
 contexts. It routes these internally, then calls its gizmo's public methods.
 Blueprint authors do not implement this host's situation protocol. The scene
 path is:
 
 ```cpp
-// Workspace → dispatch(SceneMovement) → gizmo.update(target, context).
+// Workspace → dispatch(SceneMoveGizmo) → gizmo.update(target, context).
 auto reply = dispatch(movement,
-    SceneMovement::Instance{{instance_id, evaluated_position}, axes},
+    SceneMoveGizmo::Instance{{instance_id, evaluated_position}, axes},
     MoveGizmoContext{stamp, camera, viewport, input, raw, can_begin});
 
 // The existing transaction owner performs these at the gesture boundaries.
@@ -403,7 +427,7 @@ else if (reply.finished) editing.commit();
 `EditingSession::apply(InstanceMovement::Edit)` rejects mismatched active objects.
 The session retains validation, keyframe permissions, one-gesture undo and narrow
 preview changes. A proposal alone does not change the document or publish a draft.
-`SceneMovement` captures only the evaluated position, stamp and axes during a drag;
+`SceneMoveGizmo` captures only the evaluated position, stamp and axes during a drag;
 its own preview revisions cannot change that baseline. Ordinary instance movement
 does not wait for worker schemas/ACKs, although viewport validity and edit
 permissions still apply.

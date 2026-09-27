@@ -8,7 +8,7 @@ namespace editor_example {
 // Owns the scene's movement presentation. Known instance transforms use a typed
 // binding; genuinely runtime-defined inspector tools retain their native event
 // protocol. The two paths do not interpret each other's edit payloads.
-class SceneMovement final {
+class SceneMoveGizmo final {
 public:
     struct Instance {
         InstanceMovement::Target target;

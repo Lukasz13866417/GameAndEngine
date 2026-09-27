@@ -22,7 +22,7 @@ public:
     vng::input::Frame take_input();
     // False when a minimized/resizing window skipped presentation.
     std::expected<bool, std::string> present(const vng::ui::DrawList&, const vng::ui::DrawList& foreground, vng::window::VSync,
-        const State&, const MeshTools&, vng::ui::Rect, vng::Extent2D camera_extent,
+        const State&, const MeshToolsUI&, vng::ui::Rect, vng::Extent2D camera_extent,
         const vng::gfx::Camera&, bool show_mesh);
     vng::resources::Result<vng::gfx::ImageData> capture();
 private:

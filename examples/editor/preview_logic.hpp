@@ -1,6 +1,6 @@
 #pragma once
 #include "component_dispatch.hpp"
-#include "preview_updates.hpp"
+#include "preview_delivery_logic.hpp"
 #include "viewport_session.hpp"
 #include "mesh_visibility.hpp"
 #include "preview_viewport.hpp"
@@ -28,7 +28,7 @@ struct DeliveryReply {
 // One behavior owner for process lifetime and delivery. Transport is its child,
 // not a sibling reached through a mutable reference. The editor host supplies
 // immutable document/view observations and polls worker outcomes.
-class PreviewController final {
+class PreviewLogic final {
 public:
     struct LiveLink {};
     struct StartingIndependentPlay {};
@@ -36,11 +36,11 @@ public:
         vng::editor::preview::PreviewEvent event;
         bool schema_updated{};
     };
-    [[nodiscard]] static vng::editor::preview::Result<PreviewController> create(
+    [[nodiscard]] static vng::editor::preview::Result<PreviewLogic> create(
         vng::editor::preview::PreviewConfig config) {
         auto transport = vng::editor::preview::PreviewSession::create(std::move(config));
         if (!transport) return std::unexpected(transport.error());
-        return PreviewController{std::move(*transport)};
+        return PreviewLogic{std::move(*transport)};
     }
     auto request_reload() { return transport_.request_reload(); }
     void poll() {
@@ -141,7 +141,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    explicit PreviewController(vng::editor::preview::PreviewSession transport) : transport_(std::move(transport)) {}
+    explicit PreviewLogic(vng::editor::preview::PreviewSession transport) : transport_(std::move(transport)) {}
     friend struct Dispatcher;
     DeliveryReply handle(const LiveLink&,const DeliveryContext& c) {
         situation_="LiveLink";
@@ -193,7 +193,7 @@ private:
     std::set<vng::u64> candidates_;
     std::map<vng::u64,vng::editor::Schema> schemas_;
     PreviewMailbox frames_;
-    PreviewUpdates updates_;
+    PreviewDeliveryLogic updates_;
     std::map<vng::u64,vng::u64> views_,masks_;
     std::map<vng::u64,vng::Extent2D> extents_;
     std::string_view situation_{"Not dispatched"};

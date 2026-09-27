@@ -35,7 +35,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend class EditingViewport;
+    friend class EditingViewportUI;
     void handle(const Current&,const Context& c) {
         if(c.close) close();
         if(c.validate) validate();

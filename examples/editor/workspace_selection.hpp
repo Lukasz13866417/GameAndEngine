@@ -23,7 +23,7 @@ public:
                 {"catalog instances",std::to_string(order_.size())}}};
     }
 private:
-    friend class EditingWorkspace;
+    friend class EditingWorkspaceUI;
     void observe(const State& state) {
         if(catalog_revision_==state.document.revision) return;
         catalog_revision_=state.document.revision;

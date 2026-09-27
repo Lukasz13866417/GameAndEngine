@@ -1,6 +1,6 @@
 #include "../../examples/editor/app.hpp"
 #include "../../examples/editor/automation.hpp"
-#include "../../examples/editor/mesh_tools.hpp"
+#include "../../examples/editor/mesh_tools_ui.hpp"
 #include "../../examples/editor/rotation_tool.hpp"
 #include "../../examples/editor/scale_tool.hpp"
 #include "../../examples/editor/translation_tool.hpp"

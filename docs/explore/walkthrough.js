@@ -211,9 +211,9 @@ pending.merge(changes);`,
       ]),
       group("walk-preview", "5. Deliver, render and present the result", "The worker owns GPU realization; the UI accepts matching completed images.",
         "Two lanes cross the process boundary: ordered authored updates and replaceable absolute viewing requests. No C++ object pointer or GL handle is the scene protocol.", [
-        type("updates", "editor_example::PreviewUpdates", "Coalesce authored changes while waiting for the worker's acknowledgment.",
+        type("updates", "editor_example::PreviewDeliveryLogic", "Coalesce authored changes while waiting for the worker's acknowledgment.",
           "Each worker generation has a single pending authored revision slot. changed(changes) records affected targets; next(generation, state) creates the next message when allowed; acknowledge releases the slot. Repeated mouse samples become latest absolute values rather than a queue of full snapshots. Failure/reconnect can reset to a full snapshot safely.",
-          "examples/editor/preview_updates.hpp", `updates.changed(notice.changes);
+          "examples/editor/preview_delivery_logic.hpp", `updates.changed(notice.changes);
 auto message = updates.next(generation, session.state());
 if (!message) return fail(message.error());
 if (*message) {

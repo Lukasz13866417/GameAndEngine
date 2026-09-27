@@ -1,5 +1,5 @@
-#include "../../examples/editor/workspace.hpp"
-#include "../../examples/editor/viewport_interaction.hpp"
+#include "../../examples/editor/workspace_ui.hpp"
+#include "../../examples/editor/viewport_tools_ui.hpp"
 #include <vng/ui/inspection.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,10 +17,10 @@ struct Fixture {
         return result;
     }
     ui::Screen screen{ui::dark_theme(font())};
-    EditingWorkspace workspace{state(),screen.column().width(300).height(400),screen.column(),screen.column(),
+    EditingWorkspaceUI workspace{state(),screen.column().width(300).height(400),screen.column(),screen.column(),
         {screen.column(),screen.column(),screen.column(),screen.column(),screen.column()},
         {screen.column().visible(false),screen.column().visible(false),screen.column().visible(false),screen.column().visible(false),screen.column().visible(false)},screen.column().visible(false)};
-    EditingWorkspace& session{workspace}; // Parent actions, never a mutable domain escape.
+    EditingWorkspaceUI& session{workspace}; // Parent actions, never a mutable domain escape.
     input::Frame frame{.logical_size={1000,800},.framebuffer={1000,800}};
     MeshEditingReply send(MeshInput input={}, bool allowed=true) {
         return dispatch(workspace,workspace_situation(session.state().viewport),WorkspaceContext{input,allowed}).mesh;
@@ -40,37 +40,37 @@ struct Fixture {
 template<class T> concept PublicWorkspaceHandler = requires(T& workspace, InspectMesh mesh, WorkspaceContext context) {
     workspace.handle(mesh,context);
 };
-static_assert(!PublicWorkspaceHandler<EditingWorkspace>);
-static_assert(!std::is_copy_constructible_v<MeshEditing>);
-static_assert(!std::is_copy_constructible_v<EditingWorkspace>);
-static_assert(!std::is_copy_assignable_v<EditingWorkspace>);
-static_assert(!std::is_move_constructible_v<EditingWorkspace>);
-static_assert(!std::is_move_assignable_v<EditingWorkspace>);
-static_assert(std::same_as<decltype(std::declval<EditingWorkspace&>().session()),const EditingSession&>);
-static_assert(std::same_as<decltype(std::declval<EditingWorkspace&>().selected_instances()),const editor::Selection<u32>&>);
+static_assert(!PublicWorkspaceHandler<EditingWorkspaceUI>);
+static_assert(!std::is_copy_constructible_v<MeshEditingUI>);
+static_assert(!std::is_copy_constructible_v<EditingWorkspaceUI>);
+static_assert(!std::is_copy_assignable_v<EditingWorkspaceUI>);
+static_assert(!std::is_move_constructible_v<EditingWorkspaceUI>);
+static_assert(!std::is_move_assignable_v<EditingWorkspaceUI>);
+static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().session()),const EditingSession&>);
+static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().selected_instances()),const editor::Selection<u32>&>);
 
 // Const construction is the actual mutation boundary: UI/controller children
 // must compile without receiving a mutable authoring authority at all.
-static_assert(std::is_constructible_v<MeshEditing,const EditingSession&,ui::Container,ui::Container>);
-static_assert(std::is_constructible_v<EditingViewport,const EditingSession&,ui::Container,ui::Container,ui::Container,ui::Container>);
-static_assert(std::is_constructible_v<TimelineEditing,const EditingSession&,TimelineHosts>);
-static_assert(std::is_constructible_v<MeshOperationTool,const EditingSession&>);
+static_assert(std::is_constructible_v<MeshEditingUI,const EditingSession&,ui::Container,ui::Container>);
+static_assert(std::is_constructible_v<EditingViewportUI,const EditingSession&,ui::Container,ui::Container,ui::Container,ui::Container>);
+static_assert(std::is_constructible_v<TimelineEditingUI,const EditingSession&,TimelineHosts>);
+static_assert(std::is_constructible_v<MeshOperationControls,const EditingSession&>);
 static_assert(std::is_constructible_v<BlueprintMeshPanel,ui::Container,const EditingSession&>);
-static_assert(std::is_constructible_v<ViewportInteraction,const EditingSession&,ui::Container,ui::Container,ui::Container,ui::Container>);
-static_assert(std::is_constructible_v<InstanceTransformInteraction,const EditingSession&>);
-static_assert(std::is_constructible_v<MeshTransform,const EditingSession&>);
-static_assert(std::is_constructible_v<RotationInteraction,const EditingSession&>);
+static_assert(std::is_constructible_v<ViewportToolsUI,const EditingSession&,ui::Container,ui::Container,ui::Container,ui::Container>);
+static_assert(std::is_constructible_v<InstanceTransformGizmo,const EditingSession&>);
+static_assert(std::is_constructible_v<MeshTransformGizmo,const EditingSession&>);
+static_assert(std::is_constructible_v<InstanceRotationGizmo,const EditingSession&>);
 template<class T> concept MutableSessionEscape = requires(T& owner) { owner.session().undo(); };
-static_assert(!MutableSessionEscape<EditingWorkspace>);
+static_assert(!MutableSessionEscape<EditingWorkspaceUI>);
 template<class T> concept MutableDocumentEscape = requires(T& owner) { owner.state().document.revision=2; };
-static_assert(!MutableDocumentEscape<EditingWorkspace>);
+static_assert(!MutableDocumentEscape<EditingWorkspaceUI>);
 template<class T> concept MutableSelectionEscape = requires(T& owner) { owner.selected_instances().clear(); };
-static_assert(!MutableSelectionEscape<EditingWorkspace>);
+static_assert(!MutableSelectionEscape<EditingWorkspaceUI>);
 template<class T> concept ExternalOperationAcknowledgement = requires(T& child,MeshEditProposal proposal,content::Result<bool> result) {
     child.accept_operation(proposal,result);
 };
-static_assert(!ExternalOperationAcknowledgement<MeshEditing>);
-static_assert(!ExternalOperationAcknowledgement<EditingViewport>);
+static_assert(!ExternalOperationAcknowledgement<MeshEditingUI>);
+static_assert(!ExternalOperationAcknowledgement<EditingViewportUI>);
 
 // Only the actual owning parent may call these child handlers. In particular,
 // dispatch must not remain a back door around the narrower ownership boundary.
@@ -81,8 +81,8 @@ constexpr bool private_to_owner =
     } && !requires(Component& child, const Situation& situation, const Context& context) {
         dispatch(child, situation, context);
     };
-static_assert(private_to_owner<EditingViewport, InspectMesh, ViewportEditingContext>);
-static_assert(private_to_owner<MeshEditing, InspectMesh, MeshEditingContext>);
+static_assert(private_to_owner<EditingViewportUI, InspectMesh, ViewportEditingContext>);
+static_assert(private_to_owner<MeshEditingUI, InspectMesh, MeshEditingContext>);
 static_assert(private_to_owner<MeshMenu, MeshMenu::Vertices, MeshMenuContext>);
 static_assert(private_to_owner<MeshMenu, MeshMenu::Edges, MeshMenuContext>);
 static_assert(private_to_owner<MeshMenu, MeshMenu::Faces, MeshMenuContext>);
@@ -90,15 +90,15 @@ static_assert(private_to_owner<MeshMenu, MeshMenu::Inactive, MeshMenuContext>);
 static_assert(private_to_owner<MeshNavigationControls, MeshNavigationControls::MeshView, MeshNavigationControls::Context>);
 static_assert(private_to_owner<ToolPanel, ToolPanel::Show, ToolPanel::Context>);
 static_assert(private_to_owner<SceneLists, SceneLists::Browsing, SceneListsContext>);
-static_assert(private_to_owner<TimelineEditing, TimelineEditing::Available, TimelineContext>);
-static_assert(private_to_owner<TimelineEditing, TimelineEditing::Unavailable, TimelineContext>);
-static_assert(private_to_owner<CameraNavigation, CameraNavigation::Orbiting, NavigationFrame>);
-static_assert(private_to_owner<CameraNavigation, CameraNavigation::Walking, NavigationFrame>);
-static_assert(private_to_owner<CameraNavigation, CameraNavigation::Unavailable, NavigationFrame>);
+static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Available, TimelineContext>);
+static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Unavailable, TimelineContext>);
+static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Orbiting, NavigationFrame>);
+static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Walking, NavigationFrame>);
+static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Unavailable, NavigationFrame>);
 
-EditingWorkspace timeline_workspace(State state, ui::Screen& screen, TimelineHosts hosts) {
+EditingWorkspaceUI timeline_workspace(State state, ui::Screen& screen, TimelineHosts hosts) {
     const auto hidden=[&] { return screen.column().visible(false); };
-    return EditingWorkspace{std::move(state),hidden(),hidden(),hidden(),
+    return EditingWorkspaceUI{std::move(state),hidden(),hidden(),hidden(),
         {hidden(),hidden(),hidden(),hidden(),hidden()},hosts,hidden()};
 }
 }
@@ -132,7 +132,7 @@ TEST_CASE("Mode and selection shortcuts take effect within the input batch", "[e
     CHECK(f.workspace.mesh_components().visibility().hidden_faces.empty());
 }
 TEST_CASE("Workspace owns its model before UI attachment and rejects reattachment", "[editor][workspace]") {
-    EditingWorkspace workspace{Fixture::state()};
+    EditingWorkspaceUI workspace{Fixture::state()};
     CHECK(workspace.state().document.revision==1);
     CHECK_FALSE(workspace.can_undo());
     CHECK(workspace.debug_string().find("authoring authority and child coordination")!=std::string::npos);
@@ -156,7 +156,7 @@ TEST_CASE("Workspace selection validates IDs and owns range order without author
     }
     state.viewport.selected_object=3;
     state.viewport.selected_vertex=2;
-    EditingWorkspace workspace{std::move(state)};
+    EditingWorkspaceUI workspace{std::move(state)};
     REQUIRE(workspace.selected_instances().active()==3);
     CHECK(workspace.state().viewport.selected_vertex==2); // Observing a bookmark does not edit it.
     const auto revision=workspace.state().document.revision;
@@ -190,7 +190,7 @@ TEST_CASE("Workspace selection restores box origins and reconciles domain bookma
         state.document.instances.push_back(std::move(instance));
     }
     state.viewport.selected_object=3;
-    EditingWorkspace workspace{std::move(state)};
+    EditingWorkspaceUI workspace{std::move(state)};
     const auto origin=workspace.selected_instances();
     const std::array<u32,2> hits{7,11};
     workspace.select_instances(hits,editor::SelectionMode::add);
@@ -422,33 +422,33 @@ TEST_CASE("Timeline selection is owned locally and availability survives narrow 
 
 TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losing focus state", "[editor][workspace][navigation]") {
     Fixture f;
-    ViewportInteraction interaction{f.session.session(),f.screen.column(),f.screen.column(),f.screen.column(),f.screen.column()};
+    ViewportToolsUI interaction{f.session.session(),f.screen.column(),f.screen.column(),f.screen.column(),f.screen.column()};
     const auto& navigation=interaction.camera_navigation();
     input::Frame raw{.logical_size={800,600},.framebuffer={800,600},.focused=true};
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}};
     NavigationFrame frame{.pose={0,0,8,{},1},.mode=ViewMode::scene,
         .viewport={0,0,800,600},.raw=raw,.unhandled=raw.events,.seconds=.016,
         .drag_speeds={},.walk_speeds={}};
-    auto reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame,.walk_active=true});
+    auto reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.walk_active=true});
     CHECK(reply.changed);
     CHECK(reply.pose.target.z<0.F);
     CHECK(navigation.walking().moving());
     frame.pose=reply.pose;
     raw.events.clear(); frame.unhandled={}; raw.focused=false; frame.controls_have_focus=true;
-    reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame});
+    reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame});
     CHECK_FALSE(reply.changed);
     CHECK(navigation.walking().active());
     CHECK_FALSE(navigation.walking().moving());
     raw.focused=true; frame.controls_have_focus=false;
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}}; frame.unhandled=raw.events;
-    reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame,.enabled=false});
+    reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.enabled=false});
     CHECK_FALSE(reply.changed); CHECK_FALSE(navigation.walking().moving());
     CHECK(reply.pose==frame.pose);
     const auto report=navigation.debug_string();
     CHECK(report.find("Unavailable")!=std::string::npos);
     CHECK(navigation.debug_string()==report);
     raw.events.clear(); frame.unhandled={};
-    reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame,.walk_active=false});
+    reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.walk_active=false});
     CHECK(navigation.debug_report().situation=="Orbiting");
     CHECK_FALSE(navigation.walking().active());
     CHECK_FALSE(reply.changed);

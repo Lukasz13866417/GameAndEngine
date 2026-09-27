@@ -1,4 +1,4 @@
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/project.hpp"
 #include "../../examples/editor/animation_camera_edit.hpp"
 #include "../../examples/editor/document_patch.hpp"
@@ -20,13 +20,13 @@ State source() {
     REQUIRE(mesh);
     return {.document = {.mesh = std::move(*mesh)}, .viewport = {.selected_object = 1}};
 }
-std::string packet(PreviewUpdates& updates, u64 generation, const State& state) {
+std::string packet(PreviewDeliveryLogic& updates, u64 generation, const State& state) {
     auto next = updates.next(generation, state);
     REQUIRE(next);
     REQUIRE(*next);
     return std::move(**next);
 }
-void no_packet(PreviewUpdates& updates, u64 generation, const State& state) {
+void no_packet(PreviewDeliveryLogic& updates, u64 generation, const State& state) {
     auto next = updates.next(generation, state);
     REQUIRE(next);
     REQUIRE_FALSE(*next);
@@ -34,7 +34,7 @@ void no_packet(PreviewUpdates& updates, u64 generation, const State& state) {
 } // namespace
 TEST_CASE("Editor backpressure coalesces latest absolute positions without losing the final edit") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     REQUIRE(packet(updates, 1, state).starts_with("snapshot\n"));
     const std::array<u32, 1> vertex{0};
@@ -72,7 +72,7 @@ TEST_CASE("Editor backpressure coalesces latest absolute positions without losin
 
 TEST_CASE("Transform coalescing keeps property identity across ACKs and mixed pending changes") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     packet(updates, 1, state);
     updates.acknowledge(1, state.document.revision);
@@ -111,7 +111,7 @@ TEST_CASE("Vertex update coalescing does not mix independently editable mesh blu
     state.document.next_blueprint_id = 4;
     const auto created = instantiate(state, blueprint);
     REQUIRE(created);
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     REQUIRE(packet(updates, 1, state).starts_with("snapshot\n"));
     updates.acknowledge(1, state.document.revision);
@@ -144,7 +144,7 @@ TEST_CASE("Vertex update coalescing does not mix independently editable mesh blu
 }
 TEST_CASE("Editor update baselines are per generation and full changes supersede queued patches") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     packet(updates, 1, state);
     updates.acknowledge(1, 1);
@@ -178,7 +178,7 @@ TEST_CASE("Blueprint view changes send an explicit target and inactive updates n
     const auto imported = static_cast<BlueprintId>(3);
     state.document.mesh_assets.push_back({imported, "Imported", state.document.mesh, {}});
     state.document.next_blueprint_id = 4;
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     packet(updates, 1, state);
     updates.acknowledge(1, state.document.revision);
@@ -220,7 +220,7 @@ TEST_CASE(
 }
 TEST_CASE("Rejected full updates unblock on corrected authoring without retry storms") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     packet(updates, 1, state);
     updates.reject(1);
@@ -255,7 +255,7 @@ TEST_CASE("Batch vertex projection matches scalar projection") {
 
 TEST_CASE("Camera navigation coalesces complete latest poses behind one in-flight update") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     REQUIRE(packet(updates, 1, state).starts_with("snapshot\n"));
     for (u32 i = 1; i <= 100; ++i) {
@@ -300,7 +300,7 @@ TEST_CASE("Camera navigation coalesces complete latest poses behind one in-fligh
 TEST_CASE("Mixed authored camera and vertex changes stay one atomic patch") {
     for (const bool camera_first : {false, true}) {
         auto state = source();
-        PreviewUpdates updates;
+        PreviewDeliveryLogic updates;
         updates.add(1);
         packet(updates, 1, state);
         updates.acknowledge(1, 1);
@@ -342,7 +342,7 @@ TEST_CASE("Queued vertex updates preserve regions and world bounds across acknow
             auto state = source();
             const auto region = instantiate(state, BlueprintId::region);
             REQUIRE(region);
-            PreviewUpdates updates;
+            PreviewDeliveryLogic updates;
             updates.add(1);
             const auto snapshot = packet(updates, 1, state);
             REQUIRE(snapshot.starts_with("snapshot\n"));
@@ -445,7 +445,7 @@ TEST_CASE("Animated camera navigation coalesces four tracks instead of whole sce
     REQUIRE(key_camera(state,5,{10,10,6,{1,2,3}}));
     REQUIRE(key_property(state,{camera_animation_object,"yaw"},5,10.F,timeline::Interpolation::hold));
     auto worker=state;
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1); updates.add(2);
     REQUIRE(packet(updates,1,state).starts_with("snapshot\n"));
     REQUIRE(packet(updates,2,state).starts_with("snapshot\n"));
@@ -501,7 +501,7 @@ TEST_CASE("Animated camera navigation coalesces four tracks instead of whole sce
 
 TEST_CASE("Unsent camera keys mixed with geometry retain their explicit targets") {
     auto state=source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1); packet(updates,1,state); updates.acknowledge(1,1);
     REQUIRE(key_camera(state,3,{30,0,6,{}}));
     ++state.document.revision; updates.camera_tracks_changed();
@@ -519,7 +519,7 @@ TEST_CASE("Unsent camera keys mixed with geometry retain their explicit targets"
 
 TEST_CASE("Acknowledged camera and vertex updates can remain separate compact packets") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     packet(updates, 1, state);
     updates.acknowledge(1, 1);
@@ -555,7 +555,7 @@ TEST_CASE("Acknowledged camera and vertex updates can remain separate compact pa
 
 TEST_CASE("Camera update queues preserve per-generation baselines and recover after rejection") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1); updates.add(2);
     packet(updates, 1, state); packet(updates, 2, state);
     updates.acknowledge(1, 1);
@@ -591,7 +591,7 @@ TEST_CASE("Camera update queues preserve per-generation baselines and recover af
 
 TEST_CASE("Invalid camera encoding does not reserve or discard the pending latest pose") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     packet(updates, 1, state);
     updates.acknowledge(1, 1);

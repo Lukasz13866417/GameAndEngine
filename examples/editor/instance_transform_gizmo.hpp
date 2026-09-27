@@ -28,9 +28,9 @@ struct InstanceTransformProposal {
 };
 // Read-only session view plus local G/R/S interaction. The parent executes the
 // owned proposal, then acknowledges the result; this child cannot author data.
-class InstanceTransformInteraction {
+class InstanceTransformGizmo {
 public:
-    explicit InstanceTransformInteraction(const EditingSession& editing) : editing_(editing) {}
+    explicit InstanceTransformGizmo(const EditingSession& editing) : editing_(editing) {}
     void scale_limits(const ScaleLimits& limits) { limits_=limits;tool_.maximum_scale_factor(limits.factor); }
     bool active() const { return owns_; }
     bool handled() const { return tool_.handled(); }
@@ -109,7 +109,7 @@ private:
 
 // Parent-side execution. Interaction code has no mutable path to the session.
 [[nodiscard]] inline vng::content::Result<InstanceTransformChange> execute(
-    EditingSession& editing, InstanceTransformInteraction& tool,
+    EditingSession& editing, InstanceTransformGizmo& tool,
     vng::content::Result<InstanceTransformProposal> proposal) {
     using namespace vng;
     if(!proposal) { auto result=content::Result<InstanceTransformChange>{std::unexpected(proposal.error())};tool.accept_result(result);return result; }

@@ -1,7 +1,7 @@
 #pragma once
 #include "component_transform.hpp"
 #include "editing_session.hpp"
-#include "mesh_tools.hpp"
+#include "mesh_tools_ui.hpp"
 #include "animation.hpp"
 #include "rotation_math.hpp"
 #include "../support/mesh_frame.hpp"
@@ -20,9 +20,9 @@ struct MeshTransformProposal {
 };
 // Computes blueprint-local, sparse proposals. Only the parent can execute the
 // corresponding mesh transaction; this child borrows a read-only session view.
-class MeshTransform {
+class MeshTransformGizmo {
 public:
-    explicit MeshTransform(const EditingSession& editing):editing_(editing){}
+    explicit MeshTransformGizmo(const EditingSession& editing):editing_(editing){}
     void scale_limits(const ScaleLimits& limits) { tool_.scale_limits(limits); }
     bool active() const {return tool_.active();}
     bool visible() const {return tool_.visible();}
@@ -37,7 +37,7 @@ public:
         else transaction_.reset();
     }
     void append(vng::ui::DrawList& list,const vng::text::Font& font) const {tool_.append(list,font);}
-    [[nodiscard]] vng::content::Result<MeshTransformProposal> update(const MeshTools& selection,
+    [[nodiscard]] vng::content::Result<MeshTransformProposal> update(const MeshToolsUI& selection,
         const vng::gfx::CameraSnapshot& camera,vng::ui::Rect viewport,
         std::span<const vng::input::Event> input,std::span<const vng::input::Event> raw,bool enabled,float arrow_step=1.F) {
         using namespace vng;
@@ -107,7 +107,7 @@ private:
 };
 
 [[nodiscard]] inline vng::content::Result<bool> execute(
-    EditingSession& editing, MeshTransform& tool,
+    EditingSession& editing, MeshTransformGizmo& tool,
     vng::content::Result<MeshTransformProposal> proposal) {
     using namespace vng;
     if(!proposal) {auto result=content::Result<bool>{std::unexpected(proposal.error())};tool.accept_result(result);return result;}

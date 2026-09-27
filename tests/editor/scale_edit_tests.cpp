@@ -1,5 +1,5 @@
 #include "../../examples/editor/editing_session.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/animation.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
@@ -89,7 +89,7 @@ TEST_CASE("Scale gestures and undo preserve geometry and animated property seman
     REQUIRE(session.undo()); CHECK(*capture_scale(state,1)==original);
 }
 TEST_CASE("Scale backpressure coalesces and sends the final small update", "[editor][scale]") {
-    auto state=scene(); PreviewUpdates updates; updates.add(1); updates.accepted(1,1);
+    auto state=scene(); PreviewDeliveryLogic updates; updates.add(1); updates.accepted(1,1);
     REQUIRE(apply_scale_value(state,1,1.2F)); ++state.document.revision; updates.scale_changed(1);
     auto first=updates.next(1,state); REQUIRE(first); REQUIRE(*first); CHECK((**first).starts_with("scale\n"));
     REQUIRE(apply_scale_value(state,1,1.8F)); ++state.document.revision; updates.scale_changed(1);

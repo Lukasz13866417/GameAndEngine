@@ -1,10 +1,10 @@
 #include "../../examples/editor/tool_panel.hpp"
 #include "../../examples/editor/transform_gesture.hpp"
-#include "../../examples/editor/mesh_operation_tool.hpp"
-#include "../../examples/editor/gizmo_input.hpp"
+#include "../../examples/editor/mesh_operation_controls.hpp"
+#include "../../examples/editor/gizmo_controls.hpp"
 #include "../../examples/editor/mesh_navigation.hpp"
 #include "../../examples/editor/camera_panel.hpp"
-#include "../../examples/editor/selection_input.hpp"
+#include "../../examples/editor/selection_input_logic.hpp"
 #include <vng/ui/inspection.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
@@ -46,7 +46,7 @@ struct CustomTool final : ToolOptions {
 }
 
 TEST_CASE("Gizmo option revisions refresh same-owner menus and reopen a changed gizmo", "[editor][ui][tool-options]") {
-    CustomTool source;GizmoInput input;Fixture f;
+    CustomTool source;GizmoControls input;Fixture f;
     REQUIRE(input.show(true,&source));f.panel.show(input);f.pump();
     f.click("Custom action");CHECK(source.calls==1);
     f.click("Close tool options");CHECK_FALSE(f.panel.opened());
@@ -59,7 +59,7 @@ TEST_CASE("Gizmo option revisions refresh same-owner menus and reopen a changed 
 }
 
 TEST_CASE("Focused handles defer outside selection until a click or box drag completes", "[editor][ui][gizmo-focus]") {
-    SelectionInput input;
+    SelectionInputLogic input;
     const ui::Rect viewport{0,0,640,480};
     const std::array down{input::Event{.kind=input::EventKind::pointer_down,.position={100,100}}};
     const std::array up{input::Event{.kind=input::EventKind::pointer_up,.position={100,100}}};
@@ -168,7 +168,7 @@ TEST_CASE("Whole mesh camera control uses the displayed draft center and stays v
     CHECK(request->rotation);CHECK_FALSE(request->scale);
 }
 TEST_CASE("Gizmo input pauses for navigation and options without changing its accumulated pointer", "[editor][ui][gizmo-navigation]") {
-    GizmoInput input;
+    GizmoControls input;
     input.route(false,false,false,{100,100},{},{});
     const auto move=[&](Vec2 p,bool camera=false,bool menu=false) {
         const std::array events{vng::input::Event{.kind=input::EventKind::pointer_move,.position=p}};
@@ -195,7 +195,7 @@ TEST_CASE("Gizmo input pauses for navigation and options without changing its ac
     REQUIRE(input.events().size()==1);CHECK(input.events()[0].kind==input::EventKind::pointer_up);
 }
 TEST_CASE("Scale option drafts require Apply and reject invalid limits atomically", "[editor][ui][scale-limits]") {
-    GizmoInput input;input.show(true,nullptr,false,true);
+    GizmoControls input;input.show(true,nullptr,false,true);
     editor::Inspector inspector{{1,1,1}};input.describe_options(inspector);
     CHECK(input.scale_limits().instance==3.F);
     const auto apply=[&](float maximum) {
@@ -209,7 +209,7 @@ TEST_CASE("Scale option drafts require Apply and reject invalid limits atomicall
     CHECK(input.scale_limits().instance==100.F);
 }
 TEST_CASE("Scale limit text stays a draft until the options Apply button is clicked", "[editor][ui][scale-limits]") {
-    GizmoInput input;Fixture f;input.show(true,nullptr,false,true);f.panel.show(input);f.pump();f.pump();
+    GizmoControls input;Fixture f;input.show(true,nullptr,false,true);f.panel.show(input);f.pump();f.pump();
     const auto snapshot=f.screen.inspect();REQUIRE(snapshot);
     const auto field=std::ranges::find_if(snapshot->widgets,[](const auto& item) {
         return item.role==ui::WidgetRole::text_field&&item.label=="Maximum instance scale";
@@ -224,7 +224,7 @@ TEST_CASE("Scale limit text stays a draft until the options Apply button is clic
     CHECK(input.scale_limits().instance==100.F);
 }
 TEST_CASE("The active gizmo panel exposes sensitivity alongside custom options", "[editor][ui][gizmo-navigation]") {
-    CustomTool tool;GizmoInput input;Fixture f;input.show(true,&tool);f.panel.show(input);f.pump();f.pump();
+    CustomTool tool;GizmoControls input;Fixture f;input.show(true,&tool);f.panel.show(input);f.pump();f.pump();
     const auto snapshot=f.screen.inspect();REQUIRE(snapshot);
     const auto found=std::ranges::find_if(snapshot->widgets,[](const auto& w){return w.visible&&w.role==ui::WidgetRole::slider;});
     REQUIRE(found!=snapshot->widgets.end());const auto r=found->bounds;
@@ -237,7 +237,7 @@ TEST_CASE("The active gizmo panel exposes sensitivity alongside custom options",
 }
 TEST_CASE("Held gizmo arrows move every frame at a sensitivity scaled rate, ignoring OS repeat", "[editor][ui][arrows]") {
     for(const float sensitivity:{.5F,1.F,2.F})for(const int fps:{30,60,120}) {
-        GizmoInput router;router.sensitivity(sensitivity);
+        GizmoControls router;router.sensitivity(sensitivity);
         float total{};
         const auto tick=[&](std::span<const input::Event> events) {
             router.route(true,false,false,{400,300},events,events,1.F/fps);
@@ -262,7 +262,7 @@ TEST_CASE("Held gizmo arrows move every frame at a sensitivity scaled rate, igno
 TEST_CASE("Held gizmo arrows stop at input ownership and transaction boundaries", "[editor][ui][arrows]") {
     const std::array down{input::Event{.kind=input::EventKind::key_down,.key=input::Key::right}};
     for(int boundary=0;boundary<8;++boundary) {
-        GizmoInput router;
+        GizmoControls router;
         router.route(true,false,false,{400,300},down,down);
         std::vector<input::Event> stop;
         if(boundary==0)stop.push_back({.kind=input::EventKind::focus_lost});
@@ -276,7 +276,7 @@ TEST_CASE("Held gizmo arrows stop at input ownership and transaction boundaries"
         router.route(true,false,false,{400,300},repeat,repeat);
         CHECK(router.events().empty()); // Never restart from a stale OS repeat.
     }
-    GizmoInput router;
+    GizmoControls router;
     router.route(false,false,false,{400,300},down,{});
     CHECK(router.events().empty()); // A focused text field owns this press.
     router.route(false,false,false,{400,300},{},{});

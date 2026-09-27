@@ -10,7 +10,7 @@
 namespace editor_example {
 // Private input state, not a scene component. The host decides whether typing,
 // a modal dialog, or another viewport tool owns this input batch.
-class CameraWalk {
+class CameraWalkLogic {
 public:
     void active(bool value) { active_=value; stop(); }
     bool active() const { return active_; }

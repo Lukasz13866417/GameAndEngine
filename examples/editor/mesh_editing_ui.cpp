@@ -1,8 +1,8 @@
-#include "mesh_editing.hpp"
+#include "mesh_editing_ui.hpp"
 
 namespace editor_example {
 using namespace vng;
-MeshEditingReply MeshEditing::handle(const InspectMesh& situation, const MeshEditingContext& context) {
+MeshEditingReply MeshEditingUI::handle(const InspectMesh& situation, const MeshEditingContext& context) {
     situation_ = "InspectMesh";
     target_ = situation.blueprint;
     input_allowed_ = context.accept_input;
@@ -68,7 +68,7 @@ MeshEditingReply MeshEditing::handle(const InspectMesh& situation, const MeshEdi
     if (!reply.message.empty()) last_result_ = reply.message;
     return reply;
 }
-MeshEditingReply MeshEditing::suspend(const MeshEditingContext& context) {
+MeshEditingReply MeshEditingUI::suspend(const MeshEditingContext& context) {
     input_allowed_ = false;
     if (context.input.reset) components_.reset();
     components_.close();
@@ -77,15 +77,15 @@ MeshEditingReply MeshEditing::suspend(const MeshEditingContext& context) {
     components_.sync(editing_.state(), false);
     return {};
 }
-MeshEditingReply MeshEditing::handle(const InspectScene&, const MeshEditingContext& context) {
+MeshEditingReply MeshEditingUI::handle(const InspectScene&, const MeshEditingContext& context) {
     situation_ = "InspectScene / suspended";
     return suspend(context);
 }
-MeshEditingReply MeshEditing::handle(const InspectEffect&, const MeshEditingContext& context) {
+MeshEditingReply MeshEditingUI::handle(const InspectEffect&, const MeshEditingContext& context) {
     situation_ = "InspectEffect / suspended";
     return suspend(context);
 }
-void MeshEditing::operation(MeshAction action, MeshEditingReply& reply) {
+void MeshEditingUI::operation(MeshAction action, MeshEditingReply& reply) {
     const auto& state = editing_.state();
     const auto* mesh = editable_mesh(state);
     const auto target = mesh_target(state);
@@ -102,7 +102,7 @@ void MeshEditing::operation(MeshAction action, MeshEditingReply& reply) {
     reply.proposal = MeshEditProposal{target->blueprint, operation,
         components_.vertices(*mesh), components_.edges(*mesh)};
 }
-MeshEditingReply MeshEditing::accept_operation(const MeshEditProposal& proposal, const vng::content::Result<bool>& result) {
+MeshEditingReply MeshEditingUI::accept_operation(const MeshEditProposal& proposal, const vng::content::Result<bool>& result) {
     MeshEditingReply reply;
     if (!result) { reply.message = result.error().message; last_result_=reply.message; return reply; }
     if (!*result) { reply.message = "Mesh unchanged"; last_result_=reply.message; return reply; }
@@ -118,7 +118,7 @@ MeshEditingReply MeshEditing::accept_operation(const MeshEditProposal& proposal,
     last_result_ = reply.message;
     return reply;
 }
-MeshEditingReply MeshEditing::accept_adjustment(const MeshOperationAdjustment& request, const vng::content::Result<bool>& result) {
+MeshEditingReply MeshEditingUI::accept_adjustment(const MeshOperationAdjustment& request, const vng::content::Result<bool>& result) {
     operation_.accept_adjustment(request, result);
     MeshEditingReply reply;
     if (!result) reply.message = result.error().message;
@@ -132,7 +132,7 @@ MeshEditingReply MeshEditing::accept_adjustment(const MeshOperationAdjustment& r
     last_result_ = reply.message;
     return reply;
 }
-DebugReport MeshEditing::debug_report() const {
+DebugReport MeshEditingUI::debug_report() const {
     return {.name="mesh", .role="blueprint component authoring", .situation=std::string(situation_),
         .received={{"input allowed",debug_bool(input_allowed_)},
                    {"last dispatched blueprint",target_ ? std::to_string(static_cast<u32>(*target_)) : "none"}},

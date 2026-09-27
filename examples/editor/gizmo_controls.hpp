@@ -13,7 +13,7 @@ namespace editor_example {
 // Viewport-owned input policy, not a document edit. A virtual pointer keeps
 // sensitivity changes, camera drags and visits to tool options out of a captured
 // transform. Tools still own their math, transaction and blueprint vocabulary.
-class GizmoInput final : public ToolOptions {
+class GizmoControls final : public ToolOptions {
 public:
     enum class Phase { frame, event, tick };
     // Called once by the viewport owner before descending through occurrences.

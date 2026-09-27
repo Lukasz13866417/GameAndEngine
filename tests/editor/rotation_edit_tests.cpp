@@ -1,6 +1,6 @@
 #include "../../examples/editor/rotation_edits.hpp"
 #include "../../examples/editor/position_edits.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/project.hpp"
 #include "../../examples/editor/animation.hpp"
 
@@ -40,7 +40,7 @@ std::string encoded(const RotationEdit& edit) {
     REQUIRE(result);
     return *result;
 }
-std::string packet(PreviewUpdates& updates, const State& state) {
+std::string packet(PreviewDeliveryLogic& updates, const State& state) {
     auto result = updates.next(1, state);
     REQUIRE(result);
     REQUIRE(*result);
@@ -197,7 +197,7 @@ TEST_CASE("Rotation updates coalesce while in flight and final cancellation cann
     auto state = scene();
     const auto baseline = capture_rotation(state, 1);
     REQUIRE(baseline);
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     REQUIRE(packet(updates, state).starts_with("snapshot\n"));
     updates.acknowledge(1, 1);
@@ -233,7 +233,7 @@ TEST_CASE("Rotation updates coalesce while in flight and final cancellation cann
 TEST_CASE("Rotation edits preserve mixed property and geometry targets",
           "[editor][rotation][updates]") {
     auto state = scene();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     (void)packet(updates, state);
     updates.acknowledge(1, 1);

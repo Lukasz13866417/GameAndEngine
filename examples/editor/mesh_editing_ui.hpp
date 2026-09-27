@@ -1,6 +1,6 @@
 #pragma once
-#include "mesh_tools.hpp"
-#include "mesh_operation_tool.hpp"
+#include "mesh_tools_ui.hpp"
+#include "mesh_operation_controls.hpp"
 #include "workspace_situation.hpp"
 
 namespace editor_example {
@@ -47,17 +47,17 @@ struct MeshEditingReply {
     std::optional<MeshOperationAdjustment> adjustment{};
 };
 
-class MeshEditing final {
+class MeshEditingUI final {
 public:
-    MeshEditing(const EditingSession& editing, vng::ui::Container controls, vng::ui::Container popup)
+    MeshEditingUI(const EditingSession& editing, vng::ui::Container controls, vng::ui::Container popup)
         : editing_(editing), components_(controls, popup), operation_(editing) {}
     // Borrowed read-only geometry/selection evidence for overlays and picking.
     // Mutation is routed by the owning viewport, never through this view.
-    [[nodiscard]] const MeshTools& components() const { return components_; }
+    [[nodiscard]] const MeshToolsUI& components() const { return components_; }
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend class EditingViewport;
+    friend class EditingViewportUI;
     MeshEditingReply handle(const InspectMesh&, const MeshEditingContext&);
     MeshEditingReply handle(const InspectScene&, const MeshEditingContext&);
     MeshEditingReply handle(const InspectEffect&, const MeshEditingContext&);
@@ -67,8 +67,8 @@ private:
     MeshEditingReply accept_adjustment(const MeshOperationAdjustment&, const vng::content::Result<bool>&);
     [[nodiscard]] std::optional<MeshOperationAdjustment> take_adjustment() { return operation_.take_adjustment(); }
     const EditingSession& editing_;
-    MeshTools components_;
-    MeshOperationTool operation_;
+    MeshToolsUI components_;
+    MeshOperationControls operation_;
     std::string_view situation_{"Not dispatched"};
     bool input_allowed_{};
     std::optional<BlueprintId> target_{};

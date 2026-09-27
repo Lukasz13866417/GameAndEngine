@@ -1,5 +1,5 @@
-#include "../../examples/editor/instance_transform.hpp"
-#include "../../examples/editor/rotation_interaction.hpp"
+#include "../../examples/editor/instance_transform_gizmo.hpp"
+#include "../../examples/editor/instance_rotation_gizmo.hpp"
 #include "../../examples/editor/rotation_math.hpp"
 #include "../../examples/editor/scale_edits.hpp"
 #include <catch2/catch_test_macros.hpp>
@@ -28,7 +28,7 @@ State transform_scene(bool region=false, bool ship=false) {
 }
 struct Fixture {
     EditingSession editing;
-    InstanceTransformInteraction tool{editing};
+    InstanceTransformGizmo tool{editing};
     std::vector<u32> selection{1,3};
     TransformPivot pivot;
     gfx::CameraSnapshot camera;
@@ -130,7 +130,7 @@ TEST_CASE("Parent rejects a transform proposal after its selected target changes
 
 TEST_CASE("Rotation input and cancellation cannot change the session without parent execution", "[editor][ui][rotation][parent-coordination]") {
     Fixture f;
-    RotationInteraction rings{std::as_const(f.editing)};
+    InstanceRotationGizmo rings{std::as_const(f.editing)};
     const auto original=f.editing.state().document;
     const auto propose=[&](std::initializer_list<input::Event> events) {
         const std::span<const input::Event> input{events.begin(),events.size()};
@@ -174,7 +174,7 @@ TEST_CASE("Stale transform cancellation cannot cancel a successor transaction on
         REQUIRE(f.editing.cancel());
     }
     SECTION("Rotation rings") {
-        RotationInteraction rings{f.editing};
+        InstanceRotationGizmo rings{f.editing};
         const std::array input{input::Event{.kind=EventKind::pointer_down,.position={350,300},.button=2}};
         REQUIRE(execute(f.editing,rings,rings.update(1,f.camera,{0,0,800,600},input,input,true,f.selection,false,{},true)));
         auto stale=rings.cancel();REQUIRE(stale);REQUIRE(stale->transaction);
@@ -298,7 +298,7 @@ TEST_CASE("Modal instance transforms cancel on lost eligibility and never steal 
     CHECK_FALSE(f.editing.busy());CHECK_FALSE(f.editing.can_undo());
 }
 TEST_CASE("Ring adapter does not own a keyboard rotation's transaction", "[editor][ui][instance-transform]") {
-    Fixture f;RotationInteraction rings{f.editing};
+    Fixture f;InstanceRotationGizmo rings{f.editing};
     REQUIRE(f.pump({{.kind=EventKind::key_down,.position={460,300},.key=Key::r}}).began);
     CHECK_FALSE(rings.active());REQUIRE(execute(f.editing,rings,rings.cancel()));CHECK(f.editing.busy());
     REQUIRE(f.pump({{.kind=EventKind::key_down,.key=Key::escape}}).cancelled);

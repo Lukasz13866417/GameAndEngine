@@ -1,6 +1,6 @@
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/rotation_edits.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/preview_viewport.hpp"
 #include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/blueprint_gizmos.hpp"
@@ -244,7 +244,7 @@ TEST_CASE("Rotation drag coalescing keeps delayed completed frames visible until
     EditingSession session{scene()}; session.select_keyframe(session.state().viewport.time);
     const auto& state = session.state();
     auto worker = state;
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(7);
     auto initial = updates.next(7, state);
     REQUIRE(initial);

@@ -94,7 +94,7 @@ ID; neither changes the document, rebuilds geometry, nor contacts the worker.
 A selected part can additionally declare `MeshPartGizmo{surface, move}`.
 `SurfaceMove` is a spherical constraint, anchor, label and optional affine frame; `move(position)`
 produces the same CPU-only `MeshDraftEdit` used by inspector controls.
-`ViewportInteraction` owns the reusable `SurfaceMoveTool` (hit testing, pointer
+`ViewportToolsUI` owns the reusable `SurfaceMoveTool` (hit testing, pointer
 capture, immediate handle geometry), not the blueprint recipe. The application
 only routes its actions to `BlueprintMeshPanel`.
 
@@ -108,7 +108,7 @@ blocking the UI. The loading indicator also tracks the target image revision,
 so it lasts through worker rendering/transfer, not only CPU preparation.
 
 Whole mesh mode uses the same `ComponentTransform` gizmos with a single pivot,
-not a giant synthetic vertex selection. `MeshTransform` composes the gesture's
+not a giant synthetic vertex selection. `MeshTransformGizmo` composes the gesture's
 affine matrix with a captured placement through `begin_mesh_transform` and
 `mesh_transform`. `Document::mesh_placements` stores applied and optional draft
 matrices. Its explicit change scope and versioned patch carry only those matrices
@@ -187,7 +187,7 @@ vertex/face scan. Group translation stages only position properties/tracks and
 sends the existing per-property patches. A commit, batch delete or batch paste
 creates one history transaction; blueprint data is never duplicated by selection.
 
-`MeshTools` also owns temporary hidden source-face IDs (H / Alt+H), scoped to
+`MeshToolsUI` also owns temporary hidden source-face IDs (H / Alt+H), scoped to
 the inspected topology. A change-only `mesh_visibility` packet carries this mask
 and its topology fingerprint, independently of document patches and the small
 camera mailbox. The worker waits for its required document revision; a mismatched
@@ -279,7 +279,7 @@ so a stale worker description cannot restore a ship-only handle on a mixed selec
 
 Oriented ship blueprints with perpendicular `coordinates/forward` and `coordinates/up`
 also provide local yaw/pitch/roll axes. `RotationTool` owns projection and pointer
-capture; `RotationInteraction` joins its captured angular delta to
+capture; `InstanceRotationGizmo` joins its captured angular delta to
 `EditingSession::begin_attitude/attitude/commit` (or `cancel`). The session captures
 each selected instance's evaluated orientation and blueprint basis once, then
 composes each update from those originals. Rotation never accumulates Euler deltas
@@ -295,7 +295,7 @@ mesh serialization or vertex uploads.
 
 ### Document and viewport transport
 
-Document edits use `PreviewUpdates`: an ordered revision/acknowledgement lane.
+Document edits use `PreviewDeliveryLogic`: an ordered revision/acknowledgement lane.
 `DocumentChanges` carries explicit blueprint/vertex IDs, object/property targets,
 and changed timeline markers/duration through edits, history, coalescing and
 transport. Single vertex/instance-transform edits retain their tiny codecs;
@@ -377,7 +377,7 @@ visibility tracks, rebuilding assets, or creating Undo entries. Hidden surfaces
 also stop intercepting scene ray picks. Independent Play and scene-file output
 ignore this option; hiding a Sun's surface still preserves its light on other objects.
 
-`ViewportInteraction` owns `CameraWalk` alongside pointer navigation. The tool
+`ViewportToolsUI` owns `CameraWalkLogic` alongside pointer navigation. The tool
 owns only walk mode and held keys; it receives a pose, input eligibility, elapsed
 time and `WalkSpeeds`. It yields pose changes through the same session boundary
 as other camera navigation, so a held walk gesture is one authored Undo step.
@@ -457,8 +457,8 @@ can be consumed by either renderer; GL resources never cross contexts. Closing
 this window docks the viewport. Independent Play remains a separate worker-owned
 window and does not replace this presentation child.
 
-`EditingWorkspace` owns the authoring session and logical selection.
-Its `EditingViewport` owns `ViewportInteraction`, the single owner of navigation,
+`EditingWorkspaceUI` owns the authoring session and logical selection.
+Its `EditingViewportUI` owns `ViewportToolsUI`, the single owner of navigation,
 boundary, world-bounds, translation, rotation, scale and selection-box tools.
 Tools observe an explicit `const EditingSession&` and propose changes; workspace
 execution applies and acknowledges them. Tools do not query or cancel siblings.
@@ -472,7 +472,7 @@ over other authoring tools; otherwise the viewport visits
 navigation, instance keyboard transforms, blueprint boundary tools, bounds,
 transform handles, then selection.
 Camera navigation may borrow pointer input while an authoring tool retains its
-transaction. `GizmoInput`, owned by `ViewportInteraction`, strips camera and
+transaction. `GizmoControls`, owned by `ViewportToolsUI`, strips camera and
 options-panel motion and accumulates a sensitivity-scaled virtual pointer.
 It also tracks held arrows, discards OS repeat events, and emits one normalized
 arrow per held direction per tick. The explicit `arrow_step` argument carries
@@ -489,7 +489,7 @@ Concurrent navigation uses the private editor view; while inspecting a scene
 camera, navigation is blocked instead of silently editing that camera.
 `MeshNavigationControls` hosts a private navigation preference for all mesh modes
 and emits explicit `CameraBakeOptions` requests only in whole-mesh mode.
-It supplies an optional displayed mesh center to `NavigationTool::drag_origin`;
+It supplies an optional displayed mesh center to `CameraPointerLogic::drag_origin`;
 the navigation tool freezes that reference for an MMB gesture and knows
 nothing about blueprint or mesh ownership. `EditableMesh::center()` lazily caches
 the vertex centroid with the geometry snapshot, shared by whole-mesh gizmos and
@@ -514,7 +514,7 @@ checks now describe context eligibility (paused scene, current preview, modal
 state), not combinations of sibling tools that must be idle.
 
 `TransformGesture` owns the shared G/R/S input and camera-relative math, not
-document data or history. `InstanceTransformInteraction` translates its deltas
+document data or history. `InstanceTransformGizmo` translates its deltas
 into typed proposals for one workspace-owned move/rotation/scale transaction. `ComponentTransform`
 applies the same gesture to selected mesh or region points, through their existing
 editing adapters. Each captures a baseline once and previews from that baseline;
@@ -547,7 +547,7 @@ region editing do not maintain a separate keyboard-only overlay implementation.
 tool. `RotationTool` accepts a `RotationGizmo` with `free_rotation=true`: a
 camera-facing halo and an MMB capture replace its Euler-axis ring picking.
 The mouse delta composes camera-up/right turns with the captured orientation.
-`RotationInteraction` passes the resulting world-space delta to the existing
+`InstanceRotationGizmo` passes the resulting world-space delta to the existing
 `EditingSession::rotate_by` transaction; `ComponentTransform` uses the same tool
 for selected mesh and region points. Both preserve the selected center and the
 existing one-gesture/one-undo rule. No renderer or worker callback is involved.
@@ -592,10 +592,10 @@ tool_panel.show(extrude_tool);
 ```
 
 `ExtrudeTool` above illustrates an extension, not an implemented mesh operation.
-Implemented providers are `TransformGesture` and `MeshOperationTool`. G/R/S and
+Implemented providers are `TransformGesture` and `MeshOperationControls`. G/R/S and
 blueprint-forward gestures queue menu axis/confirm/cancel requests into their own
 input state machine; their existing adapter remains the sole transaction owner.
-`MeshOperationTool` exposes subdivision levels, alignment strength, and undo.
+`MeshOperationControls` exposes subdivision levels, alignment strength, and undo.
 It delegates to `EditingSession`, which owns the captured input mesh, original
 selection, revision guard, and undo checkpoint. Adjustments recompute that input
 and replace the last result without pushing another checkpoint. Each accepted
@@ -670,6 +670,6 @@ is introduced by timing capture.
 
 Relevant code: `examples/editor/editing_session.hpp`, `session_operations.cpp`,
 `project.hpp`, `viewport_session.hpp`,
-`document_changes.hpp`, `document_patch.hpp`, `preview_updates.hpp`,
+`document_changes.hpp`, `document_patch.hpp`, `preview_delivery_logic.hpp`,
 `animation_camera_edit.hpp`, `presented_view.hpp`, `runtime.hpp`, `timing_panel.hpp`,
 `include/vng/editor/interaction_timing.hpp`, and `src/editor/preview.cpp`.

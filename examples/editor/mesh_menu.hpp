@@ -30,7 +30,7 @@ public:
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 
 private:
-    friend class MeshTools;
+    friend class MeshToolsUI;
     std::optional<MeshAction> handle(const Vertices&, const MeshMenuContext&);
     std::optional<MeshAction> handle(const Edges&, const MeshMenuContext&);
     std::optional<MeshAction> handle(const Faces&, const MeshMenuContext&);

@@ -1,12 +1,12 @@
 #pragma once
 #include "component_dispatch.hpp"
-#include "mesh_editing.hpp"
+#include "mesh_editing_ui.hpp"
 #include "mesh_navigation.hpp"
 #include "scene_lists.hpp"
-#include "timeline_editing.hpp"
+#include "timeline_editing_ui.hpp"
 #include "tool_panel.hpp"
 #include "workspace_selection.hpp"
-#include "viewport_interaction.hpp"
+#include "viewport_tools_ui.hpp"
 #include "blueprint_mesh_panel.hpp"
 #include "gizmo_selector.hpp"
 #include "rotation_pivot_controls.hpp"
@@ -17,14 +17,14 @@
 namespace editor_example {
 class BlueprintMeshPanel;
 class RegionEditor;
-class ViewportInteraction;
+class ViewportToolsUI;
 enum class ViewportTool;
-class InstanceTransformInteraction;
+class InstanceTransformGizmo;
 struct InstanceTransformProposal;
 struct InstanceTransformChange;
-class MeshTransform;
+class MeshTransformGizmo;
 struct MeshTransformProposal;
-class RotationInteraction;
+class InstanceRotationGizmo;
 struct RotationProposal;
 struct RotationChange;
 // The component-authoring branch of the workspace. Contexts contain only
@@ -49,13 +49,13 @@ struct ViewportEditingReply {
     MeshEditingReply mesh;
     std::optional<CameraBakeOptions> bake;
 };
-class EditingViewport final {
+class EditingViewportUI final {
 public:
-    EditingViewport(const EditingSession& editing, vng::ui::Container controls, vng::ui::Container popup, vng::ui::Container navigation,
+    EditingViewportUI(const EditingSession& editing, vng::ui::Container controls, vng::ui::Container popup, vng::ui::Container navigation,
                     vng::ui::Container tools)
         : editing_(editing), mesh_(editing, controls, popup), navigation_(navigation), tools_(tools) {}
     [[nodiscard]] const ToolPanel& tools() const { return tools_; }
-    [[nodiscard]] const MeshTools& mesh_components() const { return mesh_.components(); }
+    [[nodiscard]] const MeshToolsUI& mesh_components() const { return mesh_.components(); }
     [[nodiscard]] bool controls_contain(vng::Vec2 point) const { return navigation_.contains(point); }
     [[nodiscard]] std::optional<vng::Vec3> camera_origin() const { return navigation_.origin(editing_.state()); }
     [[nodiscard]] DebugReport debug_report() const {
@@ -69,7 +69,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend class EditingWorkspace;
+    friend class EditingWorkspaceUI;
     void attach_tools(vng::ui::Container blueprint,vng::ui::Container controls,vng::ui::Container creation,
                       vng::ui::Container inspector,vng::ui::Container popup);
     ViewportEditingReply handle(const InspectMesh& s, const ViewportEditingContext& c) {
@@ -121,11 +121,11 @@ private:
         else tools_.handle(ToolPanel::Current{},c.tools->context);
     }
     const EditingSession& editing_;
-    MeshEditing mesh_;
+    MeshEditingUI mesh_;
     MeshNavigationControls navigation_;
     ToolPanel tools_;
     std::optional<BlueprintMeshPanel> blueprint_panel_;
-    std::optional<ViewportInteraction> interaction_;
+    std::optional<ViewportToolsUI> interaction_;
     std::optional<GizmoSelector> gizmo_selector_;
     std::optional<RotationPivotControls> rotation_pivot_;
     std::optional<ViewportPresentation> presentation_;
@@ -143,22 +143,22 @@ struct WorkspaceContext {
     std::optional<ToolPanelInput> tools{};
 };
 struct WorkspaceReply { MeshEditingReply mesh{}; SceneListsReply lists{}; TimelineReply timeline{}; };
-class EditingWorkspace final {
+class EditingWorkspaceUI final {
 public:
     // UI children borrow this owner's session and each other's owned option
     // objects. Their addresses remain stable for the workspace's lifetime.
-    EditingWorkspace(const EditingWorkspace&)=delete;
-    EditingWorkspace& operator=(const EditingWorkspace&)=delete;
-    EditingWorkspace(EditingWorkspace&&)=delete;
-    EditingWorkspace& operator=(EditingWorkspace&&)=delete;
+    EditingWorkspaceUI(const EditingWorkspaceUI&)=delete;
+    EditingWorkspaceUI& operator=(const EditingWorkspaceUI&)=delete;
+    EditingWorkspaceUI(EditingWorkspaceUI&&)=delete;
+    EditingWorkspaceUI& operator=(EditingWorkspaceUI&&)=delete;
     // The authoring authority exists before windows and widgets. UI children
     // are attached once after their hosts have been successfully constructed.
-    explicit EditingWorkspace(State initial, SceneFile file={}) : editing_(std::move(initial),std::move(file)) {
+    explicit EditingWorkspaceUI(State initial, SceneFile file={}) : editing_(std::move(initial),std::move(file)) {
         reconcile_selection();
     }
-    EditingWorkspace(State initial, vng::ui::Container controls, vng::ui::Container popup,
+    EditingWorkspaceUI(State initial, vng::ui::Container controls, vng::ui::Container popup,
                      vng::ui::Container navigation,SceneListHosts lists,TimelineHosts timeline,vng::ui::Container tools,
-                     SceneFile file={}) : EditingWorkspace(std::move(initial),std::move(file)) {
+                     SceneFile file={}) : EditingWorkspaceUI(std::move(initial),std::move(file)) {
         initialize(controls,popup,navigation,lists,timeline,tools);
     }
     void initialize(vng::ui::Container controls,vng::ui::Container popup,vng::ui::Container navigation,
@@ -173,7 +173,7 @@ public:
     void attach_viewport_tools(vng::ui::Container blueprint,vng::ui::Container controls,vng::ui::Container creation,
                                vng::ui::Container inspector,vng::ui::Container popup);
     [[nodiscard]] BlueprintMeshPanel& blueprint_panel();
-    [[nodiscard]] ViewportInteraction& interaction();
+    [[nodiscard]] ViewportToolsUI& interaction();
     void attach_manipulation(vng::ui::Container gizmo,vng::ui::Container pivot);
     [[nodiscard]] GizmoSelector& gizmo_selector();
     [[nodiscard]] RotationPivotControls& rotation_pivot();
@@ -198,7 +198,7 @@ public:
     WorkspaceSelection::Change reset_selection() { return publish_selection(selection_.reset(state()),false); }
     [[nodiscard]] const ToolPanel& tools() const { return viewport_->tools(); }
     [[nodiscard]] const TimelinePanel& timeline_view() const { return timeline_->view(); }
-    [[nodiscard]] const MeshTools& mesh_components() const { return viewport_->mesh_components(); }
+    [[nodiscard]] const MeshToolsUI& mesh_components() const { return viewport_->mesh_components(); }
     [[nodiscard]] bool viewport_controls_contain(vng::Vec2 point) const { return viewport_->controls_contain(point); }
     [[nodiscard]] std::optional<vng::Vec3> mesh_camera_origin() const { return viewport_->camera_origin(); }
     [[nodiscard]] bool contains_instance(vng::u32 id) const { return lists_->contains(id); }
@@ -206,13 +206,13 @@ public:
     [[nodiscard]] bool list_flyout_open() const { return lists_->flyout_open(); }
     [[nodiscard]] vng::content::Result<bool> apply_pending(BlueprintMeshPanel&);
     [[nodiscard]] vng::content::Result<bool> apply_pending(RegionEditor&);
-    [[nodiscard]] vng::content::Result<bool> finish(ViewportInteraction&,ViewportTool,bool cancelled=false);
-    [[nodiscard]] vng::content::Result<bool> cancel(ViewportInteraction&);
+    [[nodiscard]] vng::content::Result<bool> finish(ViewportToolsUI&,ViewportTool,bool cancelled=false);
+    [[nodiscard]] vng::content::Result<bool> cancel(ViewportToolsUI&);
     [[nodiscard]] vng::content::Result<InstanceTransformChange> execute(
-        InstanceTransformInteraction&,vng::content::Result<InstanceTransformProposal>);
-    [[nodiscard]] vng::content::Result<bool> execute(MeshTransform&,vng::content::Result<MeshTransformProposal>);
+        InstanceTransformGizmo&,vng::content::Result<InstanceTransformProposal>);
+    [[nodiscard]] vng::content::Result<bool> execute(MeshTransformGizmo&,vng::content::Result<MeshTransformProposal>);
     [[nodiscard]] vng::content::Result<RotationChange> execute(
-        RotationInteraction&,vng::content::Result<RotationProposal>);
+        InstanceRotationGizmo&,vng::content::Result<RotationProposal>);
     [[nodiscard]] vng::content::Result<std::optional<bool>> apply_instance_control(
         const vng::editor::Event&,vng::u64 generation,vng::u64 minimum_context);
 
@@ -410,8 +410,8 @@ private:
     TimelineReply timeline(const WorkspaceContext& c) {
         if(!c.timeline) return {};
         auto reply=c.timeline->enabled.value_or(timeline_->enabled())
-            ? timeline_->handle(TimelineEditing::Available{},*c.timeline)
-            : timeline_->handle(TimelineEditing::Unavailable{},*c.timeline);
+            ? timeline_->handle(TimelineEditingUI::Available{},*c.timeline)
+            : timeline_->handle(TimelineEditingUI::Unavailable{},*c.timeline);
         if(auto action=std::exchange(reply.action,{})) {
             const auto previous_time=editing_.state().viewport.time;
             const auto previous_paused=editing_.state().viewport.paused;
@@ -443,9 +443,9 @@ private:
     }
     EditingSession editing_;
     WorkspaceSelection selection_;
-    std::optional<EditingViewport> viewport_;
+    std::optional<EditingViewportUI> viewport_;
     std::optional<SceneLists> lists_;
-    std::optional<TimelineEditing> timeline_;
+    std::optional<TimelineEditingUI> timeline_;
     std::string_view situation_{"Not dispatched"};
     std::optional<BlueprintId> blueprint_;
 };

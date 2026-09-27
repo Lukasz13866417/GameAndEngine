@@ -1,9 +1,9 @@
-#include "workspace.hpp"
+#include "workspace_ui.hpp"
 
 namespace editor_example {
 using namespace vng;
 
-ViewportSelectionReply EditingWorkspace::pick_viewport(const ViewportSelectionContext& context) {
+ViewportSelectionReply EditingWorkspaceUI::pick_viewport(const ViewportSelectionContext& context) {
     const auto& c=context.frame;
     const auto& image=c.presented;
     auto& tools=interaction();

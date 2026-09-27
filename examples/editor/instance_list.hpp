@@ -1,6 +1,6 @@
 #pragma once
 #include "project.hpp"
-#include "selection_input.hpp"
+#include "selection_input_logic.hpp"
 #include <vng/editor/selection.hpp>
 #include <vng/ui/ui.hpp>
 #include <unordered_map>

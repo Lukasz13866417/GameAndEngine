@@ -24,9 +24,9 @@ struct RotationProposal {
 
 // Joins a purely visual tool to the selected instances' rotation properties. No renderer, GPU object,
 // mesh copy, or worker callback is needed to preview a drag locally.
-class RotationInteraction {
+class InstanceRotationGizmo {
 public:
-    explicit RotationInteraction(const EditingSession& editing) : editing_(editing) {}
+    explicit InstanceRotationGizmo(const EditingSession& editing) : editing_(editing) {}
     [[nodiscard]] bool active() const {
         return frozen_&&transaction_&&editing_.active_transaction()==transaction_&&
             editing_.active(EditGesture::rotation)&&editing_.active_object()==frozen_->stamp.object;
@@ -138,7 +138,7 @@ private:
 };
 
 [[nodiscard]] inline vng::content::Result<RotationChange> execute(
-    EditingSession& editing, RotationInteraction& tool,
+    EditingSession& editing, InstanceRotationGizmo& tool,
     vng::content::Result<RotationProposal> proposal) {
     using namespace vng;
     if(!proposal){auto result=content::Result<RotationChange>{std::unexpected(proposal.error())};tool.accept_result(result);return result;}

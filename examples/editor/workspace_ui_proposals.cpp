@@ -1,9 +1,9 @@
-#include "workspace.hpp"
+#include "workspace_ui.hpp"
 #include "blueprint_mesh_panel.hpp"
 #include "region_editor.hpp"
 
 namespace editor_example {
-vng::content::Result<bool> EditingWorkspace::apply_pending(BlueprintMeshPanel& panel) {
+vng::content::Result<bool> EditingWorkspaceUI::apply_pending(BlueprintMeshPanel& panel) {
     bool changed{};
     std::optional<vng::content::Diagnostic> error;
     while(auto proposal=panel.take_edit()) {
@@ -17,7 +17,7 @@ vng::content::Result<bool> EditingWorkspace::apply_pending(BlueprintMeshPanel& p
     if(error)return std::unexpected(std::move(*error));
     return changed;
 }
-vng::content::Result<bool> EditingWorkspace::apply_pending(RegionEditor& panel) {
+vng::content::Result<bool> EditingWorkspaceUI::apply_pending(RegionEditor& panel) {
     bool changed{};
     std::optional<vng::content::Diagnostic> error;
     while(auto proposal=panel.take_edit()) {

@@ -29,18 +29,18 @@ struct TimelineReply {
 
 // Timeline owns drafts and selection presentation. It reports local actions;
 // its workspace parent executes them and supplies the result downward.
-class TimelineEditing final {
+class TimelineEditingUI final {
 public:
     struct Available {};
     struct Unavailable {};
-    TimelineEditing(const EditingSession& editing, TimelineHosts hosts)
+    TimelineEditingUI(const EditingSession& editing, TimelineHosts hosts)
         : editing_(editing), panel_(hosts.strip,hosts.list,hosts.inspector,hosts.actions,hosts.menu) {}
     [[nodiscard]] const TimelinePanel& view() const { return panel_; }
     [[nodiscard]] bool enabled() const { return enabled_; }
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend class EditingWorkspace;
+    friend class EditingWorkspaceUI;
     TimelineReply handle(const Available&,const TimelineContext&);
     TimelineReply handle(const Unavailable&,const TimelineContext&);
     void present(const TimelineInput&);

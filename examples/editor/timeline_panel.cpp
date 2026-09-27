@@ -1,6 +1,6 @@
 #include "timeline_panel.hpp"
 #include <vng/input/routing.hpp>
-#include "selection_input.hpp"
+#include "selection_input_logic.hpp"
 #include "keyframe_range_menu.hpp"
 #include <algorithm>
 #include <array>

@@ -111,8 +111,8 @@ if(VNG_BUILD_EDITOR)
     target_link_libraries(vng_editor PUBLIC vng_content vng_spatial)
     vng_target_defaults(vng_editor)
     add_library(vng_editor_project STATIC examples/editor/project.cpp examples/editor/edits.cpp examples/editor/effects.cpp examples/editor/effect_presets.cpp
-        examples/editor/preview_updates.cpp examples/editor/camera_edits.cpp
-        examples/editor/navigation.cpp examples/editor/selection.cpp examples/editor/blueprint_gizmos.cpp examples/editor/vertex_drag.cpp
+        examples/editor/preview_delivery_logic.cpp examples/editor/camera_edits.cpp
+        examples/editor/camera_pointer_logic.cpp examples/editor/selection.cpp examples/editor/blueprint_gizmos.cpp examples/editor/vertex_drag.cpp
         examples/editor/scene_file.cpp examples/editor/animation.cpp examples/editor/playback.cpp
         examples/editor/keyframes.cpp examples/editor/settings.cpp examples/editor/position_edits.cpp
         examples/editor/rotation_edits.cpp examples/editor/scale_edits.cpp examples/editor/transform_pivot.cpp examples/editor/edit_clipboard.cpp
@@ -130,14 +130,14 @@ if(VNG_BUILD_EDITOR)
         # both link this; neither lists these sources again.
         add_library(vng_editor_ui STATIC
             examples/editor/inspector_panel.cpp examples/editor/timeline_panel.cpp examples/editor/tool_panel.cpp
-            examples/editor/blueprint_mesh_panel.cpp examples/editor/mesh_tools.cpp examples/editor/mesh_menu.cpp
-            examples/editor/mesh_editing.cpp
+            examples/editor/blueprint_mesh_panel.cpp examples/editor/mesh_tools_ui.cpp examples/editor/mesh_menu.cpp
+            examples/editor/mesh_editing_ui.cpp
             examples/editor/scene_lists.cpp
-            examples/editor/timeline_editing.cpp
-            examples/editor/workspace_proposals.cpp
-            examples/editor/workspace_interaction.cpp
-            examples/editor/workspace_picking.cpp
-            examples/editor/workspace_viewport.cpp
+            examples/editor/timeline_editing_ui.cpp
+            examples/editor/workspace_ui_proposals.cpp
+            examples/editor/workspace_ui_interaction.cpp
+            examples/editor/workspace_ui_picking.cpp
+            examples/editor/workspace_ui_viewport.cpp
             examples/editor/file_dialog.cpp examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp
             examples/editor/save_dialog.cpp
             examples/editor/translation_tool.cpp examples/editor/rotation_tool.cpp examples/editor/scale_tool.cpp

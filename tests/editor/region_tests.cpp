@@ -1,5 +1,5 @@
 #include "../../examples/editor/editing_session.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
 #include <map>
@@ -308,7 +308,7 @@ TEST_CASE("Malformed sparse region patches reject every category atomically", "[
 TEST_CASE("Sparse region packets coalesce behind ACKs without growing to whole boundaries", "[editor][region][patch]") {
     auto authored=scene();const auto id=instantiate(authored,BlueprintId::region);REQUIRE(id);
     auto worker=authored;
-    PreviewUpdates updates;updates.add(1);updates.accepted(1,1);
+    PreviewDeliveryLogic updates;updates.add(1);updates.accepted(1,1);
     auto move=[&](u32 index,Vec3 position) {
         region_settings(authored,*id)->boundary.points[index]=position;
         ++authored.document.revision;

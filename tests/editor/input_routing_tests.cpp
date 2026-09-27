@@ -1,5 +1,5 @@
 #include "../../examples/editor/gizmo_handle_selection.hpp"
-#include "../../examples/editor/navigation.hpp"
+#include "../../examples/editor/camera_pointer_logic.hpp"
 #include <vng/input/routing.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -64,7 +64,7 @@ TEST_CASE("Camera navigation routes only the unconsumed scroll occurrence",
     input::EventSequence sequence;sequence.identify(events);
     auto pose=CameraPose{30,20,15,{}};auto expected=pose;
     bool smooth{},expected_smooth{};
-    NavigationTool tool,reference;
+    CameraPointerLogic tool,reference;
     const auto remaining=std::span<const input::Event>{events}.subspan(1);
     (void)tool.update(pose,ViewMode::scene,smooth,{0,0},{800,600},remaining,events,true);
     (void)reference.update(expected,ViewMode::scene,expected_smooth,{0,0},{800,600},remaining,remaining,true);

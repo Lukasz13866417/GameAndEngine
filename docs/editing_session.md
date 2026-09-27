@@ -28,7 +28,7 @@ Editor application
 │   ├── clipboard values
 │   └── SceneFile: path and persistence
 ├── UI panels and interaction tools
-├── PreviewUpdates and worker transport
+├── PreviewDeliveryLogic and worker transport
 └── presented image and its camera/identity metadata
 ```
 
@@ -87,7 +87,7 @@ body axis, whereas individual mode uses each ship's own declared axis.
 
 `vertices` accepts `{index, position}` entries for exactly the captured selection;
 duplicate or unrelated IDs are rejected. The shared `ComponentTransform` viewport
-tool computes G/R/S and gizmo results from frozen selected points. `MeshTransform`
+tool computes G/R/S and gizmo results from frozen selected points. `MeshTransformGizmo`
 adapts these to blueprint-local vertices and `RegionEditor` adapts them to
 instance-local boundary points. Neither tool owns document history or IPC.
 Whole-blueprint rotation/scaling instead uses `begin_mesh_transform(blueprint)`

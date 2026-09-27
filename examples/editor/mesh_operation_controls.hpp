@@ -10,9 +10,9 @@ struct MeshOperationAdjustment {
 };
 // Editable last-operation parameters, not a second undo stack. The session owns
 // the original mesh, revision guard, re-evaluation and single history entry.
-class MeshOperationTool final : public ToolOptions {
+class MeshOperationControls final : public ToolOptions {
 public:
-    explicit MeshOperationTool(const EditingSession& editing) : editing_(editing) {}
+    explicit MeshOperationControls(const EditingSession& editing) : editing_(editing) {}
     [[nodiscard]] std::optional<MeshOperationAdjustment> take_adjustment() {
         return std::exchange(pending_, {});
     }

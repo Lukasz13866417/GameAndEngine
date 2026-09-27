@@ -1,8 +1,8 @@
-#include "timeline_editing.hpp"
+#include "timeline_editing_ui.hpp"
 #include "animation.hpp"
 
 namespace editor_example {
-void TimelineEditing::present(const TimelineInput& input) {
+void TimelineEditingUI::present(const TimelineInput& input) {
     if(input.inspector_visible) inspector_visible_=*input.inspector_visible;
     if(input.reset || input.clear_selection) pending_focus_.reset();
     if(input.reset) panel_.reset();
@@ -27,7 +27,7 @@ void TimelineEditing::present(const TimelineInput& input) {
         pending_focus_.reset();
     }
 }
-TimelineReply TimelineEditing::handle(const Available&,const TimelineContext& context) {
+TimelineReply TimelineEditingUI::handle(const Available&,const TimelineContext& context) {
     enabled_=true;
     panel_.actions_enabled(true);
     present(context.input);
@@ -37,13 +37,13 @@ TimelineReply TimelineEditing::handle(const Available&,const TimelineContext& co
     }
     return reply;
 }
-TimelineReply TimelineEditing::handle(const Unavailable&,const TimelineContext& context) {
+TimelineReply TimelineEditingUI::handle(const Unavailable&,const TimelineContext& context) {
     enabled_=false;
     panel_.actions_enabled(false);
     present(context.input);
     return {};
 }
-TimelineReply TimelineEditing::propose(TimelineAction action) {
+TimelineReply TimelineEditingUI::propose(TimelineAction action) {
     const auto& state=editing_.state();
     TimelineReply reply{.interacted=true};
     if(action.kind==TimelineAction::Kind::select_object) {
@@ -59,7 +59,7 @@ TimelineReply TimelineEditing::propose(TimelineAction action) {
     reply.action=std::move(action);
     return reply;
 }
-TimelineReply TimelineEditing::accept(const TimelineAction& action,const vng::content::Result<bool>& result) {
+TimelineReply TimelineEditingUI::accept(const TimelineAction& action,const vng::content::Result<bool>& result) {
     TimelineReply reply;
     if(!result) { last_result_=result.error().message; panel_.error(last_result_); }
     else {
@@ -72,7 +72,7 @@ TimelineReply TimelineEditing::accept(const TimelineAction& action,const vng::co
     }
     return reply;
 }
-DebugReport TimelineEditing::debug_report() const {
+DebugReport TimelineEditingUI::debug_report() const {
     const auto stats=panel_.statistics();
     return {.name="timeline",.role="keyframe drafts, selection and authoring",.situation=enabled_?"Available":"Unavailable",
         .owned={{"selected keys",std::to_string(panel_.selected_keyframes().size())},

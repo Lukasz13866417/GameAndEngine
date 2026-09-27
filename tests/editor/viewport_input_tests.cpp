@@ -1,6 +1,6 @@
 #include "../../examples/editor/viewport_input.hpp"
-#include "../../examples/editor/gizmo_input.hpp"
-#include "../../examples/editor/workspace.hpp"
+#include "../../examples/editor/gizmo_controls.hpp"
+#include "../../examples/editor/workspace_ui.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -22,7 +22,7 @@ struct WorkspaceFixture {
     }
     text::Font face{font()};
     ui::Screen screen{ui::dark_theme(face)};
-    EditingWorkspace workspace{initial()};
+    EditingWorkspaceUI workspace{initial()};
     gfx::Camera camera;
     input::EventSequence sequence;
     WorkspaceFixture() {
@@ -110,7 +110,7 @@ TEST_CASE("An idle viewport still receives exactly one held-control tick", "[edi
 }
 
 TEST_CASE("Segmented gizmo arrows respond immediately but never multiply elapsed time", "[editor][input][gizmo][parent-coordination]") {
-    GizmoInput input;
+    GizmoControls input;
     const Vec2 pointer{400,300};
     const std::array press{vng::input::Event{.kind=vng::input::EventKind::key_down,.position=pointer,.key=vng::input::Key::right}};
     const std::array motion{vng::input::Event{.kind=vng::input::EventKind::pointer_move,.position={405,300}}};
@@ -120,24 +120,24 @@ TEST_CASE("Segmented gizmo arrows respond immediately but never multiply elapsed
         });
     };
     input.begin_frame();
-    input.route(true,false,false,pointer,press,press,.02F,true,GizmoInput::Phase::event);
+    input.route(true,false,false,pointer,press,press,.02F,true,GizmoControls::Phase::event);
     CHECK(arrows()==1);CHECK(input.arrow_step()==Catch::Approx(1.2F));
     for(unsigned i=0;i<8;++i) {
-        input.route(true,false,false,pointer,motion,motion,.02F,true,GizmoInput::Phase::event);
+        input.route(true,false,false,pointer,motion,motion,.02F,true,GizmoControls::Phase::event);
         CHECK(arrows()==0);
     }
-    input.route(true,false,false,pointer,{},{},.02F,true,GizmoInput::Phase::tick);CHECK(arrows()==0);
+    input.route(true,false,false,pointer,{},{},.02F,true,GizmoControls::Phase::tick);CHECK(arrows()==0);
     input.begin_frame();
-    input.route(true,false,false,pointer,motion,motion,.02F,true,GizmoInput::Phase::event);CHECK(arrows()==0);
-    input.route(true,false,false,pointer,{},{},.02F,true,GizmoInput::Phase::tick);CHECK(arrows()==1);
-    input.route(true,false,false,pointer,{},{},.02F,true,GizmoInput::Phase::tick);CHECK(arrows()==0);
+    input.route(true,false,false,pointer,motion,motion,.02F,true,GizmoControls::Phase::event);CHECK(arrows()==0);
+    input.route(true,false,false,pointer,{},{},.02F,true,GizmoControls::Phase::tick);CHECK(arrows()==1);
+    input.route(true,false,false,pointer,{},{},.02F,true,GizmoControls::Phase::tick);CHECK(arrows()==0);
     // A complete tap in one frame still gets its initial movement.
     input.begin_frame();
     const std::array release{vng::input::Event{.kind=vng::input::EventKind::key_up,.position=pointer,.key=vng::input::Key::right}};
-    input.route(true,false,false,pointer,release,release,.02F,true,GizmoInput::Phase::event);
-    input.route(true,false,false,pointer,press,press,.02F,true,GizmoInput::Phase::event);CHECK(arrows()==1);
-    input.route(true,false,false,pointer,release,release,.02F,true,GizmoInput::Phase::event);
-    input.route(true,false,false,pointer,{},{},.02F,true,GizmoInput::Phase::tick);CHECK(arrows()==0);
+    input.route(true,false,false,pointer,release,release,.02F,true,GizmoControls::Phase::event);
+    input.route(true,false,false,pointer,press,press,.02F,true,GizmoControls::Phase::event);CHECK(arrows()==1);
+    input.route(true,false,false,pointer,release,release,.02F,true,GizmoControls::Phase::event);
+    input.route(true,false,false,pointer,{},{},.02F,true,GizmoControls::Phase::tick);CHECK(arrows()==0);
 }
 
 TEST_CASE("Workspace owns consecutive gestures in one ordered viewport batch", "[editor][input][parent-coordination][viewport]") {
