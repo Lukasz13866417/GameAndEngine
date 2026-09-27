@@ -339,8 +339,8 @@ Location earth_orbit(Voyage& v) {
     };
     const auto earth=v.earth_center;
     const auto level=[=](double, V p){ return unit(p-earth); };
-    // After the dock the courier turns toward where the Moon will be from the
-    // point where the burn begins.
+    // Past the gateway the courier turns toward where the Moon will be from
+    // the point where the burn begins.
     const Flight probe(t_h,moon_cut+.1,p_h,climb,speed,level,.5);
     const auto aim=unit(v.moon_center-probe.at(burn_time).position);
     const auto heading=[=](double t){ return slerp(climb(t),aim,ease(t,turn_begin,turn_end)); };
@@ -349,7 +349,7 @@ Location earth_orbit(Voyage& v) {
 
     // The gateway sits on the straight approach: the courier crosses the ring
     // plane at ring_time below the hub, between two spokes, and passes under
-    // the construction dock.
+    // the mass-driver catcher, whose funnel faces the Moon along the lane.
     const auto at_ring=flight->at(ring_time);
     const auto sx=at_ring.forward, sy=flatten(level(0,at_ring.position),sx), sz=cross(sx,sy);
     constexpr double lane=4.2;
@@ -369,26 +369,13 @@ Location earth_orbit(Voyage& v) {
         v.turn(ring_id,t,spun,Interpolation::linear);
         if (t>=moon_cut) break;
     }
-    // The next flagship-class hull under construction, bow to the dock mouth.
-    parts.push_back(v.add(static_cast<u32>(v.cast.transport),"BASTION / hull under construction",
-        local({15,-.2,0}),orientation(to(sx),to(sy)),8.5F));
-    // Weld sparks on the hull: brief, irregular flickers.
-    for (const auto& [spot, phase] : std::array{std::pair{V{14.2,.45,.5},.0},std::pair{V{15.9,-.5,-.4},.37},std::pair{V{15.1,.35,-.6},.71}}) {
-        const auto id=v.add(v.spark,"GATEWAY / weld spark",local(spot),{},.15F,false);
-        v.glow(id,t_h,.35,Interpolation::hold);
-        for (double t=36.+phase;t<46;t+=.53+.41*std::fmod(t*1.7,1.)) {
-            v.show(id,t,true);
-            v.show(id,t+.08+.05*std::fmod(t*3.1,1.),false);
-        }
-        parts.push_back(id);
-    }
     // Station traffic uses the gateway like the skyway: through the ring,
     // each crossing it midway between two spokes.
     struct Traffic { u32 blueprint; const char* name; V from, to; f32 scale; };
     const std::array traffic{
         Traffic{static_cast<u32>(v.cast.transport),"Freighter / inbound",{-24,4.23,.34},{12,4.23,.34},.9F},
         Traffic{static_cast<u32>(v.cast.shuttle),"Shuttle / outbound",{9,3.66,-2.15},{-40,3.66,-2.15},1.1F},
-        Traffic{static_cast<u32>(v.cast.patrol),"Tug / dock",{13,2.6,-1.4},{17,2.4,-.6},.8F},
+        Traffic{static_cast<u32>(v.cast.patrol),"Tug / pod racks",{11,-.2,-3},{13.9,-.2,-2.2},.8F},
         Traffic{static_cast<u32>(v.cast.patrol),"Patrol / picket",{-30,-9,8},{25,-7,10},.9F}};
     for (const auto& craft : traffic) {
         const auto a=local(craft.from), b=local(craft.to);
@@ -413,8 +400,8 @@ Location earth_orbit(Voyage& v) {
     for (const auto id : v.cast.traffic) v.show(id,moon_cut,false);
 
     // Camera: the pull-up, the climb, Earth and the gateway, threading the
-    // ring, past the hull under construction, and the burn for the Moon from
-    // a camera the courier leaves behind.
+    // ring, under the mass-driver catcher, and the burn for the Moon from a
+    // camera the courier leaves behind.
     // Eye and target both fixed to the courier's frame.
     const auto framed=[courier](double t, V eye, V target, double zoom = 1) {
         const auto pose=courier(t);
@@ -441,15 +428,15 @@ Location earth_orbit(Voyage& v) {
         return Shot{pose.position+across*.8+vertical*.25-along*.35,pose.position+along*.2,1};
     };
     // Behind the courier and a little to one side on a wide lens, tilted up
-    // so the dock's lattice passes overhead.
-    const auto dock_shot=[=](double t) {
+    // so the catcher's funnel passes overhead.
+    const auto under_catcher=[=](double t) {
         const auto pose=courier(t);
         return Shot{pose.position-pose.forward*.45+cross(pose.forward,sy)*.12+sy*.03,
                     pose.position+pose.forward*1.2+sy*.25,.85};
     };
-    // The hull in profile through the dock's lattice, level with it, as the
-    // courier comes up the lane below.
-    const Shot dock_profile{local({9,-1.2,-7.2}),local({15,-.8,0}),1};
+    // The catcher from ahead, below and to one side: its lit mouth, the
+    // lead-in lights down to the receiving bay, and the station behind.
+    const Shot catcher_view{local({31,-4.3,-8.5}),local({17,.9,.5}),1.1};
     const V burn_offset{.02,.07,.36};
     // After ignition the camera coasts to rest behind the courier while the
     // lens lengthens: the courier burns away up toward the Moon, which ends
@@ -476,10 +463,10 @@ Location earth_orbit(Voyage& v) {
         if (t<32.8) return {wide_eye+sx*(.15*(t-30)),wide_target,1};
         // Threading the ring from just behind: the gateway grows ahead.
         if (t<39.4) return chase(t,{.03,.10,.42},5,1);
-        if (t<41.6) return dock_profile;
-        if (t<45.5) return dock_shot(t);
-        // Round behind the courier as it clears the dock and turns for the Moon.
-        if (t<ignition) return orbit(dock_shot(t),chase(t,burn_offset,.4),pose.position,ease(t,45.5,47.1));
+        if (t<41.6) return catcher_view;
+        if (t<45.5) return under_catcher(t);
+        // Round behind the courier as it clears the catcher and turns for the Moon.
+        if (t<ignition) return orbit(under_catcher(t),chase(t,burn_offset,.4),pose.position,ease(t,45.5,47.1));
         const auto held=chase(coasting(t),burn_offset,.4);
         const auto look=slerp(unit(held.target-held.eye),burn_look,ease(t,ignition,ignition+1.2));
         return {held.eye,held.eye+look*10,1+2*std::clamp((t-ignition-.3)/(moon_cut-ignition-.3),0.,1.)};
@@ -1256,7 +1243,7 @@ content::Result<void> author(project::State& state, KeyBatch& keys, const Handof
     names[handoff.time]="08 / Pull up into the sky";
     names[30]="09 / Earth and the gateway";
     names[32.8F]="10 / Threading the ring";
-    names[39.4F]="11 / The hull under construction";
+    names[39.4F]="11 / The mass-driver catcher";
     names[static_cast<f32>(ignition)]="12 / Burn for the Moon";
     names[moon_cut]="13 / Down to the lunar night";
     names[55.3F]="14 / Earthrise over Serenity";

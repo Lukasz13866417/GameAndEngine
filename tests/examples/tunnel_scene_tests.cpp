@@ -296,7 +296,7 @@ TEST_CASE("The voyage flies nose first, keeps its courier in frame and never sha
         const std::string_view name=instance.name;
         const bool escort=name.starts_with("BASTION / ")&&!name.contains("construction");
         const bool in_fleet=escort||name.starts_with("LANCER / ")||name.starts_with("MANTA / ")||name.starts_with("KESTREL / wing");
-        const bool gateway=name=="Freighter / inbound"||name=="Shuttle / outbound"||name=="Tug / dock"||name=="Patrol / picket";
+        const bool gateway=name=="Freighter / inbound"||name=="Shuttle / outbound"||name=="Tug / pod racks"||name=="Patrol / picket";
         if(!in_fleet&&!gateway)continue;
         CAPTURE(name);
         const auto t=in_fleet ? 105.F : 40.F; // cruising in formation, before the jumps

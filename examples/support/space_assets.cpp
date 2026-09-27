@@ -720,22 +720,121 @@ vm::Document gateway_station() {
         }
         b.box({-8.2F,0,side*9.1F},{.08F,.08F,.08F},side<0 ? red_light : green_light,side<0 ? red_light : green_light);
     }
-    // Construction dock beyond the +X end: an open frame with work lights.
-    constexpr f32 dock_start=9.5F, dock_end=24.F, half=2.1F;
-    for (const auto& [y,z] : std::array{std::pair{half,half},std::pair{half,-half},std::pair{-half,half},std::pair{-half,-half}})
-        b.beam({dock_start,y,z},{dock_end,y,z},.22F,frame_metal);
-    for (f32 x=dock_start;x<=dock_end+1e-3F;x+=2.9F) {
-        const std::array corners{Vec3{x,half,half},Vec3{x,half,-half},Vec3{x,-half,-half},Vec3{x,-half,half}};
-        for (unsigned i=0;i<4;++i) b.beam(corners[i],corners[(i+1)%4],.18F,frame_metal);
-        for (const auto& c : corners) b.box(c,{.12F,.12F,.12F},amber_light,amber_light);
+    // Mass-driver catcher beyond the +X end. Payloads flung from the lunar
+    // mass driver fall into a wide funnel that faces the Moon (+X), guided in
+    // by lights round its mouth, and are slowed in the receiving bay at its
+    // throat; unloaded pods wait in racks beside the boom.
+    constexpr f32 boom_end=12.4F, throat=15.8F, mouth=20.2F, throat_radius=1.4F, mouth_radius=3.4F;
+    // A point at radius r and angle t about X: t=0 is +Y, t=pi/2 is +Z.
+    const auto around=[](f32 x, f32 r, f32 t){ return Vec3{x,r*std::cos(t),r*std::sin(t)}; };
+    // A band of facets about X from (x0,r0) to (x1,r1), `depth` thick outward.
+    const auto band=[&](f32 x0, f32 r0, f32 x1, f32 r1, f32 depth, unsigned segments, Material outer, Material inner,
+                        bool ends, f32 phase = 0) {
+        for (unsigned i=0;i<segments;++i) {
+            const auto t0=phase+2*pi*static_cast<f32>(i)/static_cast<f32>(segments);
+            const auto t1=phase+2*pi*static_cast<f32>(i+1)/static_cast<f32>(segments);
+            const auto inside=around((x0+x1)*.5F,(r0+r1+depth)*.5F,(t0+t1)*.5F);
+            b.quad(around(x0,r0+depth,t0),around(x0,r0+depth,t1),around(x1,r1+depth,t1),around(x1,r1+depth,t0),outer,inside);
+            b.quad(around(x0,r0,t0),around(x0,r0,t1),around(x1,r1,t1),around(x1,r1,t0),inner,inside);
+            if (!ends) continue;
+            b.quad(around(x0,r0,t0),around(x0,r0,t1),around(x0,r0+depth,t1),around(x0,r0+depth,t0),outer,inside);
+            b.quad(around(x1,r1,t0),around(x1,r1,t1),around(x1,r1+depth,t1),around(x1,r1+depth,t0),outer,inside);
+        }
+    };
+    // A strip of rectangular section from a to c, standing `height` off the
+    // surface toward `out`.
+    const auto rib=[&](Vec3 a, Vec3 c, Vec3 out, f32 width, f32 height, Material top, Material side) {
+        const auto along=unit(sub(c,a)), up=unit(sub(out,mul(along,dot(out,along)))), across=cross(along,up);
+        b.box(add(mul(add(a,c),.5F),mul(up,height*.5F)),across,up,along,{width*.5F,height*.5F,length(sub(c,a))*.5F},top,side);
+    };
+    // The funnel: nearly a straight cone, flaring slightly toward the mouth.
+    const auto station=[&](f32 s){ return std::lerp(throat,mouth,s); };
+    const auto flare=[&](f32 s){ return throat_radius+(mouth_radius-throat_radius)*(.75F*s+.25F*s*s); };
+    constexpr unsigned facets=24, stations=6;
+    constexpr f32 shell=.06F;
+    // Its shell: outside, panels between the ribs in two tones; inside, dark
+    // bands narrowing toward the throat.
+    for (unsigned k=0;k<stations;++k) {
+        const auto s0=static_cast<f32>(k)/stations, s1=static_cast<f32>(k+1)/stations;
+        const auto x0=station(s0), x1=station(s1), r0=flare(s0), r1=flare(s1);
+        for (unsigned i=0;i<facets;++i) {
+            const auto t0=2*pi*static_cast<f32>(i)/facets, t1=2*pi*static_cast<f32>(i+1)/facets;
+            const auto inside=around((x0+x1)*.5F,(r0+r1+shell)*.5F,(t0+t1)*.5F);
+            b.quad(around(x0,r0+shell,t0),around(x0,r0+shell,t1),around(x1,r1+shell,t1),around(x1,r1+shell,t0),
+                   (i/2+k)%2 ? hull : plating,inside);
+            b.quad(around(x0,r0,t0),around(x0,r0,t1),around(x1,r1,t1),around(x1,r1,t0),k%2 ? frame_metal : dark,inside);
+        }
     }
-    b.beam({9,0,0},{dock_start,half,half},.2F,frame_metal);
-    b.beam({9,0,0},{dock_start,-half,-half},.2F,frame_metal);
+    // Ribs down every other seam outside, and two hoops with work lights.
+    for (unsigned j=0;j<facets;j+=2) {
+        const auto t=2*pi*static_cast<f32>(j)/facets;
+        const Vec3 out{0,std::cos(t),std::sin(t)};
+        for (unsigned k=0;k<stations;++k) {
+            const auto s0=static_cast<f32>(k)/stations, s1=static_cast<f32>(k+1)/stations;
+            rib(around(station(s0),flare(s0)+shell,t),around(station(s1),flare(s1)+shell,t),out,.12F,.1F,plating,frame_metal);
+        }
+    }
+    for (const auto s : {.35F,.72F}) {
+        band(station(s)-.1F,flare(s)+shell,station(s)+.1F,flare(s+.05F)+shell,.08F,facets,dark,dark,true);
+        for (unsigned j=2;j<facets;j+=4)
+            b.box(around(station(s),flare(s+.025F)+shell+.1F,2*pi*static_cast<f32>(j)/facets),{.035F,.035F,.035F},amber_light,amber_light);
+    }
+    // The mouth: a heavy rim with guide lights round its outer edge, hot
+    // enough to ring the mouth from tens of kilometres.
+    band(mouth,mouth_radius-.1F,mouth+.35F,mouth_radius-.1F,.32F,facets*2,hull,plating,true);
+    constexpr Material guide{{.85F,.9F,1.F},6.F};
+    for (unsigned i=0;i<facets;++i) {
+        const auto t=2*pi*(static_cast<f32>(i)+.5F)/facets;
+        b.box(around(mouth+.35F,mouth_radius+.22F,t),{1,0,0},{0,std::cos(t),std::sin(t)},{0,-std::sin(t),std::cos(t)},
+              {.025F,.022F,.045F},guide,guide);
+    }
+    // Lead-in lights down the inside toward the throat.
+    for (unsigned line=0;line<4;++line) {
+        const auto t=pi/4+pi/2*static_cast<f32>(line);
+        for (unsigned k=1;k<7;++k) {
+            const auto s=static_cast<f32>(k)/7;
+            b.box(around(station(s),flare(s)-.03F,t),{.05F,.05F,.05F},lamp_cyan,lamp_cyan);
+        }
+    }
+    // The receiving bay behind the throat: a lit door at the throat, a collar
+    // over the joint, and doors either side where pods go out to the racks.
+    b.prism({boom_end,0,0},{throat,0,0},1.35F,6,hull,dark,pi/6);
+    b.prism({boom_end,0,0},{boom_end+.35F,0,0},1.5F,6,dark,dark,pi/6);
+    band(throat-.25F,1.3F,throat+.2F,1.3F,.25F,facets,dark,dark,true);
+    b.prism({throat,0,0},{throat+.02F,0,0},.62F,12,warm_window,warm_window);
+    band(throat,.62F,throat+.5F,.62F,.18F,12,dark,dark,true);
+    for (unsigned i=0;i<12;++i) b.box(around(throat+.51F,.71F,2*pi*(static_cast<f32>(i)+.5F)/12),{.02F,.035F,.035F},lamp_white,lamp_white);
+    for (const auto side : {-1.F,1.F}) {
+        const auto face=1.35F*std::cos(pi/6), x=boom_end+1.7F;
+        b.box({x,0,side*(face+.005F)},{.62F,.34F,.01F},warm_window,warm_window);
+        for (const auto dx : {-.4F,0.F,.4F}) b.box({x+dx,0,side*(face+.02F)},{.03F,.34F,.02F},dark,dark);
+        for (const auto y : {-.4F,.4F}) b.box({x,y,side*(face+.02F)},{.72F,.06F,.03F},dark,dark);
+    }
+    // The boom from the hub, with pod racks either side.
+    b.prism({9,0,0},{boom_end,0,0},.5F,6,hull,plating,pi/6);
+    for (const auto x : {9.2F,10.9F}) b.prism({x-.17F,0,0},{x+.17F,0,0},.62F,6,dark,dark,pi/6);
+    const Material cargo{{.34F,.33F,.30F}}, stripe{{.42F,.24F,.06F}};
+    for (const auto side : {-1.F,1.F}) {
+        const auto z=side*1.55F, x0=10.15F, x1=11.65F;
+        for (const auto y : {-.8F,.8F}) b.beam({x0,y,z},{x1,y,z},.08F,frame_metal);
+        for (const auto x : {x0,x1}) {
+            b.beam({x,-.8F,z},{x,.8F,z},.08F,frame_metal);
+            b.beam({x,0,side*.43F},{x,0,z},.1F,frame_metal);
+        }
+        for (unsigned slot=0;slot<3;++slot) {
+            if (side>0 && slot==1) continue;
+            const auto x=x0+.25F+.5F*static_cast<f32>(slot);
+            b.prism({x,-.42F,z},{x,.42F,z},.2F,10,cargo,dark);
+            b.dome({x,.42F,z},{0,1,0},.2F,cargo,3,10);
+            b.dome({x,-.42F,z},{0,-1,0},.2F,cargo,3,10);
+            b.prism({x,.12F,z},{x,.24F,z},.21F,10,stripe,stripe);
+        }
+    }
     // Navigation beacons at the extremities.
     b.box({-9.3F,0,0},{.1F,.1F,.1F},white_light,white_light);
-    b.box({dock_end+.3F,half,half},{.1F,.1F,.1F},green_light,green_light);
-    b.box({dock_end+.3F,-half,-half},{.1F,.1F,.1F},red_light,red_light);
-    auto result=std::move(b).document("GATEWAY / Arabian orbital yard","hub spindle, docking arms, solar wings, construction dock");
+    b.box(around(mouth+.17F,mouth_radius+.27F,pi/2),{.08F,.08F,.08F},green_light,green_light);
+    b.box(around(mouth+.17F,mouth_radius+.27F,-pi/2),{.08F,.08F,.08F},red_light,red_light);
+    auto result=std::move(b).document("GATEWAY / Arabian orbital yard","hub spindle, docking arms, solar wings, mass-driver catcher");
     result.metadata["render/lighting"]="illustrated";
     return result;
 }

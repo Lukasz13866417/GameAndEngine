@@ -72,8 +72,9 @@ private:
 // Domes, landing pads, towers and a mass driver on a graded site, in the
 // Moon's own coordinates so the base shares the Moon's instance transform.
 [[nodiscard]] vng::content::vmesh::Document lunar_base(const MoonSurface&, vng::Vec3 site, vng::Vec3 rail_heading);
-// An orbital gateway along +X: hub spindle, docking arms, a construction dock
-// and solar wings. Its habitat ring is a separate blueprint so it can spin.
+// An orbital gateway along +X: hub spindle, docking arms, solar wings and, on
+// a boom beyond +X, the catcher for cargo flung up by the Moon's mass driver.
+// Its habitat ring is a separate blueprint so it can spin.
 [[nodiscard]] vng::content::vmesh::Document gateway_station();
 // A spoked habitat ring around +X; spinning it is a rotation about local X.
 [[nodiscard]] vng::content::vmesh::Document habitat_ring();

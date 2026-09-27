@@ -79,7 +79,7 @@ timeline tracks. Select a keyframe before editing animated instance transforms.
 
 ## The voyage
 
-After the mouth the courier climbs into orbit, threads an orbital gateway,
+After the mouth the courier climbs into orbit, threads an orbital gateway and passes under the catcher for the Moon's mass-driver cargo,
 burns for the Moon, skims its night side past a mining base into sunrise, runs
 an asteroid belt, meets a fleet as it warps in, takes station beside the
 flagship, and jumps away with it, leaving home in view. The authoring code is
@@ -91,8 +91,8 @@ gateway, ring, glows, fragments, plumes) is in `examples/support/space_assets.cp
 | 19.4–30 s | Pull up out of the terminal and climb past the arcologies; swing to a side view on Earth's limb |
 | 30–32.8 s | Earth and the orbital gateway, a freighter crossing in front |
 | 32.8–39.4 s | Threading the spinning habitat ring below the hub |
-| 39.4–41.6 s | The hull under construction, in profile inside the dock's lattice |
-| 41.6–50.3 s | Under the dock; round behind the courier as it turns for the Moon; ignition, and it burns away toward a half-lit Moon as the camera coasts to rest and the lens lengthens |
+| 39.4–41.6 s | The mass-driver catcher: its lit funnel mouth faces the Moon, the ring behind it |
+| 41.6–50.3 s | Under the catcher; round behind the courier as it turns for the Moon; ignition, and it burns away toward a half-lit Moon as the camera coasts to rest and the lens lengthens |
 | 50.3–55.3 s | Down to the lunar night, the sun setting behind the limb |
 | 55.3–59 s | Earthrise over the Serenity mining works; the courier roars in over the camera and away under Earth |
 | 59–64.3 s | Low along the mass driver's gantry lights |
