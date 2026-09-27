@@ -253,10 +253,11 @@ vng::content::Result<editor_example::State> author_scene(const std::filesystem::
         }
         // Shared samples keep the camera and courier locked together; every
         // frame while the courier goes by the opening camera, through the
-        // catch-up and through the eased move for the exit.
+        // catch-up, the eased move for the exit and the surge.
         std::vector<f32> sample_times;
         for(f32 t=0;t<handoff_time;t+=.125F)sample_times.push_back(t);
         for(f32 t=courier_arrival-.3F;t<catch_up_end;t+=1.F/60)sample_times.push_back(t);
+        for(f32 t=surge_begin;t<handoff_time;t+=1.F/60)sample_times.push_back(t);
         sample_times.push_back(catch_up_begin);sample_times.push_back(catch_up_end);
         for(unsigned frame=0;frame<=36;++frame)
             sample_times.push_back(exit_approach+exit_approach_duration*static_cast<f32>(frame)/36);

@@ -12,14 +12,18 @@ the route is 1,000 km long, and its bend follows an Earth-sized radius.
 
 ## Express departure (116 seconds)
 
-The skyway act is the first 21 seconds; the voyage into space follows it (see
+The skyway act is the first 19 seconds; the voyage into space follows it (see
 [The voyage](#the-voyage)). The courier starts about 141 km before the exit,
 overtakes heavy transports, patrols and shuttles, and passes through the
 shared Earth dispersal terminal.
 Its starting speed is 3.432 km/s (another 20% increase). Approach acceleration is 40% stronger
 and its envelope starts two seconds earlier:
 `3.432 + 16.8*(smoothstep(min((t+2)/40,1)) - smoothstep(2/40))`.
-It still levels off smoothly. The terminal now adds only an **8-degree** incline.
+It still levels off smoothly. Nearing the exit the courier opens up: from
+18.0 s it surges by 120 km/s in 0.8 s, about ten times its speed, so the last
+kilometres of the tube and the whole terminal flash past in half a second. The
+camera stays locked to it throughout, and the climb then eases back toward
+70 km/s over eight seconds. The terminal now adds only an **8-degree** incline.
 Just after the mouth the voyage takes over the courier and the camera from
 exactly the skyway's last position, velocity and framing. This is an authored
 cinematic trajectory, not an orbital mechanics simulation.
@@ -49,9 +53,9 @@ moves, not cuts or crossfades, and never pass through the ship.
 | 2–5.6 s | Traffic comes in: a heavy transport overhead, a patrol, a shuttle |
 | 5.6–6.1 s | The courier dives in under the camera and away past them |
 | 6.1–6.6 s | The camera races after it, past the traffic, into the close chase |
-| 6.6–18.15 s | Follow the ship past traffic |
-| 18.15–21.27 s | Closer side-offset exit approach; clear the mouth at ~20.47 s |
-| 21.27 s– | The voyage: pull up into the sky (below) |
+| 6.6–17.07 s | Follow the ship past traffic |
+| 17.07–19.39 s | Closer side-offset exit approach; the surge from 18 s; clear the mouth at ~18.59 s |
+| 19.39 s– | The voyage: pull up into the sky (below) |
 
 Positions, headings, lenses and visibility are serialized timeline tracks;
 there are no playback callbacks hidden in the demo. Keyframe names mark story
@@ -84,7 +88,7 @@ gateway, ring, glows, fragments, plumes) is in `examples/support/space_assets.cp
 
 | Time | Shot |
 | --- | --- |
-| 21.3–30 s | Pull up out of the terminal and climb past the arcologies; swing to a side view on Earth's limb |
+| 19.4–30 s | Pull up out of the terminal and climb past the arcologies; swing to a side view on Earth's limb |
 | 30–32.8 s | Earth and the orbital gateway, a freighter crossing in front |
 | 32.8–39.4 s | Threading the spinning habitat ring below the hub |
 | 39.4–41.6 s | The hull under construction, in profile inside the dock's lattice |

@@ -197,10 +197,17 @@ TEST_CASE("Express departure has a continuous close camera and clears the low te
     CHECK(std::abs(acceleration(71.5F))<.02F);
     const auto mouth_velocity=d::velocity(d::exit_time);
     CHECK(std::abs(std::atan2(mouth_velocity.y,-mouth_velocity.z)*180/std::numbers::pi_v<f32>-8)<1.F);
+    // Continuous through the throat and the mouth: the heading holds, and the
+    // speed changes only as fast as the exit surge accelerates it.
     for(auto t:{d::throat_time,d::exit_time}) {
         const auto a=d::velocity(t-.001F),b=d::velocity(t+.001F);
-        CHECK(std::hypot(a.x-b.x,a.y-b.y,a.z-b.z)<.01F);
+        const double la=std::hypot(a.x,a.y,a.z),lb=std::hypot(b.x,b.y,b.z);
+        CHECK((double(a.x)*b.x+double(a.y)*b.y+double(a.z)*b.z)/(la*lb)>std::cos(.001));
+        CHECK(std::abs(lb-la)<std::abs(d::speed(t+.001F)-d::speed(t-.001F))+.001*la);
     }
+    // Nearing the exit the courier surges to about ten times its speed.
+    CHECK(d::speed(d::exit_time)>9.F*d::speed(d::surge_begin));
+    CHECK(d::surge_begin<d::throat_time);
     const auto camera_eye=[&](f32 t){
         const auto* camera=p::active_camera(*scene,t);REQUIRE(camera);CHECK(camera->id==d::camera_id);
         return p::evaluate_instance(*scene,*camera,t).transform.position;

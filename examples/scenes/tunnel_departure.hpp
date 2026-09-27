@@ -1,5 +1,6 @@
 #pragma once
 #include "tunnel_scene.hpp"
+#include <algorithm>
 #include "departure_voyage.hpp"
 #include "../support/earth_express_route.hpp"
 
@@ -20,10 +21,18 @@ inline constexpr vng::f32 initial_speed=2.2F*1.3F*1.2F,start_distance=141.408F;
 // Subtract its initial velocity contribution to retain the authored start speed.
 inline constexpr vng::f32 acceleration_gain=12.F*1.4F,acceleration_lead=2.F,ramp_duration=40.F;
 [[nodiscard]] constexpr vng::f32 ramp(vng::f32 t){return t+acceleration_lead<ramp_duration?(t+acceleration_lead)/ramp_duration:1.F;}
-[[nodiscard]] constexpr vng::f32 speed(vng::f32 t){return initial_speed+acceleration_gain*(smooth(ramp(t))-smooth(ramp(0)));}
+// Nearing the exit the courier opens up: a hard surge, about ten times its
+// speed, carries it through the last kilometres of the tube and the terminal
+// in half a second and on into the climb.
+inline constexpr vng::f32 surge_begin=18.F,surge_duration=.8F,surge_gain=120.F;
+[[nodiscard]] constexpr vng::f32 surge(vng::f32 t){return std::clamp((t-surge_begin)/surge_duration,0.F,1.F);}
+[[nodiscard]] constexpr vng::f32 speed(vng::f32 t){
+    return initial_speed+acceleration_gain*(smooth(ramp(t))-smooth(ramp(0)))+surge_gain*smooth(surge(t));
+}
 [[nodiscard]] constexpr vng::f32 travel(vng::f32 t){
     return initial_speed*t+acceleration_gain*(ramp_duration*(smooth_integral(ramp(t))-smooth_integral(ramp(0)))
-        -smooth(ramp(0))*t+(t>ramp_duration-acceleration_lead?t-(ramp_duration-acceleration_lead):0.F));
+        -smooth(ramp(0))*t+(t>ramp_duration-acceleration_lead?t-(ramp_duration-acceleration_lead):0.F))
+        +surge_gain*(surge_duration*smooth_integral(surge(t))+(t>surge_begin+surge_duration?t-surge_begin-surge_duration:0.F));
 }
 [[nodiscard]] constexpr vng::f32 time_at_distance(vng::f32 distance) {
     vng::f32 low=0,high=duration;
