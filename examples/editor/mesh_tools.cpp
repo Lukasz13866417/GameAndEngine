@@ -9,7 +9,7 @@ using namespace vng;
 namespace {
 float area(Vec2 a,Vec2 b,Vec2 c) {return (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);}
 }
-MeshTools::MeshTools(ui::Container controls,ui::Container popup):popup_(popup),
+MeshTools::MeshTools(ui::Container controls,ui::Container popup):menu_(popup),
     modes_(controls.dropdown<MeshSelectMode>("Select",{{MeshSelectMode::vertex,"Vertices (1)"},
         {MeshSelectMode::edge,"Edges (2)"},{MeshSelectMode::face,"Faces (3)"},
         {MeshSelectMode::surface,"Surface (4)"},{MeshSelectMode::whole,"Whole mesh (5)"}})),
@@ -25,13 +25,6 @@ MeshTools::MeshTools(ui::Container controls,ui::Container popup):popup_(popup),
     transform_help_=controls.label("G/R/S: transform | Enter: confirm").height(24);
     controls.label("F: edge/face | H: hide | Alt+H: reveal").height(24);
     xray_=controls.checkbox("X-ray selection").value(false).height(26);
-    popup_.width(264).height(244).padding(8).gap(6).visible(false);
-    popup_.label("Mesh tools").height(24);
-    fill_=popup_.button("Make edge / face (F)").height(34);
-    subdivide_=popup_.button("Subdivide").height(34);
-    align_=popup_.button("Align to line").height(34);
-    hide_=popup_.button("Hide faces (H)").height(34);
-    reveal_=popup_.button("Reveal hidden (Alt+H)").height(34);
 }
 void MeshTools::reset() {
     if(!blueprint_ && selected_.empty()) {close();return;}
@@ -39,7 +32,7 @@ void MeshTools::reset() {
     visibility_={};visible_faces_.clear();visible_edges_.clear();visible_vertices_.clear();
     ++visibility_revision_;++selection_revision_;++topology_revision_;close();
 }
-void MeshTools::sync(const State& state) {
+void MeshTools::sync(const State& state, bool accept_input) {
     const auto target=mesh_target(state); const auto* mesh=editable_mesh(state);
     if(!target || !mesh) { reset(); return; }
     if(blueprint_!=target->blueprint || (revision_!=state.document.revision &&
@@ -55,7 +48,7 @@ void MeshTools::sync(const State& state) {
         if(mode_==MeshSelectMode::vertex) selected_.push_back(state.viewport.selected_vertex);
     }
     revision_=state.document.revision;
-    if(auto next=modes_.changedValue()) mode(*next);
+    if(accept_input) if(auto next=modes_.changedValue()) mode(*next);
     if(summary_revision_==selection_revision_) return;
     summary_revision_=selection_revision_;
     if(mode_==MeshSelectMode::surface) {
@@ -265,26 +258,34 @@ std::optional<u32> MeshTools::pick(const State& state,Vec2 p,Extent2D extent,con
     return found;
 }
 void MeshTools::open(Vec2 at,Vec2 screen,std::optional<ui::Rect> viewport) {
-    if(viewport)at={viewport->x+8,viewport->y+std::max(0.F,viewport->height-252)};
-    popup_.position({std::clamp(at.x,0.F,std::max(0.F,screen.x-264)),std::clamp(at.y,0.F,std::max(0.F,screen.y-244))}).visible(true);
-    fill_.enabled(!selected_.empty() && (selected_.size()>=2 || mode_!=MeshSelectMode::vertex));
-    subdivide_.enabled(!selected_.empty()); align_.enabled(!selected_.empty()); menu_open_=true;
-    hide_.enabled(!selected_.empty());reveal_.enabled(!visibility_.hidden_faces.empty());
+    if (!component_mode()) return;
+    menu_.open(at, screen, viewport);
+    (void)dispatch(menu_, menu_situation(), MeshMenuContext{{}, !visibility_.hidden_faces.empty(), false});
 }
-void MeshTools::close() { menu_open_=false; popup_.visible(false); }
+void MeshTools::close() { menu_.close(); }
 std::optional<MeshAction> MeshTools::poll(std::span<const input::Event> events) {
-    if(!menu_open_) return {};
-    std::optional<MeshAction> action;
-    if(fill_.clicked()) action=MeshAction::fill;
-    if(subdivide_.clicked()) action=MeshAction::subdivide;
-    if(align_.clicked()) action=MeshAction::align;
-    if(hide_.clicked()) action=MeshAction::hide;
-    if(reveal_.clicked()) action=MeshAction::reveal;
-    if(action) { close(); return action; }
-    for(const auto& e:events) if(e.kind==input::EventKind::focus_lost ||
-        (e.kind==input::EventKind::key_down && e.key==input::Key::escape) ||
-        (e.kind==input::EventKind::pointer_down && !popup_.bounds().contains(e.position))) close();
-    return {};
+    return dispatch(menu_, menu_situation(), MeshMenuContext{events, !visibility_.hidden_faces.empty()});
+}
+MeshMenu::Situation MeshTools::menu_situation() const {
+    switch (mode_) {
+    case MeshSelectMode::vertex: return MeshMenu::Vertices{selected_.size()};
+    case MeshSelectMode::edge: return MeshMenu::Edges{selected_.size()};
+    case MeshSelectMode::face: return MeshMenu::Faces{selected_.size()};
+    case MeshSelectMode::surface:
+    case MeshSelectMode::whole: return MeshMenu::Inactive{};
+    }
+    return MeshMenu::Inactive{};
+}
+DebugReport MeshTools::debug_report() const {
+    const auto mode = mode_ == MeshSelectMode::vertex ? "Vertices" : mode_ == MeshSelectMode::edge ? "Edges" :
+        mode_ == MeshSelectMode::face ? "Faces" : mode_ == MeshSelectMode::surface ? "Surface" : "Whole mesh";
+    return {.name = "components", .role = "mesh component selection and visibility", .situation = mode,
+        .owned = {{"selected elements", std::to_string(selected_.size())},
+                  {"selection revision", std::to_string(selection_revision_)},
+                  {"topology revision", std::to_string(topology_revision_)},
+                  {"visibility revision", std::to_string(visibility_revision_)},
+                  {"hidden faces", std::to_string(visibility_.hidden_faces.size())}},
+        .children = {menu_.debug_report()}};
 }
 bool MeshTools::visible(MeshSelectMode mode,u32 id) const {
     if(mode==MeshSelectMode::surface || mode==MeshSelectMode::whole) return false;

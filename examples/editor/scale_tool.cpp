@@ -1,22 +1,26 @@
 #include "scale_tool.hpp"
 #include "scale_edits.hpp"
 #include "rotation_math.hpp"
+#include "transform_keys.hpp"
 #include <algorithm>
 #include <cmath>
 
 namespace editor_example {
 ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f32 scale,
     const vng::gfx::CameraSnapshot& camera,vng::ui::Rect viewport,
-    std::span<const vng::input::Event> unhandled,std::span<const vng::input::Event> raw,bool enabled,vng::Vec3 axes_rotation) {
+    std::span<const vng::input::Event> unhandled,std::span<const vng::input::Event> raw,bool enabled,vng::Vec3 axes_rotation,float arrow_step,bool shortcut) {
     using namespace vng;
     ScaleAction action{.value=scale};
     handled_=false;
+    if(stamp.object!=stamp_.object || stamp.generation!=stamp_.generation)selection_.clear();
     const bool resized=viewport.x!=viewport_.x || viewport.y!=viewport_.y ||
         viewport.width!=viewport_.width || viewport.height!=viewport_.height;
     if(!enabled || !std::isfinite(scale) || scale<min_instance_scale || scale>max_instance_scale ||
        (dragging_ && (stamp.object!=stamp_.object || stamp.generation!=stamp_.generation || resized))) {
         action.finished=action.cancelled=handled_=dragging_;
-        cancel(); return action;
+        if(!dragging_)for(const auto& event:raw)selection_.update(event,unhandled,viewport);
+        cancel(enabled);
+        return action;
     }
     const bool reframe=dragging_&&projection_!=camera.view_projection;
     if(!dragging_ || reframe) {
@@ -49,11 +53,31 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
         stamp_=stamp;
     }
     if(!visible_) return action;
-    for(const auto& e:raw) {
+    for(const auto& e:raw.empty()?unhandled:raw) {
         using K=input::EventKind;
-        if(e.kind==K::focus_lost || (e.kind==K::key_down && e.key==input::Key::escape)) {
+        if(shortcut&&!dragging_&&e.kind==K::key_down&&e.key==input::Key::s&&!e.repeat&&
+           !e.modifiers.control&&!e.modifiers.alt&&!e.modifiers.super&&viewport.contains(e.position)&&
+           std::ranges::any_of(unhandled,[&](const auto& u){return u.kind==e.kind&&u.key==e.key;})) {
+            keyboard_=pointer_keyboard_=dragging_=action.began=handled_=true;
+            selection_.select(0);initial_=value_=scale;start_=pointer_=e.position;continue;
+        }
+        const bool clicked=(!dragging_ || keyboard_) && selection_.update(e,unhandled,viewport_);
+        if(auto arrow=transform_arrow(e,arrow_step);arrow && selected() &&
+           std::ranges::any_of(unhandled,[&](const auto& u){return u.kind==e.kind && u.key==e.key;})) {
+            if(!dragging_) {keyboard_=dragging_=action.began=true;initial_=value_=scale;}
+            const auto next=std::clamp(value_*std::exp((arrow->x-arrow->y)*.025F),min_instance_scale,std::max(initial_,maximum_));
+            action.changed|=next!=value_;value_=next;handled_=true;
+            if(!keyboard_||pointer_keyboard_) {initial_=value_;start_=pointer_;}
+            continue;
+        }
+        if(keyboard_ && (clicked || (e.kind==K::key_down && e.key==input::Key::enter))) {
+            keyboard_=pointer_keyboard_=dragging_=false;action.finished=handled_=true;break;
+        }
+        const bool right_press=e.kind==K::pointer_down && e.button==1 &&
+            (!keyboard_ || std::ranges::any_of(unhandled,[&](const auto& u){return u.kind==e.kind && u.button==e.button && u.position==e.position;}));
+        if(e.kind==K::focus_lost || (e.kind==K::key_down && e.key==input::Key::escape) || (dragging_ && right_press)) {
             action.finished=action.cancelled=handled_=dragging_;
-            cancel(); return action;
+            cancel(!right_press); return action;
         }
         if(!dragging_ && e.kind==K::pointer_down && e.button==0 &&
             !e.modifiers.alt && !e.modifiers.control && !e.modifiers.super &&
@@ -62,10 +86,11 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
                 return p.kind==e.kind && p.button==e.button && p.position==e.position;
             })) {
             dragging_=action.began=handled_=true;
+            keyboard_=pointer_keyboard_=false;selection_.select(0);
             initial_=value_=scale;
             pointer_=start_=e.position;
         }
-        if(dragging_ && (e.kind==K::pointer_move || (e.kind==K::pointer_up && e.button==0))) {
+        if(dragging_ && (!keyboard_||pointer_keyboard_) && (e.kind==K::pointer_move || (!keyboard_&&e.kind==K::pointer_up && e.button==0))) {
             if(std::isfinite(e.position.x) && std::isfinite(e.position.y)) {
                 pointer_=e.position;
                 const auto distance=(e.position.x-start_.x)-(e.position.y-start_.y);
@@ -77,7 +102,7 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
                 handle_={origin_.x+offset,origin_.y-offset};
             }
             handled_=true;
-            if(e.kind==K::pointer_up) { dragging_=false; action.finished=true; }
+            if(!keyboard_&&e.kind==K::pointer_up) { dragging_=false; action.finished=true; }
         }
     }
     action.value=(dragging_ || action.finished || action.began) ? value_ : scale;
@@ -98,7 +123,7 @@ void ScaleTool::append(vng::ui::DrawList& list,int only_axis) const {
         list.commands.emplace_back(ui::BoxDraw{{tip.x-4,tip.y-4,8,8},viewport_,colors[axis],{0,0,0,1},0,1});
     }
     if(only_axis>=0) return; // A constrained scale has no uniform-scale handle.
-    const Vec4 color=dragging_ ? Vec4{1,.9F,.35F,1} : Vec4{1,.7F,.12F,1};
+    const Vec4 color=dragging_ || selected() ? Vec4{1,.9F,.35F,1} : Vec4{1,.7F,.12F,1};
     for(int i=0;i<48;++i) {
         const auto t=static_cast<f32>(i)/48;
         const Vec2 p{origin_.x+(handle_.x-origin_.x)*t,origin_.y+(handle_.y-origin_.y)*t};

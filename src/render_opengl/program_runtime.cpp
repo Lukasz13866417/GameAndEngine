@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <vng/opengl/glsl_source.hpp>
+#include <vng/opengl/camera_projection.hpp>
 
 namespace vng::render {
 namespace {
@@ -338,7 +339,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::apply_raster(
     if (auto v = device.set_standard_raster_state(); !v) return v;
     if (auto v = device.set_scissor_enabled(false); !v) return v;
     if (auto v = device.set_rasterizer_discard_enabled(false); !v) return v;
-    if (auto v = device.set_depth_state({r.depth.test, r.depth.write, comparisons[static_cast<unsigned>(r.depth.compare)]}); !v) return v;
+    if (auto v = device.set_depth_state({r.depth.test, r.depth.write, comparisons[static_cast<unsigned>(encode_compare(r.depth.compare,device.depth_mapping()))]}); !v) return v;
     if (auto v = device.set_cull_state({culling[static_cast<unsigned>(r.cull)], winding[static_cast<unsigned>(r.front_face)]}); !v) return v;
     if (auto v = device.set_framebuffer_srgb_enabled(false); !v) return v;
     const auto outputs = fragment_outputs(program);
@@ -389,6 +390,7 @@ opengl::Diagnostic OpenGLProgramRuntime::sweep_diagnostic(
 
 std::expected<void, opengl::Diagnostic>
 OpenGLProgramRuntime::bind_camera_parameters(
+    const opengl::Device& device,
     const opengl::Program& program,
     const glsl::ProgramSource& source,
     const gfx::CameraSnapshot* camera)
@@ -404,7 +406,7 @@ OpenGLProgramRuntime::bind_camera_parameters(
             }
             if (auto uploaded = program.set_uniform_mat4(
                     parameter.location,
-                    camera->view_projection);
+                    opengl::camera_projection(*camera,device.depth_mapping()));
                 !uploaded) {
                 return uploaded;
             }
@@ -665,7 +667,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_observation(
             .message = "shader observation target has an unsupported image format",
         });
     }
-    return target.depth.clear_depth32f(clear_depth);
+    return target.depth.clear_depth32f(encode_depth(clear_depth,device.depth_mapping()));
 }
 
 std::expected<analysis::EvidenceChannel, opengl::Diagnostic>
@@ -1003,7 +1005,7 @@ analysis::RenderInvocationIdentity OpenGLProgramRuntime::make_invocation_identit
     gfx::MeshTopologyFingerprint topology,
     const RenderView& view,
     const AnalysisOptions& options,
-    const opengl::CaptureState& state) const
+    const opengl::CaptureState& state,DepthMapping mapping) const
 {
     StableFingerprint workload{"vng.render.workload.v1"};
     workload.append(topology.low);
@@ -1042,6 +1044,14 @@ analysis::RenderInvocationIdentity OpenGLProgramRuntime::make_invocation_identit
         append(view_fingerprint, camera.view);
         append(view_fingerprint, camera.projection);
         append(view_fingerprint, camera.view_projection);
+        view_fingerprint.append(camera.lens.has_value());
+        if (camera.lens) {
+            view_fingerprint.append(static_cast<u64>(camera.lens->index()));
+            std::visit([&](const auto& lens) {
+                view_fingerprint.append(lens.near_plane);
+                view_fingerprint.append(lens.far_plane);
+            }, *camera.lens);
+        }
     }
 
     const auto& raster = state.raster;
@@ -1069,6 +1079,7 @@ analysis::RenderInvocationIdentity OpenGLProgramRuntime::make_invocation_identit
     target.append(options.clear_depth.has_value());
     target.append(options.clear_depth.value_or(
         default_analysis_clear_depth(raster)));
+    target.append(static_cast<u64>(mapping));
 
     return {
         .workload_fingerprint = workload.finish(),
@@ -1223,7 +1234,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_analysis(
         !cleared) {
         return cleared;
     }
-    if (auto cleared = target.depth.clear_depth32f(clear_depth); !cleared) {
+    if (auto cleared = target.depth.clear_depth32f(encode_depth(clear_depth,device.depth_mapping())); !cleared) {
         return cleared;
     }
 
@@ -1238,7 +1249,7 @@ std::expected<void, opengl::Diagnostic> OpenGLProgramRuntime::begin_analysis(
 
 std::expected<analysis::AnalysisCapture, opengl::Diagnostic>
 OpenGLProgramRuntime::finish_analysis(
-    analysis::AnalysisManifest manifest)
+    analysis::AnalysisManifest manifest,DepthMapping mapping)
 {
     auto& target = *analysis_target_;
     const auto extent = target.extent;
@@ -1252,6 +1263,9 @@ OpenGLProgramRuntime::finish_analysis(
     if (!depths) {
         return std::unexpected(std::move(depths.error()));
     }
+    // Evidence retains the documented canonical [0,1] device-depth channel;
+    // surface selection/rendering used full reversed precision on the GPU.
+    if(mapping==DepthMapping::reversed)for(auto& depth:*depths)depth=1.F-depth;
     auto keys = target.framebuffer.read_rg32ui(
         target.surface_key_attachment,
         0,

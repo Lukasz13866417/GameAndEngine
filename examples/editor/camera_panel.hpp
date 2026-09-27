@@ -57,8 +57,33 @@ public:
                    : "Not active; Set active keys it.");
     }
     [[nodiscard]] bool shown() const noexcept { return shown_; }
-    // Viewport overlay placement; the host decides where the glyph is on screen.
-    void place(vng::ui::Rect at) { host_.position({at.x, at.y}).width(at.width).height(at.height); }
+    // Presentation, not an authoring action: call even during navigation and
+    // pending edits. Use the camera/extent belonging to the displayed image.
+    void layout(vng::ui::Rect viewport,const vng::gfx::Camera& view,vng::Extent2D extent,
+                std::optional<vng::Vec3> anchor) {
+        using namespace vng;
+        const auto width=std::min(324.F,std::max(0.F,viewport.width));
+        const auto height=std::min(236.F,std::max(0.F,viewport.height));
+        const auto right=viewport.x+std::max(0.F,viewport.width-width);
+        const auto bottom=viewport.y+std::max(0.F,viewport.height-height);
+        ui::Rect at{std::max(viewport.x,right-12),std::min(bottom,viewport.y+12),width,height};
+        if(anchor)if(const auto snapshot=view.snapshot(extent)) {
+            Vec4 clip{};
+            for(unsigned row=0;row<4;++row) {
+                clip[row]=snapshot->view_projection[3][row];
+                for(unsigned col=0;col<3;++col)clip[row]+=snapshot->view_projection[col][row]*(*anchor)[col];
+            }
+            if(clip.w>0 && clip.z>=-clip.w && clip.z<=clip.w) {
+                const Vec2 point{viewport.x+(clip.x/clip.w*.5F+.5F)*viewport.width,
+                                 viewport.y+(.5F-clip.y/clip.w*.5F)*viewport.height};
+                if(viewport.contains(point)) {
+                    at.x=std::clamp(point.x+36,viewport.x,right);
+                    at.y=std::clamp(point.y-height*.5F,viewport.y,bottom);
+                }
+            }
+        }
+        host_.position({at.x,at.y}).width(at.width).height(at.height);
+    }
     void enabled(bool value) { host_.enabled(value); }
     [[nodiscard]] bool contains(vng::Vec2 point) const { return shown_ && host_.bounds().contains(point); }
     [[nodiscard]] bool enter_clicked() { return enter_.clicked(); }

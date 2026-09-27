@@ -157,7 +157,7 @@ content::Result<State> read(const Target& target) {
     if (::fstat(fd.value, &status) != 0) return system_error(target.path, "Cannot inspect opened scene file");
     if (!S_ISREG(status.st_mode)) return invalid(target.path, "Scene input must be a regular file, not a directory or special file");
     if (status.st_size < 0 || static_cast<vng::u64>(status.st_size) > max_scene_bytes)
-        return invalid(target.path, "Scene exceeds the 32 MiB editor limit", content::ErrorCode::input_too_large);
+        return invalid(target.path, "Scene exceeds the 64 MiB editor limit", content::ErrorCode::input_too_large);
     std::string bytes;
     bytes.reserve(static_cast<std::size_t>(status.st_size));
     std::array<char, 8192> buffer;
@@ -167,7 +167,7 @@ content::Result<State> read(const Target& target) {
         if (count < 0) return system_error(target.path, "Cannot read scene file");
         if (!count) break;
         if (static_cast<std::size_t>(count) > max_scene_bytes - bytes.size())
-            return invalid(target.path, "Scene exceeds the 32 MiB editor limit", content::ErrorCode::input_too_large);
+            return invalid(target.path, "Scene exceeds the 64 MiB editor limit", content::ErrorCode::input_too_large);
         bytes.append(buffer.data(), static_cast<std::size_t>(count));
     }
     auto decoded = decode(bytes);

@@ -73,8 +73,11 @@ std::expected<void, Diagnostic> Frame::end()
 std::expected<Frame, Diagnostic> Frame::acquire(
     const Device& device,
     Extent2D extent,
-    render::ColorEncoding color_encoding)
+    render::ColorEncoding color_encoding,
+    render::DepthMapping depth_mapping)
 {
+    if(depth_mapping!=render::DepthMapping::standard&&depth_mapping!=render::DepthMapping::reversed)
+        return std::unexpected(Diagnostic{.code=ErrorCode::invalid_argument,.message="Invalid frame depth mapping"});
     if (!device.state_) {
         return std::unexpected(Diagnostic{
             .code = ErrorCode::invalid_context_access,
@@ -88,6 +91,7 @@ std::expected<Frame, Diagnostic> Frame::acquire(
             .message = "begin_frame rejected an overlapping active frame on this context",
         });
     }
+    device.state_->depth_mapping=depth_mapping;
     return Frame{
         device,
         extent,
@@ -206,7 +210,7 @@ std::expected<Frame, Diagnostic> begin_backend_frame(
     auto frame = Frame::acquire(
         device,
         description.extent,
-        description.color_encoding);
+        description.color_encoding,description.depth_mapping);
     if (!frame) {
         return std::unexpected(std::move(frame.error()));
     }
@@ -232,7 +236,7 @@ std::expected<Frame, Diagnostic> begin_backend_frame(
 
     if (description.clear_color && description.clear_depth) {
         if (auto clear = device.clear_default(
-                *description.clear_color, *description.clear_depth);
+                *description.clear_color, render::encode_depth(*description.clear_depth,description.depth_mapping));
             !clear) {
             return std::unexpected(std::move(clear.error()));
         }
@@ -242,7 +246,7 @@ std::expected<Frame, Diagnostic> begin_backend_frame(
             return std::unexpected(std::move(clear.error()));
         }
     } else if (description.clear_depth) {
-        if (auto clear = device.clear_default_depth(*description.clear_depth);
+        if (auto clear = device.clear_default_depth(render::encode_depth(*description.clear_depth,description.depth_mapping));
             !clear) {
             return std::unexpected(std::move(clear.error()));
         }
@@ -291,7 +295,7 @@ std::expected<Frame, Diagnostic> begin_backend_frame(
         return std::unexpected(std::move(current.error()));
     if (auto complete = target.check_complete(); !complete)
         return std::unexpected(std::move(complete.error()));
-    auto frame = Frame::acquire(device, description.extent, description.color_encoding);
+    auto frame = Frame::acquire(device, description.extent, description.color_encoding,description.depth_mapping);
     if (!frame) return frame;
     frame->attachment_image_handles_ = target.attachment_image_handles();
     if (auto bound = target.bind(); !bound)
@@ -315,7 +319,7 @@ std::expected<Frame, Diagnostic> begin_backend_frame(
     if (description.clear_depth) {
         if (auto mask = detail::checked_gl_call("offscreen depth-clear mask", [] { glDepthMask(GL_TRUE); }); !mask)
             return std::unexpected(std::move(mask.error()));
-        if (auto cleared = target.clear_depth(*description.clear_depth); !cleared)
+        if (auto cleared = target.clear_depth(render::encode_depth(*description.clear_depth,description.depth_mapping)); !cleared)
             return std::unexpected(std::move(cleared.error()));
     }
     return frame;

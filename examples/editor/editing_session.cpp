@@ -10,6 +10,21 @@
 #include <utility>
 
 namespace editor_example {
+DebugReport EditingSession::debug_report() const {
+    return {.name="editing", .role="document, transaction, history and persistence authority",
+        .situation=remote_ ? "AwaitingRemote" : gesture_ ? "Editing" : "Ready",
+        .owned={{"document revision",std::to_string(state_.document.revision)},
+            {"private view sequence",std::to_string(state_.viewport.sequence)},
+            {"dirty",debug_bool(dirty())}, {"undo entries",std::to_string(undo_.size())},
+            {"redo entries",std::to_string(redo_.size())},
+            {"selected keyframe",selected_keyframe_ ? std::to_string(*selected_keyframe_) : "none"},
+            {"scene pose editable",debug_bool(can_edit_scene_pose())},
+            {"active object",std::to_string(active_object())},
+            {"mesh drafts",std::to_string(state_.document.mesh_drafts.size())},
+            {"pending change notice",debug_bool(notice_.has_value())},
+            {"scene file",file_.path() ? file_.path()->string() : "unsaved"},
+            {"instance limit",std::to_string(instance_limit_)}, {"track limit",std::to_string(track_limit_)}}};
+}
 namespace {
 using namespace vng;
 constexpr u64 max_revision = (u64{1} << 53) - 1;
@@ -368,14 +383,19 @@ content::Result<bool> EditingSession::rotate_by(Vec3 delta) {
     return rotations(values);
 }
 content::Result<bool> EditingSession::attitude(u32 axis, f64 degrees) {
-    if(!active(EditGesture::rotation) || gesture_->attitude_axes.empty())return invalid("Begin a yaw / pitch / roll gesture first");
     if(axis>=3 || !std::isfinite(degrees))return invalid("Attitude needs a valid axis and finite angle");
+    std::array<f64,3> turns{};turns[axis]=degrees;
+    return attitude(turns);
+}
+content::Result<bool> EditingSession::attitude(const std::array<f64,3>& degrees) {
+    if(!active(EditGesture::rotation) || gesture_->attitude_axes.empty())return invalid("Begin a yaw / pitch / roll gesture first");
+    if(!std::ranges::all_of(degrees,[](auto a){return std::isfinite(a);}))return invalid("Attitude needs finite angles");
     std::vector<Vec3> values;
-    const auto primary=rotation_math::turn(gesture_->origins.front(),gesture_->attitude_axes.front()[axis],degrees);
+    const auto primary=rotation_math::attitude(gesture_->origins.front(),gesture_->attitude_axes.front(),degrees);
     const auto delta=rotation_math::multiply(rotation_math::matrix(primary),rotation_math::transpose(rotation_math::matrix(gesture_->origins.front())));
     for(std::size_t i=0;i<gesture_->objects.size();++i) {
-        values.push_back(std::remainder(degrees,360.)==0 ? gesture_->origins[i]
-            : gesture_->pivot.mode==PivotMode::individual ? rotation_math::turn(gesture_->origins[i],gesture_->attitude_axes[i][axis],degrees)
+        values.push_back(std::ranges::all_of(degrees,[](auto a){return std::remainder(a,360.)==0;}) ? gesture_->origins[i]
+            : gesture_->pivot.mode==PivotMode::individual ? rotation_math::attitude(gesture_->origins[i],gesture_->attitude_axes[i],degrees)
             : rotation_math::euler(rotation_math::multiply(delta,rotation_math::matrix(gesture_->origins[i])),gesture_->origins[i]));
     }
     return rotations(values);

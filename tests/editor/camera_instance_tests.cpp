@@ -195,8 +195,8 @@ TEST_CASE("Cameras move, turn and slide along their look direction, and draw a f
     CHECK(axes.front().label == "Forward / back");
     CHECK(axes.front().direction.z == Catch::Approx(-1)); // Yaw zero looks down -Z.
     auto lines = scene_annotation_lines(state, 0);
-    CHECK(lines.size() == camera_glyph_line_count); // Body, lens, reels, frustum, up tick and look line.
-    CHECK(scene_annotation_triangles(state, 0).size() == camera_glyph_triangle_count); // Solid body, lens and reels.
+    CHECK(lines.size() == camera_glyph_line_count); // Housing seams, lens rings and frustum.
+    CHECK(scene_annotation_triangles(state, 0).size() == camera_glyph_triangle_count);
     CHECK(scene_annotation_triangles(state, 0).front().color.x < .6F); // Fills are a darker tone than the wire.
     const auto eye = find_instance(state, camera)->transform.position;
     CHECK(std::ranges::count_if(lines, [&](const SceneLine& line) { return line.from == eye; }) == 4);
@@ -206,4 +206,56 @@ TEST_CASE("Cameras move, turn and slide along their look direction, and draw a f
     camera_settings(state, camera)->visible = false;
     CHECK(scene_annotation_lines(state, 0).empty());
     CHECK(scene_annotation_triangles(state, 0).empty());
+}
+
+TEST_CASE("Camera glyph has closed three-dimensional parts and zoom only changes its frustum", "[editor][camera][glyph]") {
+    SceneInstance instance{7,BlueprintId::camera,"Camera",CameraSettings{}, {}};
+    auto& settings=std::get<CameraSettings>(instance.settings);
+    settings.focus=10;
+    const auto original=camera_glyph(instance);
+    settings.zoom=2;
+    const auto zoomed=camera_glyph(instance);
+    CHECK(zoomed.body==original.body);
+    CHECK(zoomed.half_width==Catch::Approx(original.half_width/2));
+    CHECK(zoomed.half_height==Catch::Approx(original.half_height/2));
+    CHECK(zoomed.body_center()==original.body_center());
+    const auto& model=camera_glyph_detail::model();
+    CHECK(model.triangles.size()<1000); // Small, shared editor geometry, not a scene asset.
+    for(const auto& t:model.triangles) {
+        for(const auto p:{t.a,t.b,t.c}) {
+            CHECK(std::isfinite(p.x));CHECK(std::isfinite(p.y));
+            CHECK(p.z<0); // Opaque parts never block this camera's own view.
+        }
+        const Vec3 u{t.b.x-t.a.x,t.b.y-t.a.y,t.b.z-t.a.z},v{t.c.x-t.a.x,t.c.y-t.a.y,t.c.z-t.a.z};
+        const Vec3 n{u.y*v.z-u.z*v.y,u.z*v.x-u.x*v.z,u.x*v.y-u.y*v.x};
+        CHECK(n.x*n.x+n.y*n.y+n.z*n.z>0);
+    }
+    instance.transform.rotation={23,48,16};instance.transform.position={3,-2,7};
+    const auto rotated=camera_glyph(instance);
+    camera_glyph_triangles(rotated,{1,.5F,0,1},[&](Vec3 a,Vec3 b,Vec3 c,Vec4 color) {
+        for(const auto p:{a,b,c})CHECK(std::isfinite(p.x+p.y+p.z));
+        CHECK(color.w==1);
+    });
+}
+
+TEST_CASE("Camera picking includes the grip and handle but not the handle opening", "[editor][camera][glyph][selection]") {
+    auto state=scene();
+    mesh_settings(state,1)->visible=false;sun_settings(state,2)->visible=false;
+    const auto id=add_camera(state,{0,0,10,{},1});
+    find_instance(state,id)->transform.position={};
+    for(const auto rotation:{Vec3{},Vec3{25,40,-12}}) {
+        instance_transform(state,id)->rotation=rotation;
+        const auto g=camera_glyph(*find_instance(state,id));
+        const auto hit=[&](Vec3 local) {
+            const auto point=g.point(local);
+            auto view=gfx::Camera{};
+            view.set_position({point.x+g.right.x*3,point.y+g.right.y*3,point.z+g.right.z*3}).look_at(point,g.up);
+            view.set_orthographic({.vertical_height=2});
+            return pick_object(state,{.5F,.5F},{800,600},&view);
+        };
+        CHECK(hit({.55F,0,-.8F})==id); // Grip.
+        CHECK(hit({0,.61F,-.8F})==id); // Top bar.
+        CHECK_FALSE(hit({0,.46F,-.8F})); // Actual hole, not the old pick sphere.
+        CHECK_FALSE(hit({0,.8F,-.8F})); // Empty space above.
+    }
 }

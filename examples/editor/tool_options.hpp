@@ -12,5 +12,8 @@ public:
     [[nodiscard]] virtual std::string_view title() const = 0;
     [[nodiscard]] virtual bool options_available() const = 0;
     virtual void describe_options(vng::editor::Inspector&) = 0;
+    // Changing the inspected context must invalidate callbacks, even when the
+    // same tool object continues to own the menu.
+    [[nodiscard]] virtual vng::u64 options_revision() const {return 0;}
 };
 }

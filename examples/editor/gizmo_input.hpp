@@ -17,6 +17,7 @@ public:
     struct Settings { vng::f32 sensitivity{1}; };
     std::string_view title() const override { return options_ ? options_->title() : "Gizmo"; }
     bool options_available() const override { return active_; }
+    vng::u64 options_revision() const override {return options_?options_->options_revision():0;}
     void describe_options(vng::editor::Inspector& ui) override {
         auto edit=ui.edit("gizmo_pointer",settings_,"Mouse and arrow control");
         edit.slider("sensitivity",&Settings::sensitivity,.05F,4.F,"Sensitivity");
@@ -36,7 +37,9 @@ public:
     }
     // Returns whether the panel must be refreshed for a new owning tool.
     bool show(bool active,ToolOptions* options,bool captured=false,bool scale_options=false) {
-        const bool changed=active_!=active || options_!=options || scale_options_!=scale_options || (captured&&!captured_);
+        const auto revision=options?options->options_revision():0;
+        const bool changed=active_!=active || options_!=options || source_revision_!=revision || scale_options_!=scale_options || (captured&&!captured_);
+        source_revision_=revision;
         scale_options_=scale_options;
         active_=active;options_=active?options:nullptr;captured_=captured;
         if(!active)held_.fill(false);
@@ -118,6 +121,7 @@ private:
     ScaleLimits scale_limits_;
     bool scale_options_{};
     ToolOptions* options_{};
+    vng::u64 source_revision_{};
     bool active_{},tracking_{},menu_paused_{},captured_{};
     bool route_captured_{};
     float arrow_step_{1};

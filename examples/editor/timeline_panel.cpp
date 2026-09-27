@@ -847,4 +847,18 @@ bool TimelinePanel::menu_open() const { return impl_->range_menu.opened(); }
 bool TimelinePanel::menu_contains(Vec2 point) const { return impl_->range_menu.contains(point); }
 void TimelinePanel::close_menu() { impl_->range_menu.close(); }
 TimelinePanel::Statistics TimelinePanel::statistics() const { return impl_->statistics; }
+DebugReport TimelinePanel::debug_report() const {
+    const auto& p=*impl_;
+    return {.name="panel",.role="keyframe strip, list and unsent inspector drafts",
+        .situation=p.dragging?"Scrubbing":p.selected?"SelectedKeyframe":"Browsing",
+        .received={{"document revision",std::to_string(p.snapshot.revision)},
+            {"playhead",std::to_string(p.snapshot.time)},{"paused",debug_bool(p.snapshot.paused)}},
+        .owned={{"initialized",debug_bool(p.initialized)}, {"dirty draft",debug_bool(p.dirty)},
+            {"awaiting selection",p.awaiting?std::to_string(*p.awaiting):"none"},
+            {"active groups",std::to_string(p.group_count)}, {"retained groups",std::to_string(p.groups.size())},
+            {"selected object IDs",std::to_string(p.selected_objects.size())},
+            {"visible key times",std::to_string(p.visible_times.size())},
+            {"rows dirty",debug_bool(p.rows_dirty)}, {"list needs rebuild",debug_bool(p.rebuild_list)},
+            {"pointer handled",debug_bool(p.handled)}}};
+}
 } // namespace editor_example

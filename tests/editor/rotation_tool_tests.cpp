@@ -95,8 +95,7 @@ TEST_CASE("Free rotation arrow nudges retain the mouse contribution", "[editor][
     const std::array up{input::Event{.kind=EventKind::key_down,.key=input::Key::up}};
     f.pump(up);const auto after=*f.tool.preview_rotation();
     using namespace editor_example::rotation_math;
-    const auto normal=f.camera.forward;
-    const auto expected=multiply(matrix(turn({}, {-normal.x,-normal.y,-normal.z},1)),matrix(before));
+    const auto expected=multiply(matrix(turn({}, f.camera.right,1)),matrix(before));
     const auto actual=matrix(after);
     for(unsigned r=0;r<3;++r)for(unsigned c=0;c<3;++c)
         CHECK(std::abs(actual[r][c]-expected[r][c])<.00001F);
@@ -366,4 +365,71 @@ TEST_CASE("Attitude rings follow the body frame and drag a true local axis", "[e
         f.pump(); f.start(axis,f.point(axis));
         f.target.local_axes.reset(); f.pump(); CHECK_FALSE(f.tool.dragging()); CHECK(f.tool.handledPointer());
     }
+}
+
+TEST_CASE("Clicked rotation rings retain keyboard focus until a completed viewport click", "[editor][ui][rotation][gizmo-focus]") {
+    Fixture f;
+    const auto point=f.tool.rings()[0].points[f.point(0)];
+    const std::array click{input::Event{.kind=EventKind::pointer_down,.position=point},
+        input::Event{.kind=EventKind::pointer_up,.position=point}};
+    REQUIRE(f.pump(click));
+    REQUIRE_FALSE(f.tool.dragging());
+    REQUIRE(f.tool.selected_axis()==0);
+    ui::DrawList draw;f.tool.append(draw);
+    CHECK(std::ranges::any_of(draw.commands,[](const auto& c){return std::get<ui::BoxDraw>(c).color==Vec4{1,.8F,.15F,1};}));
+    // UI controls can cover the viewport too: position alone is insufficient.
+    const Vec2 elsewhere{200,200};
+    const std::array outside{input::Event{.kind=EventKind::pointer_down,.position=elsewhere},
+        input::Event{.kind=EventKind::pointer_up,.position=elsewhere}};
+    f.pump(outside,false);CHECK(f.tool.selected_axis()==0);
+    f.pump({},true,false);f.pump();CHECK(f.tool.selected_axis()==0);
+    gfx::Camera camera;camera.set_position({3,2,10}).look_at({});
+    f.camera=*camera.snapshot({640,480});f.pump();CHECK(f.tool.selected_axis()==0);
+    // A click is not a press, and a camera/selection drag is not a click.
+    f.pump(std::span{outside}.first(1));CHECK(f.tool.selected_axis()==0);
+    const std::array drag{input::Event{.kind=EventKind::pointer_move,.position={230,220}},
+        input::Event{.kind=EventKind::pointer_up,.position={230,220}}};
+    f.pump(drag);CHECK(f.tool.selected_axis()==0);
+    f.pump(std::span{outside}.first(1));CHECK(f.tool.selected_axis()==0);
+    f.pump(std::span{outside}.last(1));CHECK_FALSE(f.tool.selected_axis());
+}
+
+TEST_CASE("Selected rotation axes drive perpendicular arrow planes without following hover", "[editor][ui][rotation][gizmo-focus]") {
+    for(bool local:{false,true})for(u32 axis=0;axis<3;++axis) {
+        Fixture f;
+        if(local)f.target.local_axes=std::array<Vec3,3>{{{0,1,0},{1,0,0},{0,0,-1}}};
+        f.pump();
+        const auto point=f.tool.rings()[axis].points[f.point(axis)];
+        const std::array click{input::Event{.kind=EventKind::pointer_down,.position=point},
+            input::Event{.kind=EventKind::pointer_up,.position=point}};
+        REQUIRE(f.pump(click));
+        const std::array arrows{input::Event{.kind=EventKind::key_down,.position={200,200},.key=input::Key::left},
+            input::Event{.kind=EventKind::key_down,.position={200,200},.key=input::Key::up}};
+        f.pump(arrows);REQUIRE(f.tool.preview_rotation());
+        const u32 perpendicular=local?(axis+1)%3:(axis==1?0:1);
+        Vec3 expected{};expected[axis]=expected[perpendicular]=1;
+        if(local) {
+            std::array<double,3> degrees{};degrees[axis]=degrees[perpendicular]=1;
+            expected=editor_example::rotation_math::attitude({},*f.target.local_axes,degrees);
+        }
+        CHECK(close(*f.tool.preview_rotation(),expected));
+        CHECK(f.tool.selected_axis()==axis);
+        f.pump({},true);CHECK(close(*f.tool.preview_rotation(),expected));
+        const std::array enter{input::Event{.kind=EventKind::key_down,.key=input::Key::enter}};
+        REQUIRE(f.pump(enter));CHECK(f.tool.selected_axis()==axis);
+        // Content revisions do not invalidate handle focus; object identity does.
+        ++f.target.stamp.revision;f.target.rotation_degrees=expected;f.pump();CHECK(f.tool.selected_axis()==axis);
+        ++f.target.stamp.object;f.pump();CHECK_FALSE(f.tool.selected_axis());
+    }
+}
+
+TEST_CASE("Arrow rotation confirms on click release but not on UI clicks", "[editor][ui][rotation][gizmo-focus]") {
+    Fixture f;
+    const std::array left{input::Event{.kind=EventKind::key_down,.position={200,200},.key=input::Key::left}};
+    f.pump(left);REQUIRE(f.tool.dragging());
+    const std::array click{input::Event{.kind=EventKind::pointer_down,.position={200,200}},
+        input::Event{.kind=EventKind::pointer_up,.position={200,200}}};
+    CHECK_FALSE(f.pump(click,false));CHECK(f.tool.dragging());
+    CHECK_FALSE(f.pump(std::span{click}.first(1)));CHECK(f.tool.dragging());CHECK(f.tool.selected_axis());
+    REQUIRE(f.pump(std::span{click}.last(1)));CHECK_FALSE(f.tool.dragging());CHECK_FALSE(f.tool.selected_axis());
 }

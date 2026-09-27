@@ -7,6 +7,7 @@
 #include "scale_edits.hpp"
 #include "selection_edits.hpp"
 #include "document_changes.hpp"
+#include "component_debug.hpp"
 #include <map>
 #include <optional>
 #include <set>
@@ -21,6 +22,20 @@ namespace editor_example {
 // is in flight; never build a queue of historical mouse-move snapshots.
 class PreviewUpdates {
 public:
+    [[nodiscard]] DebugReport debug_report() const {
+        DebugReport report{.name="delivery",.role="per-worker authored change delivery",.situation="Tracking",
+            .owned={{"peers",std::to_string(peers_.size())}}};
+        for (const auto& [generation,peer] : peers_)
+            report.children.push_back({.name=std::to_string(generation),.role="worker delivery state",
+                .situation=peer.rejected ? "Rejected" : peer.sent!=peer.base ? "AwaitingAck" : "Ready",
+                .owned={{"acknowledged revision",std::to_string(peer.base)},
+                    {"submitted revision",std::to_string(peer.sent)}, {"baseline known",debug_bool(peer.known)},
+                    {"full snapshot required",debug_bool(peer.changes.full)},
+                    {"pending camera tracks",debug_bool(peer.camera_tracks)},
+                    {"pending selection",debug_bool(peer.selection)}}});
+        return report;
+    }
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
     void add(vng::u64 generation);
     void remove(vng::u64 generation);
     void reset(vng::u64 generation);

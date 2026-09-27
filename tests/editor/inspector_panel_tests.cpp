@@ -525,6 +525,32 @@ TEST_CASE("Translation gizmos project world axes and commit raw pointer releases
     CHECK_FALSE(tool.handledPointer());
 }
 
+TEST_CASE("Clicked translation handles keep their axis for arrows and ignore UI clicks", "[editor][ui][gizmo-focus]") {
+    gfx::Camera camera;camera.set_position({0,0,10}).look_at({}).set_orthographic({.vertical_height=10});
+    const auto snapshot=*camera.snapshot({640,480});
+    editor::Inspector inspector{{3,4,5}};inspector.translation_gizmo("position",Vec3{},[](Vec3){});
+    editor_example::TranslationTool tool;
+    const auto pump=[&](std::span<const input::Event> events={},bool available=true) {
+        return tool.update(inspector.schema(),snapshot,{0,0,640,480},available?events:std::span<const input::Event>{},events,true);
+    };
+    pump();const auto p=*tool.handle("Y");
+    const std::array click{input::Event{.kind=EventKind::pointer_down,.position=p},
+        input::Event{.kind=EventKind::pointer_up,.position=p}};
+    REQUIRE(pump(click));REQUIRE(tool.selected_axis()==1);CHECK_FALSE(tool.dragging());
+    pump(click,false);CHECK(tool.selected_axis()==1);
+    const std::array right{input::Event{.kind=EventKind::key_down,.position={100,100},.key=Key::right}};
+    pump(right);REQUIRE(tool.preview_position());
+    CHECK(tool.preview_position()->x==0);CHECK(tool.preview_position()->y>0);
+    const auto before=*tool.preview_position();
+    const std::array up{input::Event{.kind=EventKind::key_down,.position={100,100},.key=Key::up}};
+    pump(up);CHECK(tool.preview_position()->x>0);CHECK(tool.preview_position()->y==before.y);
+    pump(click,false);CHECK(tool.dragging());CHECK(tool.selected_axis()==1);
+    const std::array outside{input::Event{.kind=EventKind::pointer_down,.position={100,100}},
+        input::Event{.kind=EventKind::pointer_up,.position={100,100}}};
+    CHECK_FALSE(pump(std::span{outside}.first(1)));CHECK(tool.selected_axis()==1);
+    REQUIRE(pump(std::span{outside}.last(1)));CHECK_FALSE(tool.selected_axis());CHECK_FALSE(tool.dragging());
+}
+
 TEST_CASE("Translation previews use the latest sample and preserve ordered terminal events",
           "[editor][ui][regression]") {
     gfx::Camera camera;

@@ -15,10 +15,12 @@ public:
     bool active() const {return tool_.active();}
     bool visible() const {return tool_.visible();}
     bool handled() const {return tool_.handled();}
+    bool selected_handle() const {return tool_.selected_handle();}
+    GizmoMode gizmo() const { return tool_.gizmo(); }
     ToolOptions* tool_options() {return tool_.tool_options();}
     void cancel() {tool_.cancel();}
     void append(vng::ui::DrawList& list,const vng::text::Font& font) const {tool_.append(list,font);}
-    [[nodiscard]] vng::content::Result<bool> update(MeshTools& selection,
+    [[nodiscard]] vng::content::Result<bool> update(const MeshTools& selection,
         const vng::gfx::CameraSnapshot& camera,vng::ui::Rect viewport,
         std::span<const vng::input::Event> input,std::span<const vng::input::Event> raw,bool enabled,float arrow_step=1.F) {
         using namespace vng;
@@ -53,7 +55,6 @@ public:
         tool_.gizmo(selection.transform_mode());
         tool_.capabilities(whole_?std::span<const GizmoMode>{whole_mesh_gizmos}:std::span<const GizmoMode>{basic_transform_gizmos});
         auto action=tool_.update(points_,{static_cast<u64>(blueprint_),selection_,revision_},camera,viewport,input,raw,enabled,{},arrow_step);
-        selection.transform_mode(tool_.gizmo());
         if(action.began) {
             auto begun=whole_?editing_.begin_mesh_transform(blueprint_):editing_.begin_vertices(blueprint_,ids_);
             if(!begun){tool_.cancel();return std::unexpected(begun.error());}

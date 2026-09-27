@@ -5,6 +5,7 @@
 #include "../../examples/editor/scale_tool.hpp"
 #include "../../examples/editor/translation_tool.hpp"
 #include "../../examples/editor/surface_part_tool.hpp"
+#include "../../examples/editor/socket_pick_tool.hpp"
 #include "../../examples/editor/world_bounds_tool.hpp"
 #include "../../examples/editor/cage_tool.hpp"
 #include "../../examples/editor/blueprint_gizmos.hpp"
@@ -133,6 +134,20 @@ public:
     }
     void observe(const Observation& observation) override {
         try {
+            if(!diagnostics_checked_) {
+                require(bool(observation.component_diagnostics),"Component diagnostics callback is missing");
+                const auto revision=observation.state.document.revision;
+                const auto sequence=observation.state.viewport.sequence;
+                const auto first=observation.component_diagnostics().string();
+                require(first.find("editor.workspace.viewport.mesh.components.menu")!=std::string::npos,
+                    "Component diagnostic tree omits the live mesh menu path");
+                require(first.find("editor.workspace.timeline")!=std::string::npos,
+                    "Component diagnostic tree omits the timeline owner");
+                require(first==observation.component_diagnostics().string(),"Reading diagnostics changes component state");
+                require(revision==observation.state.document.revision && sequence==observation.state.viewport.sequence,
+                    "Diagnostics changed document or viewport identity");
+                diagnostics_checked_=true;
+            }
             tree_ = take(observation.screen.inspect());
             detached_=observation.viewport_detached;
             vng::u64 surface_id=1;
@@ -180,6 +195,7 @@ private:
     fs::path directory_;
     ui::Inspection tree_;
     std::deque<Step> steps_;
+    bool diagnostics_checked_{};
     std::vector<input::Event> events_;
     Vec2 pointer_{};
     std::vector<std::pair<std::string, double>> results_;
@@ -517,7 +533,8 @@ private:
             const auto p=*o.mesh_part_gizmo->handle();
             const auto sx=static_cast<f32>(screenshot.extent.width)/logical_size.x;
             const auto sy=static_cast<f32>(screenshot.extent.height)/logical_size.y;
-            std::size_t cyan{};
+            std::size_t colored{};
+            const bool scaling=o.mesh_part_gizmo->scaling().visible();
             for(int y=int((p.y-12)*sy);y<=int((p.y+12)*sy);++y)
                 for(int x=int((p.x-12)*sx);x<=int((p.x+12)*sx);++x) {
                     if(x<0||y<0||x>=int(screenshot.extent.width)||y>=int(screenshot.extent.height))continue;
@@ -525,9 +542,9 @@ private:
                     const auto r=std::to_integer<unsigned>(screenshot.pixels[at]);
                     const auto g=std::to_integer<unsigned>(screenshot.pixels[at+1]);
                     const auto b=std::to_integer<unsigned>(screenshot.pixels[at+2]);
-                    cyan+=r<160&&g>180&&b>200;
+                    colored+=scaling ? r>200&&g>140&&b<160 : r<160&&g>180&&b>200;
                 }
-            require(cyan>6,"Composed screenshot is missing the cloud surface handle");
+            require(colored>6,"Composed screenshot is missing the displayed addon handle");
         }
         if (name != "failure" && o.rotation_gizmo && o.gizmo_visible) {
             std::size_t colored{};
@@ -543,7 +560,8 @@ private:
                     const auto r = std::to_integer<unsigned>(screenshot.pixels[at]);
                     const auto g = std::to_integer<unsigned>(screenshot.pixels[at + 1]);
                     const auto b = std::to_integer<unsigned>(screenshot.pixels[at + 2]);
-                    colored += (r > 180 && g < 160) || (g > 180 && r < 160) || (b > 180 && r < 160);
+                    colored += (r > 180 && g < 160) || (g > 180 && r < 160) || (b > 180 && r < 160) ||
+                        (r > 180 && g > 160 && b < 160); // Persistently selected ring is gold.
                 }
             }
             require(colored >= 20, "Composed screenshot is missing rotation rings");
@@ -637,12 +655,26 @@ void Driver::earth_workflow() {
     choose_blueprint("Earth",[]{return static_cast<project::BlueprintId>(3);});
     wait("Earth declares cloud controls in mesh edit without a selected keyframe",[this](const Observation& o) {
         if(!ready(o))return false;
-        const auto* rebuild=find(button("Rebuild clouds"));
+        const auto* rebuild=actionable(button("Rebuild clouds"));
         if(!rebuild)return false;
         require(rebuild->enabled,"Blueprint controls incorrectly require scene keyframe selection");
         checkpoint(o,"earth-01-cloud-controls");return true;
     });
     const auto preview_revision=std::make_shared<u64>();
+    click(button("Addon baseline scales..."));
+    fill(field("All addons / baseline scale","Baseline scale x type coefficient x part size"),"1.25");
+    add("Addon baseline menu stages scales without rebuilding",[this,original](const Observation& o) {
+        require(project::editable_mesh(o.state)->document()==*original,"Baseline slider authored before Apply");
+        checkpoint(o,"earth-01-addon-scales");return true;
+    });
+    click(button("Apply addon scales"));
+    wait("Apply stores the Earth addon baseline",[](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&take(example::earth::infrastructure_settings(project::editable_mesh(o.state)->document())).addon_scale==1.25F;
+    });
+    click(button("Undo"));wait("Addon scale Apply is undoable",[original](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*original;
+    });
+    click(button("Addon baseline scales..."));
     add("Surface preview shortcut starts from the focused mesh viewport",[this,preview_revision](const Observation& o) {
         *preview_revision=o.state.document.revision;
         click_at(center(o.viewport));key(input::Key::four);return true;
@@ -999,7 +1031,7 @@ void Driver::earth_workflow() {
     click(dropdown("Edit part"));click(option("Whole blueprint","Edit part"));
     // The short properties panel scrolls naturally to the ordinary mesh actions.
     add("Scroll to mesh publish action",[this](const Observation&) {
-        const auto* rebuild=find(button("Rebuild clouds"));require(rebuild,"Cloud panel missing");
+        const auto* rebuild=actionable(button("Rebuild clouds"));if(!rebuild)return false;
         pointer_=center(rebuild->bounds);
         events_.push_back({.kind=input::EventKind::scroll,.position=pointer_,.scroll={0,-10}});return true;
     });
@@ -1019,6 +1051,444 @@ void Driver::earth_workflow() {
     wait("Undo Apply restores published terrain plus the retained cloud draft",[original](const Observation& o) {
         return ready(o) && !o.state.document.mesh_drafts.empty() &&
             project::mesh_geometry(o.state,static_cast<project::BlueprintId>(3))->document()==*original;
+    });
+    choose_blueprint("Earth",[]{return static_cast<project::BlueprintId>(3);});
+    const auto infrastructure_start=std::make_shared<content::vmesh::Document>();
+    add("Infrastructure tools are declared by the Earth blueprint",[this,infrastructure_start](const Observation& o) {
+        if(!ready(o))return false;
+        *infrastructure_start=project::editable_mesh(o.state)->document();
+        const auto* rebuild=actionable(button("Rebuild clouds"));if(!rebuild)return false;
+        events_.push_back({.kind=input::EventKind::scroll,.position=center(rebuild->bounds),.scroll={0,30}});return true;
+    });
+    click(button("Place launch hub"));
+    add("Place a hub by clicking the visible Earth surface",[this](const Observation& o) {
+        require(o.mesh_tools->mode()==project::MeshSelectMode::surface,"Placement did not enter surface mode");
+        click_at(center(o.viewport));return true;
+    });
+    const auto placed_hub=std::make_shared<content::vmesh::Document>();
+    wait("Placed hub is selected with a surface gizmo and stays unpublished",[this,placed_hub,original](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto& draft=project::editable_mesh(o.state)->document();
+        const auto parts=take(example::earth::infrastructure_parts(draft));
+        require(parts.size()==1&&parts.front().kind==example::earth::InfrastructureKind::hub,"Placement did not create exactly one hub");
+        const auto* selected=find(dropdown("Edit part"));require(selected&&selected->text==parts.front().name,"Created hub is not selected");
+        require(o.mesh_part_gizmo->visible()&&o.mesh_part_gizmo->handle(),"Created hub has no surface gizmo");
+        require(project::mesh_geometry(o.state,static_cast<project::BlueprintId>(3))->document()==*original,"Placement leaked to published mesh");
+        *placed_hub=draft;checkpoint(o,"earth-05-placed-hub");
+        const auto p=*o.mesh_part_gizmo->handle();pointer(input::EventKind::pointer_move,p);key(input::Key::g);return true;
+    });
+    add("Hub move uses the standard G gesture",[this](const Observation& o) {
+        require(o.dragging,"G did not capture hub movement");
+        pointer(input::EventKind::pointer_move,{pointer_.x+60,pointer_.y-30});key(input::Key::enter);return true;
+    });
+    wait("Hub movement reaches the worker preview",[this,placed_hub](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending||o.dragging)return false;
+        require(project::editable_mesh(o.state)->document()!=*placed_hub,"Hub move changed nothing");
+        checkpoint(o,"earth-06-moved-hub");return true;
+    });
+    click(button("Undo"));wait("Undo hub movement is exact",[placed_hub](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_hub;
+    });
+    click(button("Place skyway"));
+    add("Place a regional tunnel",[this](const Observation& o) {
+        const auto p=center(o.viewport);click_at({p.x+60,p.y+40});return true;
+    });
+    const auto placed_tunnel=std::make_shared<content::vmesh::Document>();
+    wait("Tunnel offers independent endpoint handles",[this,placed_tunnel](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto& draft=project::editable_mesh(o.state)->document();
+        require(take(example::earth::infrastructure_parts(draft)).size()==2,"Tunnel creation added the wrong number of parts");
+        const auto* gizmo=find(dropdown("Gizmo"));
+        require(gizmo&&gizmo->text=="Whole part","Tunnel did not default to whole-part manipulation");
+        require(o.mesh_part_gizmo->handle_positions().size()==1,"Endpoint handles leaked into the default gizmo");
+        *placed_tunnel=draft;checkpoint(o,"earth-07-placed-tunnel");
+        pointer(input::EventKind::pointer_move,center(o.viewport));
+        key(input::Key::right,{.control=true});return true;
+    });
+    add("Ctrl Right selects the tunnel endpoints in Surface mode",[this,placed_tunnel](const Observation& o) {
+        const auto* gizmo=find(dropdown("Gizmo"));
+        require(gizmo&&gizmo->text=="Tunnel endpoints","Ctrl Right skipped the blueprint part's gizmos");
+        require(o.mesh_part_gizmo->handle_positions().size()==2,"Cycling did not show both tunnel endpoints");
+        require(project::editable_mesh(o.state)->document()==*placed_tunnel,"Cycling authored a mesh edit");
+        key(input::Key::left,{.control=true});return true;
+    });
+    add("Ctrl Left returns to the whole-part gizmo",[this](const Observation& o) {
+        const auto* gizmo=find(dropdown("Gizmo"));
+        require(gizmo&&gizmo->text=="Whole part","Ctrl Left did not return to whole-part manipulation");
+        require(o.mesh_part_gizmo->handle_positions().size()==1,"Cycling left retained the endpoint overlay");
+        key(input::Key::left,{.control=true});return true;
+    });
+    add("Part gizmos wrap backwards without selecting mesh transforms",[this](const Observation& o) {
+        const auto* gizmo=find(dropdown("Gizmo"));
+        require(gizmo&&gizmo->text=="Scale part (S)","Ctrl Left did not wrap to addon scaling");
+        require(o.mesh_tools->mode()==project::MeshSelectMode::surface,"Cycling changed mesh selection mode");
+        key(input::Key::right,{.control=true});return true;
+    });
+    add("Part gizmos wrap forwards to the default",[this](const Observation& o) {
+        const auto* gizmo=find(dropdown("Gizmo"));
+        require(gizmo&&gizmo->text=="Whole part","Ctrl Right did not wrap to whole-part manipulation");
+        require(o.mesh_part_gizmo->handle_positions().size()==1,"Forward cycling retained endpoint handles");return true;
+    });
+    click(dropdown("Gizmo"));click(option("Tunnel endpoints","Gizmo"));
+    add("Both tunnel endpoints appear and either can be grabbed",[this](const Observation& o) {
+        const auto handles=o.mesh_part_gizmo->handle_positions();
+        require(handles.size()==2&&handles[0]&&handles[1],"Both endpoint handles must be visible");
+        const auto* handle=find(dropdown("Handle"));
+        require(handle&&handle->text=="Endpoint A","Endpoint A should initially be active");
+        checkpoint(o,"earth-07a-endpoint-gizmo");
+        pointer(input::EventKind::pointer_down,*handles[1]);return true;
+    });
+    add("Stretch the tunnel while keeping its first endpoint",[this](const Observation& o) {
+        require(o.dragging,"Clicking Endpoint B did not immediately capture it");
+        // The inspector is intentionally disabled during a captured gesture.
+        require(std::ranges::any_of(tree_.widgets,[](const auto& item) {
+            return item.role==Role::dropdown&&item.label=="Handle"&&item.text=="Endpoint B";
+        }),"Viewport endpoint selection did not synchronize the list");
+        const Vec2 next{pointer_.x+70,pointer_.y-20};
+        pointer(input::EventKind::pointer_move,next);pointer(input::EventKind::pointer_up,next);return true;
+    });
+    wait("Only the selected endpoint changes",[this,placed_tunnel](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending||o.dragging)return false;
+        const auto before=take(example::earth::infrastructure_parts(*placed_tunnel)).back();
+        const auto after=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).back();
+        require(after.location==before.location&&after.end!=before.end,"Endpoint edit changed the wrong anchor");
+        checkpoint(o,"earth-08-tunnel-endpoint");return true;
+    });
+    click(button("Undo"));wait("Undo restores the tunnel",[placed_tunnel](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_tunnel;
+    });
+    click(dropdown("Gizmo"));click(option("Scaffold positions","Gizmo"));
+    auto scaffold_pointer=std::make_shared<Vec2>();
+    add("Scaffold positions show individually pickable handles",[this,scaffold_pointer](const Observation& o) {
+        const auto handles=o.mesh_part_gizmo->handle_positions();
+        require(handles.size()==2&&handles[0]&&handles[1],"Tunnel scaffolds have no visible handles");
+        const auto* sensitivity=find({ui::WidgetRole::slider,"Sensitivity"});
+        const auto speed=sensitivity&&sensitivity->number?*sensitivity->number:1.F;
+        *scaffold_pointer={handles[0]->x+(handles[1]->x-handles[0]->x)*.5F/speed,
+            handles[0]->y+(handles[1]->y-handles[0]->y)*.5F/speed};
+        pointer(input::EventKind::pointer_down,*handles[0]);return true;
+    });
+    add("Drag a support along the route",[this,scaffold_pointer](const Observation& o) {
+        require(o.mesh_part_gizmo->dragging(),"Scaffold handle did not capture immediately");
+        pointer(input::EventKind::pointer_move,*scaffold_pointer);return true;
+    });
+    add("Release scaffold handle",[this,scaffold_pointer](const Observation&) {
+        pointer(input::EventKind::pointer_up,*scaffold_pointer);return true;
+    });
+    wait("Manual support placement is rendered and undoable",[this](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending||o.dragging)return false;
+        const auto part=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).back();
+        require(part.scaffold_positions&&part.scaffold_positions->size()==2,"Dragging did not retain support positions");
+        require((*part.scaffold_positions)[0]>.02F&&(*part.scaffold_positions)[0]<.98F,"Support did not move into the route");
+        require((*part.scaffold_positions)[1]==1,"Moving one support changed its neighbor");
+        checkpoint(o,"earth-08-scaffold-placement");return true;
+    });
+    add("Delete the selected scaffold through its gizmo",[this](const Observation&) {
+        key(input::Key::del);return true;
+    });
+    wait("Delete removes only the picked scaffold",[](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto part=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).back();
+        return part.scaffold_positions&&*part.scaffold_positions==std::vector<f32>{1};
+    });
+    click(button("Undo"));wait("Undo restores deleted support",[](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto part=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).back();
+        return part.scaffold_positions&&part.scaffold_positions->size()==2;
+    });
+    click(button("Undo"));wait("Undo restores automatic scaffold positions",[placed_tunnel](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_tunnel;
+    });
+    click(dropdown("Gizmo"));click(option("Add scaffold","Gizmo"));
+    add("Add gizmo exposes a local cursor and bottom-left action",[this,placed_tunnel](const Observation& o) {
+        require(project::editable_mesh(o.state)->document()==*placed_tunnel,"Choosing Add authored a support");
+        require(o.mesh_part_gizmo->handle_positions().size()==1,"Add scaffold cursor missing");
+        require(find(button("Add support here")),"Add action not in tool options");
+        checkpoint(o,"earth-08-scaffold-add-tool");return true;
+    });
+    click(button("Add support here"));wait("Add action inserts one interior support",[](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto part=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).back();
+        return part.scaffold_positions&&*part.scaffold_positions==std::vector<f32>{0,1,.5F};
+    });
+    click(button("Undo"));wait("Undo added support restores original mesh",[placed_tunnel](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_tunnel;
+    });
+    click(dropdown("Gizmo"));click(option("Uniform scaffold spacing","Gizmo"));
+    add("Uniform setup exposes first last and spacing handles",[this,placed_tunnel](const Observation& o) {
+        require(project::editable_mesh(o.state)->document()==*placed_tunnel,"Uniform setup authored before Apply");
+        require(o.mesh_part_gizmo->handle_positions().size()==3,"Uniform setup handles missing");
+        checkpoint(o,"earth-08-scaffold-uniform-tool");return true;
+    });
+    click(button("Apply uniform spacing"));wait("Uniform Apply generates interior supports",[](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto part=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).back();
+        return part.scaffold_positions&&part.scaffold_positions->size()>4;
+    });
+    click(button("Undo"));wait("Undo uniform supports restores original mesh",[placed_tunnel](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_tunnel;
+    });
+    click(button("Remove part"));wait("Removing a tunnel retains the hub",[](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).size()==1;
+    });
+    click(button("Undo"));wait("Undo restores the removed tunnel",[placed_tunnel](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_tunnel;
+    });
+    click(dropdown("Edit part"));click(option("Skyway 2","Edit part"));
+    click({Role::checkbox,"Dispersal terminal at B",{}});click(button("Apply part properties"));
+    wait("Tunnel exit terminal is part of the unpublished skyway recipe",[this,placed_tunnel](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto& mesh=project::editable_mesh(o.state)->document();
+        const auto parts=take(example::earth::infrastructure_parts(mesh));
+        require(parts.size()==2&&parts.back().terminal_b,"Terminal toggle created a separate part or failed to save");
+        require(mesh.vertex_count>placed_tunnel->vertex_count,"Terminal toggle did not create real geometry");
+        checkpoint(o,"earth-08a-attached-terminal");return true;
+    });
+    click(button("Undo"));wait("Undo restores the unadorned tunnel",[placed_tunnel](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_tunnel;
+    });
+    for(const auto& [label,kind]:std::array{
+            std::pair{"Place dispersal terminal",example::earth::InfrastructureKind::terminal},
+            std::pair{"Place orbital elevator",example::earth::InfrastructureKind::elevator},
+            std::pair{"Place tunnel joiner",example::earth::InfrastructureKind::joiner},
+            std::pair{"Place atmospheric processor",example::earth::InfrastructureKind::processor}}) {
+        click(button(label));
+        add("Click Earth to place a megastructure",[this,kind](const Observation& o) {
+            const auto p=center(o.viewport);
+            click_at(kind==example::earth::InfrastructureKind::processor?Vec2{p.x+50,p.y+50}:
+                Vec2{p.x-(kind==example::earth::InfrastructureKind::terminal?55.F:90.F),p.y-25});return true;
+        });
+        wait("Placed megastructure has a surface and heading gizmo",[this,kind](const Observation& o) {
+            if(!ready(o)||o.blueprint_pending)return false;
+            const auto parts=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document()));
+            require(parts.back().kind==kind,"Wrong structure recipe was placed");
+            require(o.mesh_part_gizmo->visible()&&o.mesh_part_gizmo->rotation().visible(),"Megastructure did not expose its part gizmos");
+            checkpoint(o,kind==example::earth::InfrastructureKind::terminal?"earth-08b-terminal":
+                kind==example::earth::InfrastructureKind::elevator?"earth-08c-elevator":
+                kind==example::earth::InfrastructureKind::processor?"earth-08g-processor":"earth-08d-joiner");return true;
+        });
+        if(kind==example::earth::InfrastructureKind::terminal) {
+            const auto before_lift=std::make_shared<content::vmesh::Document>();
+            const auto pointer_end=std::make_shared<Vec2>();
+            add("Terminal itself exposes an up/down drag handle",[this,before_lift,pointer_end](const Observation& o) {
+                const auto tip=o.mesh_part_gizmo->altitude().handle("Up / down");
+                require(bool(tip)&&bool(o.mesh_part_gizmo->handle()),"Terminal has no altitude axis");
+                *before_lift=project::editable_mesh(o.state)->document();
+                const auto center=*o.mesh_part_gizmo->handle();const auto distance=std::hypot(tip->x-center.x,tip->y-center.y);
+                *pointer_end={tip->x+(tip->x-center.x)*4/distance,tip->y+(tip->y-center.y)*4/distance};
+                pointer(input::EventKind::pointer_down,*tip);return true;
+            });
+            add("Terminal height drag captures immediately",[this,pointer_end](const Observation& o) {
+                require(o.mesh_part_gizmo->altitude().dragging(),"Terminal altitude did not capture");
+                pointer(input::EventKind::pointer_move,*pointer_end);return true;
+            });
+            add("Commit terminal height",[this,pointer_end](const Observation& o) {
+                require(o.mesh_part_gizmo->altitude().dragging(),"Terminal altitude lost capture");
+                pointer(input::EventKind::pointer_up,*pointer_end);return true;
+            });
+            wait("Terminal height is authored without moving the Earth",[this](const Observation& o) {
+                if(!ready(o)||o.blueprint_pending)return false;
+                const auto parts=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document()));
+                require(parts.back().altitude>0,"Terminal axis did not change altitude");
+                checkpoint(o,"earth-08b-terminal-altitude");return true;
+            });
+            click(button("Undo"));wait("Terminal lift is one undoable edit",[before_lift](const Observation& o) {
+                return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*before_lift;
+            });
+        }
+        if(kind==example::earth::InfrastructureKind::processor) {
+            auto original=std::make_shared<content::vmesh::Document>();auto tip=std::make_shared<Vec2>();
+            click(dropdown("Gizmo"));click(option("Scale part (S)","Gizmo"));
+            add("Processor has its own scale gizmo",[this,original,tip](const Observation& o) {
+                require(o.mesh_part_gizmo->visible()&&o.mesh_part_gizmo->handle(),"Missing addon scale handle");
+                require(!o.mesh_part_gizmo->rotation().visible(),"Scale mode still shows heading ring");
+                *original=project::editable_mesh(o.state)->document();*tip=*o.mesh_part_gizmo->handle();
+                checkpoint(o,"earth-08h-addon-scale-gizmo");pointer(input::EventKind::pointer_down,*tip);return true;
+            });
+            add("Scale processor by dragging its square handle",[this,tip](const Observation& o) {
+                require(o.mesh_part_gizmo->dragging(),"Addon scale did not capture");
+                *tip={tip->x+35,tip->y-10};pointer(input::EventKind::pointer_move,*tip);return true;
+            });
+            add("Release addon scale",[this,tip](const Observation&) {pointer(input::EventKind::pointer_up,*tip);return true;});
+            wait("Only the processor multiplier changes",[this,original](const Observation& o) {
+                if(!ready(o)||o.blueprint_pending||o.dragging)return false;
+                const auto& d=project::editable_mesh(o.state)->document();
+                const auto parts=take(example::earth::infrastructure_parts(d));
+                require(parts.back().scale>1,"Addon scale gesture had no effect");
+                require(take(example::earth::infrastructure_settings(d))==take(example::earth::infrastructure_settings(*original)),"Per-part scale changed baseline");
+                checkpoint(o,"earth-08i-addon-scaled");return true;
+            });
+            click(button("Undo"));wait("Addon scale undoes as one gesture",[original](const Observation& o) {
+                return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*original;
+            });
+        }
+    }
+    click(dropdown("Edit part"));click(option("Skyway 2","Edit part"));
+    click(button("Attach endpoint B in viewport"));
+    add("Click actual terminal geometry to reveal its sockets",[this](const Observation& o) {
+        const auto* mesh=project::editable_mesh(o.state);const auto& d=mesh->document();
+        const auto field=std::ranges::find(d.vertex_fields,example::earth::infrastructure_part_field,&content::vmesh::VertexField::name);
+        require(field!=d.vertex_fields.end(),"Infrastructure ownership missing");
+        const auto& ids=std::get<std::vector<u32>>(field->values);
+        const auto camera=take(project::camera(o.state).snapshot(o.preview_extent));
+        for(auto face:d.faces)if(ids[face[0]]==3) {
+            Vec3 center{};for(auto id:face.vertices)for(unsigned c=0;c<3;++c)center[c]+=mesh->position(id)[c]/3;
+            spatial::Ray3 ray;
+            for(unsigned c=0;c<3;++c){ray.origin[c]=camera.position[c];ray.direction[c]=center[c]-camera.position[c];}
+            const auto hit=mesh->picking_index().intersect(ray);
+            if(!hit||ids[d.faces[hit->triangle][0]]!=3)continue;
+            const auto pixel=project_point(o,center);if(!o.viewport.contains(pixel))continue;
+            click_at(pixel);return true;
+        }
+        throw std::runtime_error("No visible terminal triangle to click");
+    });
+    add("Click the terminal Entrance marker",[this](const Observation& o) {
+        require(o.mesh_socket_gizmo,"Socket tool missing");
+        const auto handles=o.mesh_socket_gizmo->handles();
+        require(handles.size()==1&&handles[0],"Terminal click did not reveal its Entrance");
+        const auto* selected=find(dropdown("Edit part"));
+        require(selected&&selected->text=="Skyway 2","Attachment target replaced source selection");
+        checkpoint(o,"earth-08e-socket-picking");click_at(*handles[0]);return true;
+    });
+    wait("Named terminal socket attaches a tunnel and leaves its other end editable",[this](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto parts=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document()));
+        require(parts[1].socket_b==example::earth::TunnelSocketRef{3,1},"Terminal connection was not authored");
+        require(o.mesh_part_gizmo->visible(),"Free tunnel end lost its gizmo");
+        checkpoint(o,"earth-08e-terminal-connection");return true;
+    });
+    const auto before_altitude=std::make_shared<content::vmesh::Document>();
+    const auto altitude_pointer=std::make_shared<Vec2>();
+    add("Drag the free tunnel end's up/down axis",[this,before_altitude,altitude_pointer](const Observation& o) {
+        const auto tip=o.mesh_part_gizmo->altitude().handle("Up / down");
+        require(bool(tip)&&bool(o.mesh_part_gizmo->handle()),"Free endpoint lacks its altitude axis");
+        *before_altitude=project::editable_mesh(o.state)->document();
+        const auto center=*o.mesh_part_gizmo->handle();const auto length=std::hypot(tip->x-center.x,tip->y-center.y);
+        *altitude_pointer={tip->x+(tip->x-center.x)*5/length,tip->y+(tip->y-center.y)*5/length};
+        pointer(input::EventKind::pointer_down,*tip);return true;
+    });
+    add("Free endpoint captures altitude immediately",[this,altitude_pointer](const Observation& o) {
+        require(o.mesh_part_gizmo->altitude().dragging(),"Altitude axis did not capture");
+        pointer(input::EventKind::pointer_move,*altitude_pointer);return true;
+    });
+    add("Release the altitude gesture",[this,altitude_pointer](const Observation& o) {
+        require(o.mesh_part_gizmo->altitude().dragging(),"Altitude gesture lost capture");
+        pointer(input::EventKind::pointer_up,*altitude_pointer);return true;
+    });
+    wait("Raised free endpoint is an undoable sparse mesh edit",[this](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto parts=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document()));
+        require(parts[1].altitude_a>0,"Dragging altitude did not raise the endpoint");
+        require(parts[1].socket_b==example::earth::TunnelSocketRef{3,1},"Altitude edit changed the attached end");
+        checkpoint(o,"earth-08e-free-end-altitude");return true;
+    });
+    click(button("Undo"));wait("Undo restores endpoint height and geometry",[before_altitude](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*before_altitude;
+    });
+    click(dropdown("End A connection"));click(option("Tunnel joiner 5 / Inlet","End A connection"));
+    wait("Both tunnel ends can attach to separate structures",[this](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto parts=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document()));
+        require(parts[1].socket_a==example::earth::TunnelSocketRef{5,1}&&parts[1].socket_b==example::earth::TunnelSocketRef{3,1},
+            "Second socket connection overwrote the first");
+        checkpoint(o,"earth-08f-joiner-connection");return true;
+    });
+    click(button("Undo"));wait("Undo detaches only the joiner",[](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto parts=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document()));
+        return !parts[1].socket_a&&parts[1].socket_b==example::earth::TunnelSocketRef{3,1};
+    });
+    click(button("Undo"));wait("Undo detaches the terminal too",[](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending)return false;
+        const auto parts=take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document()));
+        return !parts[1].socket_a&&!parts[1].socket_b;
+    });
+    click(button("Undo"));wait("Undo removes the atmospheric processor only",[](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).size()==5;
+    });
+    click(button("Undo"));wait("Undo removes the joiner only",[](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).size()==4;
+    });
+    click(button("Undo"));wait("Undo removes the elevator only",[](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&take(example::earth::infrastructure_parts(project::editable_mesh(o.state)->document())).size()==3;
+    });
+    click(button("Undo"));wait("Undo both structures restores the previous mesh exactly",[placed_tunnel](const Observation& o) {
+        return ready(o)&&!o.blueprint_pending&&project::editable_mesh(o.state)->document()==*placed_tunnel;
+    });
+    // Use separate down/up frames: fast synthetic clicks used to miss stuck
+    // keyboard captures and selection-routing bugs seen with a physical mouse.
+    const auto ring_point=std::make_shared<Vec2>();
+    const auto outside=std::make_shared<Vec2>();
+    const auto before_heading_click=std::make_shared<content::vmesh::Document>();
+    const auto select_hub=[&] {
+        click(dropdown("Edit part"));click(option("Launch hub 1","Edit part"));
+        wait("Hub selection exposes its heading ring",[ring_point,outside](const Observation& o) {
+            if(!ready(o)||o.blueprint_pending||!o.mesh_part_gizmo->visible())return false;
+            const auto& rotation=o.mesh_part_gizmo->rotation();
+            for(std::size_t i=0;i<project::RotationTool::ring_segments;++i) {
+                const auto& ring=rotation.rings()[2];
+                if(ring.projected[i]&&rotation.hit_axis(ring.points[i])==2&&
+                   std::hypot(ring.points[i].x-o.mesh_part_gizmo->handle()->x,ring.points[i].y-o.mesh_part_gizmo->handle()->y)>20) {
+                    *ring_point=ring.points[i];
+                    *outside={o.viewport.x+o.viewport.width*.92F,o.viewport.y+o.viewport.height*.2F};return true;
+                }
+            }
+            throw std::runtime_error("Hub has no clickable heading ring");
+        });
+    };
+    select_hub();
+    add("Press the hub heading ring",[this,ring_point,before_heading_click](const Observation& o) {
+        *before_heading_click=project::editable_mesh(o.state)->document();
+        pointer(input::EventKind::pointer_down,*ring_point);return true;
+    });
+    add("Release the heading ring without rotating",[this,ring_point](const Observation& o) {
+        require(o.dragging,"Heading press did not capture");pointer(input::EventKind::pointer_up,*ring_point);return true;
+    });
+    wait("A ring click retains focus without an unfinished edit",[this,outside,before_heading_click](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending||o.dragging)return false;
+        require(o.mesh_part_gizmo->rotation().selected_axis()==2,"Ring click lost its focus");
+        require(project::editable_mesh(o.state)->document()==*before_heading_click,"Ring click changed geometry");
+        pointer(input::EventKind::pointer_down,*outside);return true;
+    });
+    add("Outside press alone retains the selected part",[this,outside](const Observation& o) {
+        require(o.mesh_part_gizmo->visible(),"Press deselected the part before release");
+        pointer(input::EventKind::pointer_up,*outside);return true;
+    });
+    add("Completed outside click clears part and gizmo",[this](const Observation& o) {
+        require(!o.mesh_part_gizmo->visible(),"Outside click left the part gizmo stuck");
+        require(find(dropdown("Edit part"))->text=="Whole blueprint","Viewport deselection did not clear the list");return true;
+    });
+    select_hub();
+    add("Focus the hub heading ring",[this,ring_point](const Observation&) {
+        click_at(*ring_point);return true;
+    });
+    add("Begin arrow rotation on the focused ring",[this](const Observation& o) {
+        // Start on a later frame than the ring's completed pointer gesture.
+        require(o.mesh_part_gizmo->rotation().selected_axis()==2,"Heading ring is not focused");
+        key(input::Key::left);return true;
+    });
+    add("Click away while arrow rotation owns the edit",[this,outside](const Observation& o) {
+        require(o.dragging,"Arrow rotation did not capture");pointer(input::EventKind::pointer_down,*outside);return true;
+    });
+    add("Release the arrow-rotation confirmation click",[this,outside](const Observation& o) {
+        require(o.dragging,"Arrow rotation ended on press instead of click");pointer(input::EventKind::pointer_up,*outside);return true;
+    });
+    wait("Outside click finishes arrow rotation instead of locking selection",[this,outside](const Observation& o) {
+        if(!ready(o)||o.blueprint_pending||o.dragging)return false;
+        require(!o.mesh_part_gizmo->rotation().selected_axis(),"Completed click retained ring focus");
+        click_at(*outside);return true;
+    });
+    add("Part can be deselected after arrow rotation",[this](const Observation& o) {
+        require(!o.mesh_part_gizmo->visible(),"Arrow rotation blocked subsequent deselection");
+        require(find(dropdown("Edit part"))->text=="Whole blueprint","Part is still selected");return true;
+    });
+    select_hub();
+    add("Escape clears an idle blueprint part",[this,outside](const Observation&) {
+        pointer(input::EventKind::pointer_move,*outside);key(input::Key::escape);return true;
+    });
+    add("Escape hides the part gizmo and resets the list",[this](const Observation& o) {
+        require(!o.mesh_part_gizmo->visible(),"Escape left the part gizmo visible");
+        require(find(dropdown("Edit part"))->text=="Whole blueprint","Escape left the part selected");return true;
     });
 }
 
@@ -1640,7 +2110,8 @@ void Driver::fleet_timeline_workflow() {
     });
     wait("Rejected paste points to Settings and leaves no partial instances", [this](const Observation& o) {
         if (o.status.find("Settings > Timeline track limit")==std::string_view::npos)return false;
-        require(o.state.document.instances.size()==example::asteroids::rock_count+example::asteroids::fleet_count+1 && o.state.document.revision==fleet_revision_ && !o.dirty,
+        // The fixture includes both the hero and the tracking-camera instance.
+        require(o.state.document.instances.size()==example::asteroids::rock_count+example::asteroids::fleet_count+2 && o.state.document.revision==fleet_revision_ && !o.dirty,
             "Track limit failure partially pasted the fleet");
         return true;
     });
@@ -1659,7 +2130,7 @@ void Driver::fleet_timeline_workflow() {
     });
     wait("Same clipboard pastes successfully after raising the track budget", [this](const Observation& o) {
         if (!ready(o) || !o.inspector_ready)return false;
-        require(o.state.document.instances.size()==example::asteroids::rock_count+example::asteroids::fleet_count+17 && o.selected_instances.size()==16,"Raised limit did not unblock paste");
+        require(o.state.document.instances.size()==example::asteroids::rock_count+example::asteroids::fleet_count+18 && o.selected_instances.size()==16,"Raised limit did not unblock paste");
         require(o.status.find("Pasted 16 instances")!=std::string_view::npos,"Successful paste was not reported");
         checkpoint(o,"fleet-06-pasted-after-settings"); return true;
     });
@@ -1726,6 +2197,9 @@ void Driver::attitude_workflow() {
         require(position(o,o.state.viewport.selected_object)==forward_before_,"F cancellation lost original placement");
         pointer(input::EventKind::pointer_move,center(o.viewport));key(input::Key::t);return true;
     });
+    // This workflow checks each ship's own frame/center. Group rotation now
+    // defaults to the selection center, so choose the mode under test explicitly.
+    click(dropdown("Pivot")); click(option("Individual centers","Pivot"));
     for(u32 axis=0;axis<3;++axis) {
         add("Grab body-relative ring "+std::to_string(axis),[this,axis](const Observation& o) {
             if(!ready(o) || !o.rotation_gizmo || !o.gizmo_visible)return false;
@@ -2257,8 +2731,29 @@ void Driver::rotation_workflow() {
         if (!ready(o) || o.dragging) return false;
         require(project::instance_transform(o.state, imported_)->rotation == rotation_after_,
                 "Release lost rotated orientation");
+        require(o.rotation_gizmo && o.rotation_gizmo->selected_axis()==2,
+                "Released rotation ring lost its selected highlight");
         return true;
     });
+    click({Role::checkbox,"FPS",{}});
+    add("Toolbar clicks preserve the ring selected for arrow control",[this](const Observation& o) {
+        if(!ready(o))return false;
+        require(o.rotation_gizmo && o.rotation_gizmo->selected_axis()==2,"A UI click cleared the rotation handle");
+        pointer(input::EventKind::pointer_move,{o.viewport.x+o.viewport.width*.75F,o.viewport.y+o.viewport.height*.25F});
+        key(input::Key::left);key(input::Key::up);return true;
+    });
+    wait("Arrows use the selected ring and a perpendicular plane away from its handle",[this](const Observation& o) {
+        if(!ready(o))return false;
+        const auto value=project::instance_transform(o.state,imported_)->rotation;
+        require(o.dragging && value.z>rotation_after_.z && value.y>rotation_after_.y && value.x==rotation_after_.x,
+            "Arrow rotation did not use selected Z and perpendicular Y");
+        checkpoint(o,"05b-sticky-rotation-arrows");
+        key(input::Key::escape);return true;
+    });
+    wait("Cancelling arrow adjustment restores the prior drag",[this](const Observation& o) {
+        return ready(o) && !o.dragging && project::instance_transform(o.state,imported_)->rotation==rotation_after_;
+    });
+    click({Role::checkbox,"FPS",{}});
     click(button("Undo"));
     wait("Undo restores entire rotation gesture", [this](const Observation& o) {
         if (!ready(o)) return false;
@@ -3364,8 +3859,50 @@ void Driver::workflow() {
         checkpoint(o, "08c-camera-picked");
         return true;
     });
+    // Keep MMB held across preview frames: a down/move/up burst in one tick
+    // misses the bug where panel placement lived inside the !gesture branch.
+    for(const auto mods:{input::Modifiers{.shift=true},input::Modifiers{.control=true},input::Modifiers{}}) {
+        const auto old_bounds=std::make_shared<ui::Rect>();
+        const auto old_pose=std::make_shared<project::CameraPose>();
+        const auto panel_bounds=[this] {
+            const auto* enter=find(button("Enter"));require(enter,"Camera actions disappeared during navigation");
+            const auto* row=node(enter->parent);require(row,"Missing camera action row");
+            const auto* panel=node(row->parent);require(panel,"Missing camera panel");
+            return panel->bounds;
+        };
+        wait("Start held navigation with camera actions visible",[this,mods,old_bounds,old_pose,panel_bounds](const Observation& o) {
+            if(!ready(o))return false;
+            *old_bounds=panel_bounds();*old_pose=o.state.viewport.editor_camera;
+            scroll_revision_=o.state.document.revision;
+            drag_start_={o.viewport.x+80,o.viewport.y+o.viewport.height-80};
+            pointer(input::EventKind::pointer_down,drag_start_,2,mods);return true;
+        });
+        add("Move editor camera without releasing MMB",[this,mods](const Observation&) {
+            pointer(input::EventKind::pointer_move,{drag_start_.x+25,drag_start_.y-14},2,mods);return true;
+        });
+        wait("Camera actions track the displayed camera while MMB is held",[this,mods,old_bounds,old_pose,panel_bounds](const Observation& o) {
+            if(!ready(o)||o.state.viewport.editor_camera==*old_pose)return false;
+            const auto actual=panel_bounds();
+            const auto* camera=project::find_instance(o.state,camera_);require(camera,"Camera disappeared");
+            const auto anchor=project::camera_glyph(project::evaluate_instance(o.state,*camera,o.state.viewport.time)).body_center();
+            const auto point=project_point(o,anchor);
+            require(o.viewport.contains(point),"Held-navigation fixture moved camera off-screen");
+            const auto x=std::clamp(point.x+36,o.viewport.x,o.viewport.x+o.viewport.width-actual.width);
+            const auto y=std::clamp(point.y-actual.height*.5F,o.viewport.y,o.viewport.y+o.viewport.height-actual.height);
+            require(std::abs(actual.x-x)<1 && std::abs(actual.y-y)<1,"Camera action panel stayed at its old screen position while dragging");
+            require(std::abs(actual.x-old_bounds->x)+std::abs(actual.y-old_bounds->y)>1,"Camera panel did not move with its glyph");
+            require(o.state.document.revision==scroll_revision_,"Tracking camera actions authored scene data");
+            checkpoint(o,mods.shift?"08d-camera-panel-pan":mods.control?"08e-camera-panel-dolly":"08f-camera-panel-orbit");
+            pointer(input::EventKind::pointer_up,{drag_start_.x+25,drag_start_.y-14},2,mods);return true;
+        });
+        wait("Camera actions remain available after navigation",[this](const Observation& o) {
+            return ready(o) && find(button("Enter"));
+        });
+    }
     add("Remember the editor view before inspecting", [this](const Observation& o) {
         visit_start_ = o.state.viewport.editor_camera;
+        const auto* camera=project::find_instance(o.state,camera_);require(camera,"Camera disappeared before inspecting");
+        animation_camera_=project::camera_pose(project::evaluate_instance(o.state,*camera,o.state.viewport.time));
         drag_start_ = center(o.viewport);
         pointer(input::EventKind::pointer_down, drag_start_, 2);
         pointer(input::EventKind::pointer_move, {drag_start_.x + 60, drag_start_.y + 20}, 2);
@@ -3375,7 +3912,7 @@ void Driver::workflow() {
     wait("Orbiting away from the camera is private navigation", [this](const Observation& o) {
         if (!ready(o) || o.state.viewport.editor_camera == visit_start_) return false;
         const auto* camera = project::find_instance(o.state, camera_);
-        require(camera && project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time)).yaw == visit_start_.yaw,
+        require(camera && project::camera_pose(project::evaluate_instance(o.state, *camera, o.state.viewport.time)) == animation_camera_,
                 "Navigating moved the camera instance");
         visit_start_ = o.state.viewport.editor_camera;
         return true;

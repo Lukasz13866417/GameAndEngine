@@ -11,7 +11,10 @@ ToolPanel::ToolPanel(vng::ui::Container host)
 
 void ToolPanel::show(ToolOptions& tool, bool new_operation) {
     if (!new_operation && dismissed_ == &tool) return;
-    if (!new_operation && tool_ == &tool && tool.options_available()) return;
+    if (!new_operation && tool_ == &tool && tool.options_available()) {
+        if(source_revision_!=tool.options_revision())refresh();
+        return;
+    }
     close();
     if (!tool.options_available()) return;
     dismissed_ = nullptr;
@@ -33,10 +36,13 @@ void ToolPanel::close() {
 
 void ToolPanel::validate() {
     if (tool_ && !tool_->options_available()) close();
+    if (tool_ && source_revision_!=tool_->options_revision())refresh();
     if (dismissed_ && !dismissed_->options_available()) dismissed_ = nullptr;
 }
 
 void ToolPanel::refresh() {
+    source_revision_=tool_->options_revision();
+    heading_.text(tool_->title());
     inspector_.emplace(vng::editor::Stamp{1, generation_, ++revision_});
     tool_->describe_options(*inspector_);
     panel_.show(inspector_->schema());

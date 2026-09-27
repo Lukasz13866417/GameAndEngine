@@ -2,6 +2,7 @@
 #include "project.hpp"
 #include "component_transform.hpp"
 #include "mesh_visibility.hpp"
+#include "mesh_menu.hpp"
 #include <vng/ui/ui.hpp>
 #include <vng/editor/selection.hpp>
 
@@ -9,14 +10,13 @@ namespace editor_example {
 // Surface is a local preview mode: no component selection or editor overlay.
 // It never overrides the mesh's own rendering (including authored wireframe).
 enum class MeshSelectMode { vertex, edge, face, surface, whole };
-enum class MeshAction { fill, subdivide, align, hide, reveal };
 inline constexpr std::array whole_mesh_gizmos{GizmoMode::rotate,GizmoMode::scale,GizmoMode::free_rotate};
 // Owns local component selection and temporary visibility. Neither authors a
 // document change. Only the compact visibility mask crosses IPC, on change.
 class MeshTools {
 public:
     MeshTools(vng::ui::Container controls, vng::ui::Container popup);
-    void sync(const State&);
+    void sync(const State&, bool accept_input = true);
     void mode(MeshSelectMode);
     [[nodiscard]] MeshSelectMode mode() const { return mode_; }
     [[nodiscard]] bool component_mode() const {
@@ -43,8 +43,10 @@ public:
         vng::Extent2D, const vng::gfx::Camera&, vng::ui::Rect) const;
     void open(vng::Vec2 at, vng::Vec2 screen, std::optional<vng::ui::Rect> viewport = {});
     void close();
-    [[nodiscard]] bool menu_open() const { return menu_open_; }
+    [[nodiscard]] bool menu_open() const { return menu_.opened(); }
     [[nodiscard]] std::optional<MeshAction> poll(std::span<const vng::input::Event>);
+    [[nodiscard]] DebugReport debug_report() const;
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
     void reset();
     TransformKind transform_kind() const {return gizmo_transform_kind(transform_mode());}
     void transform_kind(TransformKind kind) {transform_mode(transform_gizmo(kind));}
@@ -55,14 +57,14 @@ public:
     }
     bool cycle(int direction);
 private:
-    vng::ui::Container popup_;
+    MeshMenu menu_;
+    [[nodiscard]] MeshMenu::Situation menu_situation() const;
     vng::ui::Dropdown<MeshSelectMode> modes_;
     vng::ui::Dropdown<GizmoMode> transform_;
     vng::ui::Dropdown<GizmoMode> whole_transform_;
     vng::ui::Label summary_;
     vng::ui::Label transform_help_;
     vng::ui::Checkbox xray_;
-    vng::ui::Button fill_, subdivide_, align_, hide_, reveal_;
     MeshSelectMode mode_{MeshSelectMode::vertex};
     std::vector<vng::u32> selected_;
     std::vector<vng::gfx::Edge> edges_;
@@ -76,6 +78,5 @@ private:
     std::vector<bool> visible_faces_,visible_edges_,visible_vertices_;
     vng::u64 visibility_revision_{1};
     void update_visibility();
-    bool menu_open_{};
 };
 } // namespace editor_example

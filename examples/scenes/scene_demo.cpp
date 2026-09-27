@@ -89,7 +89,7 @@ int example::run_scene_demo(int argc, char** argv,const SceneDemo& demo) {
         if (restart && !previous_r) elapsed = 0;
         previous = now; previous_space = space; previous_r = restart;
         const auto time = std::clamp(options->fixed_time.value_or(elapsed),0.F,scene->document.timeline_duration);
-        const auto camera = project::camera(project::evaluate_camera(*scene,time),project::ViewMode::scene);
+        const auto camera = project::render_camera(*scene,time);
         if (auto rendered = runtime->render_frame(device,{*scene,camera,*extent,time}); !rendered)
             return report_failure(rendered.error());
         if (auto presented = runtime->present(device); !presented) return report_failure(presented.error());

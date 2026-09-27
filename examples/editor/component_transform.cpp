@@ -18,8 +18,8 @@ Mat4 ComponentTransform::matrix() const {
     }
     return m;
 }
-void ComponentTransform::cancel() {
-    active_=false;modal_.cancel();move_.cancel();rotate_.cancel();scale_.cancel();start_.clear();
+void ComponentTransform::cancel(bool clear_selection) {
+    active_=false;modal_.cancel();move_.cancel(clear_selection);rotate_.cancel(clear_selection);scale_.cancel(clear_selection);start_.clear();
 }
 void ComponentTransform::capture(std::span<const editor::ScenePoint> points,editor::Stamp stamp,
     const gfx::CameraSnapshot& camera,ui::Rect viewport,Vec3 pivot) {
@@ -50,7 +50,7 @@ ComponentChange ComponentTransform::update(std::span<const editor::ScenePoint> p
     if(!enabled||points.empty()||(active()&&(stamp.object!=stamp_.object||stamp.generation!=stamp_.generation||
         viewport.x!=viewport_.x||viewport.y!=viewport_.y||
         viewport.width!=viewport_.width||viewport.height!=viewport_.height))) {
-        action.finished=action.cancelled=active();handled_=active();cancel();return action;
+        action.finished=action.cancelled=active();handled_=active();cancel(enabled||points.empty());return action;
     }
     Vec3 center{};
     for(const auto& point:points)for(unsigned c=0;c<3;++c)center[c]+=point.position[c]/static_cast<float>(points.size());
@@ -97,7 +97,7 @@ ComponentChange ComponentTransform::update(std::span<const editor::ScenePoint> p
         auto angle=result?result:rotate_.preview_rotation();if(angle){action.changed=angles_!=*angle;angles_=*angle;}
         dragging=rotate_.dragging();finished=result.has_value();handled_=rotate_.handledPointer();
     } else {
-        auto result=scale_.update(stamp_,pivot_,1,camera,viewport,input,raw,true);
+        auto result=scale_.update(stamp_,pivot_,1,camera,viewport,input,raw,true,{},arrow_step);
         factor_=result.value;action.changed=result.changed;
         dragging=scale_.dragging();finished=result.finished&&!result.cancelled;handled_=scale_.handledPointer();
     }

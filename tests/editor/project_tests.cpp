@@ -130,7 +130,7 @@ TEST_CASE("Authored environment settings round trip independently of private edi
     auto value = state();
     const project::EnvironmentSettings settings{.stars = 6000,
         .star_seed = std::numeric_limits<u32>::max(), .exposure = 1.3F,
-        .bloom_threshold = 3.25F, .bloom_strength = .4F};
+        .bloom_threshold = 3.25F, .bloom_strength = .4F, .view_distance = 1'000'000};
     value.document.environment = settings;
     const auto wire = encoded(value);
     auto restored = project::decode(wire);
@@ -183,11 +183,21 @@ TEST_CASE("Malformed authored environment values are rejected before becoming sc
         INFO(key << " = " << replacement);
         CHECK_FALSE(project::decode(replace_value(original, key, replacement)));
     }
+    // The optional view distance is only written when set.
+    const auto begin = original.find("environment = {");
+    REQUIRE(begin != std::string::npos);
+    for (const auto distance : {"-1", "4000001", "\"far\""}) {
+        INFO("view_distance = " << distance);
+        auto text = original;
+        text.insert(original.find("};", begin), std::string("view_distance = ") + distance + "; ");
+        CHECK_FALSE(project::decode(text));
+    }
     for (const auto& bad : std::array{
              project::EnvironmentSettings{.stars = 20001},
              project::EnvironmentSettings{.exposure = std::numeric_limits<f32>::quiet_NaN()},
              project::EnvironmentSettings{.bloom_threshold = std::numeric_limits<f32>::infinity()},
-             project::EnvironmentSettings{.bloom_strength = -1}}) {
+             project::EnvironmentSettings{.bloom_strength = -1},
+             project::EnvironmentSettings{.view_distance = std::numeric_limits<f32>::infinity()}}) {
         auto value = state();
         value.document.environment = bad;
         CHECK_FALSE(project::encode(value));
@@ -320,9 +330,9 @@ TEST_CASE("Editable meshes reject invalid schemas topology and resource limits",
     std::get<std::vector<f32>>(bad_position.vertex_fields[2].values)[0] = 1000001;
     CHECK_FALSE(editor::EditableMesh::create(std::move(bad_position)));
     vm::Document oversized;
-    oversized.vertex_count = 65537;
+    oversized.vertex_count = editor::max_mesh_vertices+1;
     oversized.vertex_fields.push_back(
-        {"position", {vm::ScalarType::Float32, 3}, std::vector<f32>(65537 * 3)});
+        {"position", {vm::ScalarType::Float32, 3}, std::vector<f32>(oversized.vertex_count * 3)});
     CHECK_FALSE(editor::EditableMesh::create(std::move(oversized)));
     vm::Document empty;
     empty.vertex_fields.push_back({"position", {vm::ScalarType::Float32, 3}, std::vector<f32>{}});
@@ -972,13 +982,14 @@ TEST_CASE("Editor project decoding rejects missing wrong-type out-of-range and o
     REQUIRE(at != std::string::npos);
     missing.replace(at, std::string_view("brightness").size(), "unrelated");
     CHECK_FALSE(project::decode(missing));
-    CHECK_FALSE(project::decode(std::string(32 * 1024 * 1024 + 1, ' ')));
+    CHECK_FALSE(project::decode(std::string(64 * 1024 * 1024 + 1, ' ')));
     CHECK_FALSE(project::decode(replace_value(source, "revision", "18446744073709551615")));
     CHECK_FALSE(project::decode(replace_value(source, "revision", "9007199254740992")));
     auto too_many_vertices = source;
     const auto vertices = too_many_vertices.find("vertices 4 {");
     REQUIRE(vertices != std::string::npos);
-    too_many_vertices.replace(vertices, std::string_view("vertices 4 {").size(), "vertices 65537 {");
+    too_many_vertices.replace(vertices, std::string_view("vertices 4 {").size(),
+        "vertices "+std::to_string(editor::max_mesh_vertices+1)+" {");
     auto rejected_vertices = project::decode(too_many_vertices);
     REQUIRE_FALSE(rejected_vertices);
     CHECK(rejected_vertices.error().code == content::ErrorCode::limit_exceeded);

@@ -65,6 +65,7 @@ private:
     std::optional<vng::u64> picked_;
     ComponentTransform transform_;
     BoxSelection box_;
+    SelectionInput selection_input_;
     void validate_selection();
 };
 } // namespace editor_example

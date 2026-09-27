@@ -44,12 +44,12 @@ void apply_blend(render::BlendMode mode)
             (mode == render::BlendMode::disabled ? GL_ZERO : GL_ONE_MINUS_SRC_ALPHA));
 }
 
-void apply_depth(render::DepthState depth)
+void apply_depth(render::DepthState depth,render::DepthMapping mapping)
 {
     if (depth.test) glEnable(GL_DEPTH_TEST);
     else glDisable(GL_DEPTH_TEST);
     glDepthMask(depth.write ? GL_TRUE : GL_FALSE);
-    glDepthFunc(comparisons[static_cast<std::size_t>(depth.compare)]);
+    glDepthFunc(comparisons[static_cast<std::size_t>(render::encode_compare(depth.compare,mapping))]);
 }
 
 void apply_cull(render::CullMode mode)
@@ -105,7 +105,7 @@ std::expected<void, Diagnostic> GraphicsStateAccess::synchronize()
     auto result = checked_gl_call("synchronize graphics state", [&] {
         glDisable(GL_SCISSOR_TEST);
         glDisable(GL_RASTERIZER_DISCARD);
-        apply_depth(state_->graphics_depth);
+        apply_depth(state_->graphics_depth,state_->depth_mapping);
         apply_cull(state_->graphics_cull);
         apply_blend(state_->graphics_blend);
         glFrontFace(winding[static_cast<std::size_t>(state_->graphics_front_face)]);
@@ -147,7 +147,7 @@ std::expected<void, Diagnostic> GraphicsStateAccess::set(render::DepthState valu
     if (!native) return std::unexpected(std::move(native.error()));
     if (auto ready = synchronize(); !ready) return ready;
     if (state_->graphics_depth == value) return {};
-    auto result = checked_gl_call("set depth state", [&] { apply_depth(value); });
+    auto result = checked_gl_call("set depth state", [&] { apply_depth(value,state_->depth_mapping); });
     if (result) state_->graphics_depth = value;
     else state_->graphics_synchronized = false;
     return result;

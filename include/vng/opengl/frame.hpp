@@ -68,7 +68,8 @@ private:
     [[nodiscard]] static std::expected<Frame, Diagnostic> acquire(
         const Device& device,
         Extent2D extent,
-        render::ColorEncoding color_encoding);
+        render::ColorEncoding color_encoding,
+        render::DepthMapping depth_mapping);
     void release_noexcept() noexcept;
 
     Device device_;

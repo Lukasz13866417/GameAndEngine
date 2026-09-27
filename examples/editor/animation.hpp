@@ -44,6 +44,12 @@ struct SceneValues {
 // The simulation camera: the active scene camera instance when the scene has
 // cameras, otherwise the legacy document shot kept for older scenes.
 [[nodiscard]] CameraPose evaluate_camera(const State&, vng::f32 time);
+// The simulation camera ready to render. A camera instance keeps its own eye:
+// an orbit pose rebuilds the eye from its pivot, which rounds it by metres
+// when the focus is far away and shows as shake around a close subject.
+// Zero uses the scene's authored view distance, so distant bodies never need a
+// distant focus; editors pass their viewing-distance preference instead.
+[[nodiscard]] vng::gfx::Camera render_camera(const State&, vng::f32 time, vng::f32 maximum_distance = 0);
 // The camera instance marked active at this time, else the first camera; null
 // when the scene has none.
 [[nodiscard]] const SceneInstance* active_camera(const State&, vng::f32 time);

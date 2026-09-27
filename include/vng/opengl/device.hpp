@@ -14,6 +14,7 @@
 #include <vng/opengl/backend.hpp>
 #include <vng/opengl/default_framebuffer.hpp>
 #include <vng/opengl/diagnostic.hpp>
+#include <vng/render/depth_mapping.hpp>
 
 namespace vng::opengl {
 
@@ -120,6 +121,8 @@ struct CullState final {
 
 class Device final {
 public:
+    // Logical encoding of the active frame; standard outside a frame scope.
+    [[nodiscard]] render::DepthMapping depth_mapping() const noexcept;
     using backend_type = Backend;
     static std::expected<Device, Diagnostic> create(
         CurrentContextAccess access,

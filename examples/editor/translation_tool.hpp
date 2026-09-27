@@ -9,8 +9,14 @@
 #include <vng/gfx/camera.hpp>
 #include <vng/input/input.hpp>
 #include <vng/ui/draw_list.hpp>
+#include "gizmo_handle_selection.hpp"
 
 namespace editor_example {
+// An optional world-space segment for tools with a one-dimensional constraint.
+// Both the authored point and the visible drag preview stop at its endpoints.
+struct TranslationSegment {
+    vng::Vec3 first, last;
+};
 // UI-side world XYZ + explicitly described translation axes for the first gizmo.
 // Dragging exposes a local preview position; release returns an atomic Apply.
 // The host decides how to stream previews and commit/cancel one history gesture.
@@ -19,7 +25,8 @@ public:
     [[nodiscard]] std::optional<vng::editor::Event>
     update(const vng::editor::Schema&, const vng::gfx::CameraSnapshot&, vng::ui::Rect viewport,
            std::span<const vng::input::Event> unhandled, std::span<const vng::input::Event> raw,
-           bool enabled, bool world_axes = true, float arrow_step = 1.F);
+           bool enabled, bool world_axes = true, float arrow_step = 1.F,
+           std::optional<TranslationSegment> segment = {});
     // axis=-1 draws all handles; 0/1/2 draws only that world-axis feature.
     void append(vng::ui::DrawList&, const vng::text::Font& = {}, int axis = -1) const;
     // Read-only geometry for inspection/automation: X/Y/Z or a custom label.
@@ -35,7 +42,9 @@ public:
     // True for this update if a gizmo consumed a pointer gesture, including
     // a press+release or cancellation contained entirely in the same frame.
     [[nodiscard]] bool handledPointer() const noexcept { return handled_; }
-    void cancel() noexcept;
+    [[nodiscard]] std::optional<vng::u32> selected_axis() const { return selection_.axis(); }
+    void clear_selection() { selection_.clear(); }
+    void cancel(bool clear_selection = true) noexcept;
 
 private:
     struct Axis {
@@ -61,8 +70,11 @@ private:
     bool visible_{}, dragging_{}, handled_{};
     bool world_axes_{true};
     bool keyboard_{};
+    GizmoHandleSelection selection_;
+    std::optional<TranslationSegment> segment_;
 
     void geometry();
     void move(vng::Vec2);
+    void constrain(bool keyboard_step = false);
 };
 } // namespace editor_example

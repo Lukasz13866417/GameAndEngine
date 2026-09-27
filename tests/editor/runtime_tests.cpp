@@ -5,6 +5,7 @@
 #include "../../examples/editor/effects.hpp"
 #include "../../examples/editor/selection.hpp"
 #include "../support/glfw_opengl.hpp"
+#include "../../examples/support/presentation.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <vng/opengl/gpu_mesh.hpp>
 #include <vng/analysis/manifest.hpp>
@@ -55,6 +56,35 @@ struct ImportDirectory {
     }
 };
 } // namespace
+TEST_CASE("Camera models render from both sides and remain editor-only", "[editor][opengl][camera-glyph]") {
+    using namespace editor_example;
+    auto window=test::create_hidden_opengl_window(800,600,"camera glyph views");
+    if(!window){std::cerr<<window.error().message<<'\n';std::exit(77);}
+    auto token=window->make_current();REQUIRE(token);auto device=opengl::Device::create(*token);REQUIRE(device);
+    auto state=make_state();state.viewport.mode=ViewMode::scene;
+    mesh_settings(state,1)->visible=false;sun_settings(state,2)->visible=false;
+    const auto id=instantiate(state,BlueprintId::camera);REQUIRE(id);
+    instance_transform(state,*id)->position={};instance_transform(state,*id)->rotation={};
+    camera_settings(state,*id)->focus=10;
+    state.viewport.selected_object=0;
+    auto runtime=Runtime::create(*device,state);REQUIRE(runtime);
+    for(const auto yaw:{140.F,35.F,90.F}) {
+        auto view=camera(CameraPose{yaw,18,2.8F,{0,.06F,.45F},1},ViewMode::scene);
+        auto plain=runtime->render(*device,RenderRequest{state,view,{800,600},0,false,false});REQUIRE(plain);
+        auto glyph=runtime->render(*device,RenderRequest{state,view,{800,600},0,false,true});REQUIRE(glyph);
+        CHECK(glyph->pixels!=plain->pixels);
+        if(const auto* directory=std::getenv("VNG_CAMERA_GLYPH_ARTIFACTS")) {
+            const auto path=std::filesystem::path(directory)/("camera-"+std::to_string(static_cast<int>(yaw))+".png");
+            REQUIRE(example::write_rgba8_png(path,glyph->extent,
+                {reinterpret_cast<const u8*>(glyph->pixels.data()),glyph->pixels.size()}));
+        }
+        state.viewport.selected_object=*id;state.viewport.gizmo_only=true;
+        auto hidden=runtime->render(*device,RenderRequest{state,view,{800,600},0,false,true});REQUIRE(hidden);
+        CHECK(hidden->pixels==plain->pixels);
+        state.viewport.gizmo_only=false;state.viewport.selected_object=0;
+    }
+}
+
 TEST_CASE("Region grids and world bounds depth-test against scene geometry without affecting play", "[editor][opengl][region][depth]") {
     using namespace editor_example;
     auto window=test::create_hidden_opengl_window(128,128,"annotation depth");

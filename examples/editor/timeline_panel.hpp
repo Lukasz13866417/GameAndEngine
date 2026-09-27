@@ -1,6 +1,7 @@
 #pragma once
 
 #include "keyframes.hpp"
+#include "component_debug.hpp"
 #include <memory>
 #include <span>
 #include <string_view>
@@ -33,6 +34,8 @@ public:
         friend bool operator==(const Statistics&, const Statistics&) = default;
     };
     [[nodiscard]] Statistics statistics() const;
+    [[nodiscard]] DebugReport debug_report() const;
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
     TimelinePanel(vng::ui::Container strip, vng::ui::Container list, vng::ui::Container inspector,
                   vng::ui::Container actions, vng::ui::Container range_menu);
     void layout_menu(vng::Vec2 screen_size);

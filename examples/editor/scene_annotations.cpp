@@ -12,7 +12,7 @@ struct Position:gfx::Semantic<Vec3>{};
 struct Color:gfx::Semantic<Vec4>{};
 using Vertex=gfx::Record<Position,Color>;
 using Inputs=shader::VertexInputs<Position,Color>;
-using Program=opengl::TypedProgram<Mat4>;
+using Program=opengl::Program;
 }
 struct SceneAnnotationRenderer::Impl {
     Program program;
@@ -29,8 +29,8 @@ SceneAnnotationRenderer::SceneAnnotationRenderer(SceneAnnotationRenderer&&) noex
 SceneAnnotationRenderer& SceneAnnotationRenderer::operator=(SceneAnnotationRenderer&&) noexcept=default;
 std::expected<SceneAnnotationRenderer,opengl::Diagnostic> SceneAnnotationRenderer::create(opengl::Device& device) {
     auto vs=shader::vertex<Inputs,shader::VertexOutputs<shader::ClipPosition,shader::smooth<Color>>>("scene_annotations",
-        [](auto& s,dsl::Float4x4 vp) {
-            return s.output(dsl::field<shader::ClipPosition>(vp*dsl::vec4(s.input(Position{}),1.F)),
+        [](auto& s) {
+            return s.output(dsl::field<shader::ClipPosition>(s.camera().project(s.input(Position{}))),
                             dsl::field<Color>(s.input(Color{})));
         });
     auto fs=shader::fragment<shader::FragmentInputs<shader::smooth<Color>>,shader::FragmentOutputs<shader::Color<0>>>(
@@ -81,7 +81,8 @@ std::expected<void,opengl::Diagnostic> SceneAnnotationRenderer::render(opengl::F
         if(auto r=graphics.set(render::BlendMode::disabled);!r)return r;
         if(auto r=graphics.set(render::CullMode::none);!r)return r;
         if(auto r=graphics.set(opengl::PolygonMode::fill);!r)return r;
-        if(auto r=context.run(p.program,view.camera()->view_projection);!r)return r;
+        if(auto r=context.run(p.program);!r)return r;
+        if(auto r=context.view(view);!r)return r;
         if(auto r=p.fill_vao->bind();!r)return r;
         if(auto drawn=frame.device().draw_arrays_instanced(opengl::Primitive::triangles,0,static_cast<u32>(triangles.size()*3));!drawn)return drawn;
     }
@@ -107,7 +108,8 @@ std::expected<void,opengl::Diagnostic> SceneAnnotationRenderer::render(opengl::F
     if(auto r=graphics.set(render::BlendMode::disabled);!r)return r;
     if(auto r=graphics.set(render::CullMode::none);!r)return r;
     if(auto r=graphics.set(opengl::PolygonMode::fill);!r)return r;
-    if(auto r=context.run(p.program,view.camera()->view_projection);!r)return r;
+    if(auto r=context.run(p.program);!r)return r;
+    if(auto r=context.view(view);!r)return r;
     if(auto r=p.vao.bind();!r)return r;
     GLfloat width{};glGetFloatv(GL_LINE_WIDTH,&width);glLineWidth(1);
     auto drawn=frame.device().draw_arrays_instanced(opengl::Primitive::lines,0,static_cast<u32>(lines.size()*2));

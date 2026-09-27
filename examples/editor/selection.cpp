@@ -32,6 +32,19 @@ struct Ray {
         return std::isfinite(depth) && depth >= near && depth <= far;
     }
 };
+const spatial::TriangleBvh& camera_pick_geometry() {
+    static const auto index=[] {
+        std::vector<Vec3> vertices;
+        std::vector<spatial::TriangleBvh::Triangle> triangles;
+        for(const auto& triangle:camera_glyph_detail::model().triangles) {
+            const auto first=static_cast<u32>(vertices.size());
+            vertices.insert(vertices.end(),{triangle.a,triangle.b,triangle.c});
+            triangles.push_back({first,first+1,first+2});
+        }
+        return spatial::TriangleBvh{vertices,triangles};
+    }();
+    return index;
+}
 std::optional<spatial::Ray3> local_ray(const Ray& ray,const Mat4& model,double maximum) {
     // Invert the actual render matrix, including float rounding, rather than
     // regenerating Euler rotations differently from rendering.
@@ -119,10 +132,19 @@ std::optional<vng::u32> pick_object(const State& state, vng::Vec2 pixel, vng::Ex
         if(state.viewport.hides_surface(source.id))continue;
         if (!std::holds_alternative<CameraSettings>(source.settings) || !instance_in_view(state, source) ||
             !evaluate_visibility(state, source, state.viewport.time)) continue;
-        // A camera has no surface; its drawn body is the click target.
+        // Reuse the exact displayed geometry, including the protruding grip and
+        // handle. Empty space around the body and the wire frustum isn't a hit.
         const auto glyph = camera_glyph(evaluate_instance(state, source, state.viewport.time));
-        if (const auto hit = sphere(ray, glyph.body_center(), glyph.pick_radius()); hit && *hit < nearest) {
-            nearest = *hit;
+        Mat4 model{};
+        for(unsigned c=0;c<3;++c) {
+            model[0][c]=glyph.right[c]*glyph.body;model[1][c]=glyph.up[c]*glyph.body;
+            model[2][c]=glyph.forward[c]*glyph.body;model[3][c]=glyph.eye[c];
+        }
+        model[3][3]=1;
+        const auto local=local_ray(ray,model,nearest);
+        if(!local)continue;
+        if (const auto hit=camera_pick_geometry().intersect(*local);hit && hit->distance<nearest) {
+            nearest = hit->distance;
             selected = source.id;
         }
     }

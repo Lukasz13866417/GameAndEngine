@@ -114,7 +114,7 @@ content::Result<std::vector<u32>> EditableMesh::subdivide(std::span<const gfx::E
         if(!available.contains(key)) return invalid("Subdivide selection refers to a missing edge");
         middle.try_emplace(key,0);
     }
-    if(size()+middle.size()>65536) return invalid("Subdivision exceeds the editor vertex limit");
+    if(size()+middle.size()>max_mesh_vertices) return invalid("Subdivision exceeds the editor vertex limit");
     auto candidate=document_;
     std::vector<u32> added;
     for(auto& [edge,id]:middle) {

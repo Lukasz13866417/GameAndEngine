@@ -191,6 +191,15 @@ CameraPose evaluate_camera(const State& state, f32 time) {
     return pose;
 }
 
+gfx::Camera render_camera(const State& state, f32 time, f32 maximum_distance) {
+    const auto reach = maximum_distance > 0 ? maximum_distance : state.document.environment.view_distance;
+    auto result = camera(evaluate_camera(state, time), ViewMode::scene, reach);
+    // Moving the eye keeps the look direction and lens from the pose.
+    if (const auto* active = active_camera(state, time))
+        result.set_position(evaluate_transform(state, *active, time).position);
+    return result;
+}
+
 bool has_camera_animation(const State& state) {
     if (has_camera(state)) {
         for (const auto& track : state.document.timeline.tracks())

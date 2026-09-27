@@ -23,7 +23,7 @@ class Starfield final {
     struct Coordinate : vng::gfx::Semantic<vng::Vec2> {};
     using Vertex = vng::gfx::Record<Direction, Corner, Coordinate, vng::gfx::Color>;
     using Mesh = vng::gfx::Mesh<Vertex>;
-    using Program = vng::opengl::TypedProgram<vng::Vec3, vng::Vec2>;
+    using Program = vng::opengl::TypedProgram<vng::Vec3, vng::Vec2,vng::f32>;
 public:
     static vng::resources::Result<Starfield> create(vng::opengl::Device& device, u32 count, u32 seed) {
         using namespace vng;
@@ -38,11 +38,11 @@ public:
         using FI = shader::FragmentInputs<shader::smooth<Coordinate>, shader::smooth<gfx::Color>>;
         using FO = shader::FragmentOutputs<shader::Color<0>>;
         auto vertex = shader::vertex<VI, VO>("editor_starfield",
-            [](auto& s, dsl::Float3 eye, dsl::Float2 pixel) {
+            [](auto& s, dsl::Float3 eye, dsl::Float2 pixel,dsl::Float far_depth) {
                 const auto clip = s.camera().project(eye + s.input(Direction{}) * 20.0F);
                 const auto xy = clip.xy() + s.input(Corner{}) * pixel * clip.w();
                 // Background depth, with no writes; scene geometry occludes it.
-                return s.output(dsl::field<shader::ClipPosition>(dsl::vec4(xy, clip.w(), clip.w())),
+                return s.output(dsl::field<shader::ClipPosition>(dsl::vec4(xy, clip.w()*far_depth, clip.w())),
                     dsl::field<Coordinate>(s.input(Coordinate{})),
                     dsl::field<gfx::Color>(s.input(gfx::Color{})));
             });
@@ -97,7 +97,8 @@ public:
         auto graphics = commands.graphics_state();
         const Vec2 pixel{2.F / static_cast<f32>(view.extent().width),
             2.F / static_cast<f32>(view.extent().height)};
-        if (auto v = into_result(commands.run(program_, view.camera()->position, pixel)); !v) return v;
+        if (auto v = into_result(commands.run(program_, view.camera()->position, pixel,
+                render::encode_depth(1.F,frame.device().depth_mapping()))); !v) return v;
         if (auto v = into_result(commands.view(view)); !v) return v;
         if (auto v = into_result(graphics.set(render::DepthState{true, false, render::DepthCompare::less_equal})); !v) return v;
         if (auto v = into_result(graphics.set(render::CullMode::none)); !v) return v;

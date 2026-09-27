@@ -6,6 +6,7 @@
 #include "authoring_limits.hpp"
 #include "transform_pivot.hpp"
 #include "scale_limits.hpp"
+#include "component_debug.hpp"
 #include <deque>
 
 namespace editor_example {
@@ -47,6 +48,8 @@ public:
     [[nodiscard]] bool active(EditGesture kind) const noexcept;
     [[nodiscard]] vng::u32 active_object() const noexcept;
     [[nodiscard]] std::optional<EditNotice> take_changes();
+    [[nodiscard]] DebugReport debug_report() const;
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 
     // Preferences are not authored content. Existing tracks, load and history
     // are preserved even above this budget; only adding more tracks is blocked.
@@ -82,6 +85,7 @@ public:
     // Individual pivot: use each instance's own blueprint-relative axis.
     // 0=yaw, 1=pitch, 2=roll; angle is from gesture start, in degrees.
     [[nodiscard]] vng::content::Result<bool> attitude(vng::u32 axis, vng::f64 degrees);
+    [[nodiscard]] vng::content::Result<bool> attitude(const std::array<vng::f64,3>& degrees);
     [[nodiscard]] vng::content::Result<bool> scale(vng::f32, std::optional<vng::f32> tool_maximum = {});
     // Mouse-relative factor; axis -1 means uniform, 0..2 means local X/Y/Z.
     [[nodiscard]] vng::content::Result<bool> scale_factor(vng::f32, int axis = -1, ScaleLimits limits = {});

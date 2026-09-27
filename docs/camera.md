@@ -89,7 +89,7 @@ auto drawn = renderer.render(*frame, *view, draws);
 
 The IR records a read-only camera parameter. GLSL assigns an explicit uniform
 location. An OpenGL renderer calls `commands.view(*view)` after binding a
-pipeline; that uploads the snapshot before its draws. Moving or resizing the
+program; that uploads the snapshot before its draws. Moving or resizing the
 camera therefore does not rebuild the IR, regenerate GLSL, or relink the
 program. The enhanced analysis variant consumes the same camera parameter
 automatically.

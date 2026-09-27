@@ -726,6 +726,11 @@ std::expected<void, Diagnostic> Device::set_depth_state(DepthState state) const 
         });
 }
 
+render::DepthMapping Device::depth_mapping() const noexcept {
+    return state_&&state_->active_frame_generation.load(std::memory_order_acquire)!=0
+        ?state_->depth_mapping:render::DepthMapping::standard;
+}
+
 std::expected<void, Diagnostic> Device::set_blend_enabled(
     std::uint32_t color_attachment,
     bool enabled) const {
@@ -907,7 +912,7 @@ std::expected<void, Diagnostic> Device::set_standard_raster_state() const {
             set_capability(GL_POLYGON_SMOOTH, false);
             set_capability(GL_STENCIL_TEST, false);
 
-            glClipControl(GL_LOWER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
+            glClipControl(GL_LOWER_LEFT, depth_mapping()==render::DepthMapping::reversed?GL_ZERO_TO_ONE:GL_NEGATIVE_ONE_TO_ONE);
             glDepthRange(0.0, 1.0);
             for (GLint index = 0; index < maximum_clip_distances; ++index) {
                 set_capability(

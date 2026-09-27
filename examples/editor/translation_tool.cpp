@@ -46,7 +46,8 @@ Vec2 sub(Vec2 a, Vec2 b) {
 }
 } // namespace
 
-void TranslationTool::cancel() noexcept {
+void TranslationTool::cancel(bool clear_selection) noexcept {
+    if(clear_selection)selection_.clear();
     dragging_ = false;
     keyboard_=false;
     visible_ = false;
@@ -136,13 +137,34 @@ void TranslationTool::move(vng::Vec2 pointer) {
     movement = std::clamp(movement, low, high);
     for (std::size_t i = 0; i < 3; ++i)
         ghost_[i] = static_cast<f32>(segment_origin_[i] + movement * drag_axis_.world[i])+keyboard_delta_[i];
+    constrain();
+}
+void TranslationTool::constrain(bool keyboard_step) {
+    if(!segment_)return;
+    std::array<double,3> direction{};double length{},along{};
+    for(unsigned c=0;c<3;++c) {
+        direction[c]=double(segment_->last[c])-segment_->first[c];
+        length+=direction[c]*direction[c];
+        along+=(double(ghost_[c])-segment_->first[c])*direction[c];
+    }
+    const auto t=length>0?std::clamp(along/length,0.,1.):0.;
+    for(unsigned c=0;c<3;++c) {
+        const auto clamped=static_cast<vng::f32>(segment_->first[c]+direction[c]*t);
+        if(keyboard_step)keyboard_delta_[c]+=clamped-ghost_[c];
+        ghost_[c]=clamped;
+    }
 }
 std::optional<vng::editor::Event>
 TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::CameraSnapshot& camera,
                         vng::ui::Rect viewport, std::span<const vng::input::Event> unhandled,
-                        std::span<const vng::input::Event> raw, bool enabled, bool world_axes, float arrow_step) {
+                        std::span<const vng::input::Event> raw, bool enabled, bool world_axes, float arrow_step,
+                        std::optional<TranslationSegment> segment) {
     using namespace vng;
     handled_ = false;
+    segment_=segment;
+    if(segment_&&(!finite(segment_->first)||!finite(segment_->last)))enabled=false;
+    if(stamp_.object!=schema.stamp.object || stamp_.generation!=schema.stamp.generation || world_axes_!=world_axes)
+        selection_.clear();
     const auto control = std::ranges::find_if(
         schema.controls, [](const auto& c) { return c.kind == editor::Kind::translation_gizmo; });
     const editor::Field* position{};
@@ -157,11 +179,13 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
         !finite(Vec2{viewport.width, viewport.height}) || viewport.width <= 0 ||
         viewport.height <= 0 || !finite(std::get<Vec3>(position->value))) {
         handled_ = dragging_;
-        cancel();
+        if(!dragging_)for(const auto& event:raw)selection_.update(event,unhandled,viewport);
+        cancel(enabled);
         visible_ = false;
         return {};
     }
     const auto value = std::get<Vec3>(position->value);
+    if(key_!=control->key || extra_axes_!=control->translation_axes)selection_.clear();
     if (dragging_ &&
         (stamp_ != schema.stamp || key_ != control->key || origin_ != value ||
          extra_axes_ != control->translation_axes || world_axes_ != world_axes ||
@@ -204,15 +228,30 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
     bool moved{};
     for (std::size_t index = 0; index < events.size(); ++index) {
         const auto& event = events[index];
+        const bool clicked=(!dragging_ || keyboard_) && selection_.update(event,unhandled,viewport_);
         if(auto arrow=transform_arrow(event,arrow_step);arrow && (dragging_ || (visible_ && viewport_.contains(event.position) &&
             std::ranges::any_of(unhandled,[&](const auto& e){return e.kind==event.kind&&e.key==event.key;})))) {
-            if(!dragging_) {keyboard_=dragging_=true;keyboard_delta_={};pointer_=event.position;}
+            if(!dragging_) {
+                keyboard_=dragging_=true;keyboard_delta_={};pointer_=event.position;
+                if(auto selected=selection_.axis();selected && *selected<axes_.size()) {
+                    axis_=*selected;drag_axis_=axes_[axis_];
+                }
+            }
             const auto p=project(origin_,camera_,viewport_);
             const auto units=p?10*p->clip.w/(viewport_.height*camera_.projection[1][1]):0;
             Vec3 delta{};
-            for(unsigned c=0;c<3;++c)
-                delta[c]=(keyboard_&&world_axes_?camera_.right[c]*arrow->x-camera_.up[c]*arrow->y:
-                    (keyboard_?extra_axes_.front().direction[c]:drag_axis_.world[c])*(arrow->x-arrow->y))*units;
+            if(selection_.axis() || !keyboard_) {
+                auto vertical=drag_axis_.world;
+                if(world_axes_ && axis_<3) {
+                    // Use the other world axis most aligned with camera-up.
+                    unsigned perpendicular=axis_==1?0:1;
+                    for(unsigned i=0;i<3;++i)if(i!=axis_ && std::abs(camera_.up[i])>std::abs(camera_.up[perpendicular]))perpendicular=i;
+                    vertical={};vertical[perpendicular]=camera_.up[perpendicular]<0?-1.F:1.F;
+                }
+                for(unsigned c=0;c<3;++c)delta[c]=(drag_axis_.world[c]*arrow->x-vertical[c]*arrow->y)*units;
+            } else for(unsigned c=0;c<3;++c)
+                delta[c]=(world_axes_?camera_.right[c]*arrow->x-camera_.up[c]*arrow->y:
+                    extra_axes_.front().direction[c]*(arrow->x-arrow->y))*units;
             if(!finite(delta))continue;
             f64 fraction=1;
             for(unsigned c=0;c<3;++c)if(std::abs(delta[c])>1e-12F) {
@@ -223,19 +262,19 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
                 const auto step=static_cast<f32>(delta[c]*fraction);
                 keyboard_delta_[c]+=step;ghost_[c]+=step;
             }
-            handled_=moved=true;geometry();continue;
+            constrain(true);handled_=moved=true;geometry();continue;
         }
         if (dragging_) {
             if(keyboard_ && ((event.kind==input::EventKind::key_down&&event.key==input::Key::enter) ||
-                (event.kind==input::EventKind::pointer_down&&event.button==0))) {
+                clicked)) {
                 handled_=true;dragging_=keyboard_=false;
                 return editor::Event{stamp_,key_,editor::Phase::apply,{{"position",ghost_}}};
             }
             if (event.kind == input::EventKind::focus_lost ||
                 (event.kind == input::EventKind::key_down && event.key == input::Key::escape) ||
-                (event.kind==input::EventKind::pointer_down && event.button==1)) {
+                (event.kind==input::EventKind::pointer_down && event.button==1 && (!keyboard_ || begins(event)))) {
                 handled_ = true;
-                cancel();
+                cancel(event.kind!=input::EventKind::pointer_down);
                 geometry();
                 return {};
             }
@@ -284,6 +323,7 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
         }
         if (hit) {
             axis_ = *hit;
+            selection_.select(axis_);
             drag_axis_ = axes_[axis_];
             pointer_=start_ = event.position;
             keyboard_=false;keyboard_delta_={};
@@ -330,7 +370,7 @@ void TranslationTool::append(vng::ui::DrawList& list, const vng::text::Font& fon
         }
         const auto& axis = axes_[i];
         const auto direction = axis.direction;
-        const auto color = dragging_ && axis_ == i ? Vec4{1, .7F, .05F, 1}
+        const auto color = (dragging_ && axis_ == i) || selection_.axis()==i ? Vec4{1, .7F, .05F, 1}
             : axis.custom ? Vec4{.1F, .9F, 1, 1} : colors[i];
         for (f32 distance = axis.custom ? 53.F : 7.F; distance < axis.length; distance += 1.5F)
             dot({screen_origin_.x + direction.x * distance,

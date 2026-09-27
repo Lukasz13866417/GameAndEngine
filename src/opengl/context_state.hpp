@@ -14,6 +14,7 @@
 #include <vng/opengl/default_framebuffer.hpp>
 #include <vng/opengl/diagnostic.hpp>
 #include <vng/opengl/graphics_state.hpp>
+#include <vng/render/depth_mapping.hpp>
 
 namespace vng::opengl { class Program; }
 namespace vng::opengl::detail {
@@ -49,6 +50,7 @@ struct ContextState final {
     // acquiring or destroying a handle never replaces this authority.
     const Program* command_program{};
     bool command_view_ready{};
+    render::DepthMapping depth_mapping{render::DepthMapping::standard};
 
     // Desired state of the active frame. Handles carry the generation, not a
     // pointer into Frame/Commands, and cannot access a later frame's state.

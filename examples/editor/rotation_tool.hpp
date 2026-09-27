@@ -8,6 +8,7 @@
 #include <vng/gfx/camera.hpp>
 #include <vng/input/input.hpp>
 #include <vng/ui/draw_list.hpp>
+#include "gizmo_handle_selection.hpp"
 
 namespace editor_example {
 struct RotationGizmo final {
@@ -42,10 +43,12 @@ public:
            std::span<const vng::input::Event> unhandled, std::span<const vng::input::Event> raw,
            bool enabled, float arrow_step = 1.F);
     void append(vng::ui::DrawList&, const vng::text::Font& = {}, int axis = -1) const;
-    void cancel() noexcept;
+    void cancel(bool clear_selection = true) noexcept;
     [[nodiscard]] bool dragging() const noexcept { return dragging_; }
     [[nodiscard]] bool visible() const noexcept { return visible_; }
     [[nodiscard]] bool handledPointer() const noexcept { return handled_; }
+    [[nodiscard]] std::optional<vng::u32> selected_axis() const { return selection_.axis(); }
+    void clear_selection() { selection_.clear(); }
     [[nodiscard]] std::optional<vng::Vec3> preview_rotation() const noexcept {
         return dragging_ ? std::optional{ghost_} : std::nullopt;
     }
@@ -55,6 +58,7 @@ public:
     struct Turn { vng::u32 axis; vng::f64 degrees; };
     // Last absolute drag angle, also available on the release update.
     [[nodiscard]] Turn turn() const noexcept;
+    [[nodiscard]] std::array<vng::f64,3> local_turns() const noexcept;
     [[nodiscard]] vng::Vec3 rotation_delta() const noexcept { return delta_; }
 
 private:
@@ -78,6 +82,8 @@ private:
     Plane drag_plane_{};
     vng::f64 previous_angle_{}, accumulated_angle_{};
     vng::f64 keyboard_angle_{};
+    vng::f64 keyboard_tilt_{};
+    GizmoHandleSelection selection_;
     vng::f64 segment_angle_{};
     bool keyboard_{};
     vng::u32 axis_{};
@@ -86,6 +92,7 @@ private:
     void geometry();
     void move(vng::Vec2);
     void apply_turn();
+    vng::u32 perpendicular_axis() const;
     [[nodiscard]] std::optional<Hit> hit(vng::Vec2) const noexcept;
     [[nodiscard]] std::optional<vng::f64> angle(vng::Vec2, const Plane&) const;
 };

@@ -2,6 +2,8 @@
 #include <vng/opengl/opengl.hpp>
 #include <vng/render/render.hpp>
 #include <vng/shader/shader.hpp>
+#include <vng/opengl/render_target.hpp>
+#include <vng/opengl/camera_projection.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -88,6 +90,67 @@ concept BindsProgramRvalue = requires(Commands& commands, Program&& program) {
 }
 
 } // namespace
+
+TEST_CASE("Reversed frames preserve distant surfaces and standard frames reset the mapping", "[opengl][frame][reversed-depth]") {
+    using namespace vng;
+    auto window=test::create_hidden_opengl_window(64,64,"reversed depth");
+    if(!window)skip_commands_test(window.error().message);
+    auto token=window->make_current();REQUIRE(token);auto device=opengl::Device::create(*token);REQUIRE(device);
+    using GetInteger=void(*)(std::uint32_t,std::int32_t*);
+    auto get_integer=reinterpret_cast<GetInteger>(token->resolve("glGetIntegerv"));REQUIRE(get_integer);
+    auto target=opengl::RenderTarget::create(*device,{.color=gfx::ImageFormat::rgba8,.depth=true},{64,64});REQUIRE(target);
+    auto ir=camera_program();REQUIRE(ir);auto program=render::compile_program(*device,*ir);REQUIRE(program);
+    gfx::Mesh<CommandVertex> source(6);
+    for(unsigned i=0;i<6;++i) {
+        const std::array<Vec2,3> corners{{{-10000,-10000},{10000,-10000},{0,10000}}};
+        source.vertices()[i].set(CommandPosition{},Vec3{corners[i%3].x,corners[i%3].y,i<3?-9999.8F:-10000.F});
+        source.vertices()[i].set(CommandColor{},i<3?Vec4{0,1,0,1}:Vec4{1,0,0,1});
+    }
+    source.add_face(0,1,2);source.add_face(3,4,5);
+    auto mesh=opengl::upload_mesh(*device,source);REQUIRE(mesh);
+    gfx::Camera camera;camera.set_perspective({.near_plane=.01F,.far_plane=100000000});
+    auto view=render::RenderView::create(camera,{64,64});REQUIRE(view);
+    const auto projection=opengl::camera_projection(*view->camera(),render::DepthMapping::reversed);
+    CHECK(projection[2][2]>0); // Far coefficient must not round away to zero.
+    const auto near_depth=(projection[2][2]*-.01F+projection[3][2])/.01F;
+    CHECK(std::abs(near_depth-1.F)<1e-6F);
+    for(auto mapping:{render::DepthMapping::reversed,render::DepthMapping::standard,render::DepthMapping::reversed}) {
+        auto frame=render::begin_frame(*device,target->framebuffer(),{.extent={64,64},.color_encoding=render::ColorEncoding::linear,
+            .clear_color=std::array{0.F,0.F,0.F,1.F},.clear_depth=1,.depth_mapping=mapping});REQUIRE(frame);
+        CHECK(device->depth_mapping()==mapping);
+        auto cleared=target->framebuffer().read_depth32f(32,32,1,1);REQUIRE(cleared);
+        CHECK(cleared->front()==render::encode_depth(1,mapping));
+        auto commands=frame->commands();REQUIRE(commands.run(*program));REQUIRE(commands.view(*view));
+        REQUIRE(commands.graphics_state().set(render::DepthState{true,true,render::DepthCompare::less}));
+        REQUIRE(commands.draw(*mesh));
+        std::int32_t native_clip{},native_compare{};
+        get_integer(0x935D,&native_clip);get_integer(0x0B74,&native_compare);
+        CHECK(native_clip==(mapping==render::DepthMapping::reversed?0x935F:0x935E));
+        CHECK(native_compare==(mapping==render::DepthMapping::reversed?0x0204:0x0201));
+        REQUIRE(frame->end());CHECK(device->depth_mapping()==render::DepthMapping::standard);
+        auto pixel=target->framebuffer().read_rgba8_pixels(0,32,32,1,1);REQUIRE(pixel);
+        if(mapping==render::DepthMapping::reversed)CHECK(pixel->front().g==255);
+    }
+    auto invalid=render::begin_frame(*device,target->framebuffer(),{.extent={64,64},.color_encoding=render::ColorEncoding::linear,
+        .depth_mapping=static_cast<render::DepthMapping>(99)});
+    REQUIRE_FALSE(invalid);CHECK(invalid.error().code==opengl::ErrorCode::invalid_argument);
+}
+
+TEST_CASE("Reversed camera projection preserves lens endpoints", "[opengl][reversed-depth]") {
+    using namespace vng;
+    for(bool orthographic:{false,true}) {
+        gfx::Camera camera;
+        if(orthographic)camera.set_orthographic({.vertical_height=10,.near_plane=.01F,.far_plane=100000000});
+        else camera.set_perspective({.near_plane=.01F,.far_plane=100000000});
+        auto snapshot=camera.snapshot({128,128});REQUIRE(snapshot);
+        const auto reversed=opengl::camera_projection(*snapshot,render::DepthMapping::reversed);
+        for(const auto distance:{.01F,100000000.F}) {
+            const auto depth=(reversed[2][2]*-distance+reversed[3][2])/(reversed[2][3]*-distance+reversed[3][3]);
+            CHECK(std::abs(depth-(distance==.01F?1.F:0.F))<1e-6F);
+        }
+        CHECK(opengl::camera_projection(*snapshot,render::DepthMapping::standard)==snapshot->view_projection);
+    }
+}
 
 TEST_CASE("OpenGL frame commands bind view, dynamic state, and mesh draws",
           "[opengl][commands][integration]")

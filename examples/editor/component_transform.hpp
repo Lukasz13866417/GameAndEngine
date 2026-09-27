@@ -21,14 +21,19 @@ public:
         bool enabled, std::optional<vng::Vec3> pivot = {}, float arrow_step = 1.F);
     void kind(TransformKind value) { gizmo(transform_gizmo(value)); }
     TransformKind kind() const {return kind_;}
-    void gizmo(GizmoMode value) { if(!active()) { kind_=gizmo_transform_kind(value);free_rotation_=value==GizmoMode::free_rotate; } }
+    void gizmo(GizmoMode value) { if(!active()) {
+        if(value!=gizmo()){move_.clear_selection();rotate_.clear_selection();scale_.clear_selection();}
+        kind_=gizmo_transform_kind(value);free_rotation_=value==GizmoMode::free_rotate;
+    } }
     GizmoMode gizmo() const { return free_rotation_ ? GizmoMode::free_rotate : transform_gizmo(kind_); }
     bool active() const {return active_ || modal_.active();}
     bool visible() const {return modal_.active()?modal_.visible():kind_==TransformKind::move?move_.visible():
         kind_==TransformKind::rotate?rotate_.visible():scale_.visible();}
     bool handled() const {return handled_;}
+    bool selected_handle() const {return kind_==TransformKind::move?move_.selected_axis().has_value():
+        kind_==TransformKind::rotate?rotate_.selected_axis().has_value():scale_.selected();}
     ToolOptions* tool_options() {return modal_.active()?&modal_:nullptr;}
-    void cancel();
+    void cancel(bool clear_selection=true);
     void capabilities(std::span<const GizmoMode> value) { available_=value; }
     void append(vng::ui::DrawList&,const vng::text::Font& = {}) const;
     std::optional<vng::Vec2> handle(std::string_view axis) const {return move_.handle(axis);}

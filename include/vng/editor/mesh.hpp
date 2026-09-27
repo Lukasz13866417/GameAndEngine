@@ -7,6 +7,7 @@
 #include <span>
 
 namespace vng::editor {
+inline constexpr std::size_t max_mesh_vertices=131072;
 // Shared by direct mesh import and embedded scene/draft readers.
 [[nodiscard]] content::vmesh::Limits mesh_limits();
 // Editable format document. Position edits preserve storage; topology edits

@@ -1,4 +1,5 @@
 #include "navigation.hpp"
+#include "../support/mesh_frame.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -6,6 +7,7 @@
 namespace editor_example {
 namespace {
 using namespace vng;
+constexpr double surface_navigation_speed=.7; // Finer control during surface-aware approach/zoom.
 bool finite(Vec2 p) {
     return std::isfinite(p.x) && std::isfinite(p.y);
 }
@@ -16,10 +18,75 @@ bool contains(Vec2 origin, Vec2 size, Vec2 p) {
 }
 } // namespace
 
+void NavigationTool::drag_origin(std::optional<Vec3> origin,const editor::EditableMesh* mesh,Mat4 transform) {
+    if(origin&&(!std::isfinite(origin->x)||!std::isfinite(origin->y)||!std::isfinite(origin->z)))origin.reset();
+    drag_origin_=origin;
+    surface_=nullptr;
+    if(origin&&mesh)if(auto inverse=example::mesh_frame::inverse(transform)) {
+        surface_=mesh;surface_inverse_=*inverse;
+    }
+}
+
+std::optional<double> NavigationTool::surface_distance(Vec3 eye,Vec3 center) const {
+    if(!surface_)return {};
+    const double distance=std::hypot(double(center.x)-eye.x,double(center.y)-eye.y,double(center.z)-eye.z);
+    if(distance<=0)return {};
+    // Transform the ray, not the mesh. Keep its parameter in world units even
+    // under a non-uniform pending whole-mesh transform.
+    spatial::Ray3 ray;
+    for(unsigned r=0;r<3;++r) {
+        ray.origin[r]=surface_inverse_[3][r];
+        for(unsigned c=0;c<3;++c) {
+            ray.origin[r]+=double(surface_inverse_[c][r])*eye[c];
+            ray.direction[r]+=double(surface_inverse_[c][r])*(double(center[c])-eye[c])/distance;
+        }
+    }
+    ray.maximum=distance;
+    const auto hit=surface_->picking_index().intersect(ray);
+    if(!hit||!std::isfinite(hit->distance))return {};
+    return hit->distance;
+}
+
+void NavigationTool::approach(CameraPose& s,ViewMode view,Vec3 center,double amount) {
+    const auto eye=camera(s,view).position();
+    const auto distance=std::hypot(double(center.x)-eye.x,double(center.y)-eye.y,double(center.z)-eye.z);
+    if(distance<=0)return;
+    const auto surface=surface_distance(eye,center);
+    const auto clearance=surface.value_or(distance);
+    if(surface)amount*=surface_navigation_speed;
+    // Integrating proportional clearance produces the same approach for one
+    // large input or many fractional ones, and cannot overshoot the surface.
+    // A tiny floor keeps backing away possible at a rounded-to-zero clearance.
+    const auto working=std::max(clearance,distance*1e-6);
+    auto step=working*-std::expm1(std::clamp(-amount,-8.,8.));
+    if(step>0)step=std::min(step,clearance);
+    std::array<double,3> delta{};
+    double fraction=1;
+    for(unsigned i=0;i<3;++i) {
+        delta[i]=(double(center[i])-eye[i])*step/distance;
+        if(delta[i]!=0)fraction=std::min(fraction,
+            ((delta[i]>0?camera_target_limit:-camera_target_limit)-s.target[i])/delta[i]);
+    }
+    for(unsigned i=0;i<3;++i)s.target[i]=static_cast<float>(s.target[i]+delta[i]*fraction);
+}
+
 void NavigationTool::scroll(CameraPose& s, ViewMode view, double amount) {
     if (scroll_mode_ == ScrollMode::zoom) {
+        if(view==ViewMode::mesh&&drag_origin_) {
+            const auto eye=camera(s,view).position();
+            if(const auto clearance=surface_distance(eye,*drag_origin_)) {
+                const auto distance=std::hypot(double(drag_origin_->x)-eye.x,double(drag_origin_->y)-eye.y,double(drag_origin_->z)-eye.z);
+                amount*=surface_navigation_speed*std::clamp(*clearance/distance,.015,1.);
+            }
+        }
         s.zoom = static_cast<f32>(std::clamp(static_cast<double>(s.zoom) *
             std::exp(std::clamp(amount, -32., 32.)), double(camera_min_zoom), double(camera_max_zoom)));
+        return;
+    }
+    if(view==ViewMode::mesh&&drag_origin_&&surface_&&surface_distance(camera(s,view).position(),s.target)) {
+        // Keep wheel movement camera-forward, including after panning. Only
+        // its speed changes; Ctrl-drag still approaches the mesh center.
+        approach(s,view,s.target,amount);
         return;
     }
     // Translate eye AND pivot: dollying never changes the lens or gets stuck
@@ -89,19 +156,7 @@ void NavigationTool::move(CameraPose& s, ViewMode view, bool& smooth_zoom, Vec2 
         }
     } else if (mode_ == Mode::dolly) {
         if(captured_origin_) {
-            // Translate eye and look target together toward the object, not
-            // the old camera-forward axis. Exponential approach cannot cross
-            // the center and is independent of how motion events are batched.
-            const auto eye=camera(s,view).position();
-            const auto amount=1-std::exp(std::clamp(dy*.01*speeds_.forward*boost,-8.,8.));
-            std::array<double,3> delta{};
-            double fraction=1;
-            for(unsigned i=0;i<3;++i) {
-                delta[i]=(double((*captured_origin_)[i])-eye[i])*amount;
-                if(delta[i]!=0)fraction=std::min(fraction,
-                    ((delta[i]>0?camera_target_limit:-camera_target_limit)-s.target[i])/delta[i]);
-            }
-            for(unsigned i=0;i<3;++i)s.target[i]=static_cast<float>(s.target[i]+delta[i]*fraction);
+            approach(s,view,*captured_origin_,-dy*.01*speeds_.forward*boost);
         } else scroll(s, view, -dy * .01 * speeds_.forward * boost);
     } else {
         const auto yaw = static_cast<f64>(s.yaw) * std::numbers::pi / 180;
@@ -113,6 +168,13 @@ void NavigationTool::move(CameraPose& s, ViewMode view, bool& smooth_zoom, Vec2 
             distance=0;
             for(unsigned i=0;i<3;++i)distance+=(double((*captured_origin_)[i])-eye[i])*forward[i];
             distance=std::max(.001,std::abs(distance));
+            if(view==ViewMode::mesh)if(const auto clearance=surface_distance(eye,*captured_origin_)) {
+                const auto radius=std::hypot(double(captured_origin_->x)-eye.x,
+                    double(captured_origin_->y)-eye.y,double(captured_origin_->z)-eye.z);
+                // Pan in the same camera plane, but at the visible surface's
+                // depth rather than the much deeper mesh-center plane.
+                distance*=surface_navigation_speed*std::clamp(*clearance/radius,1e-6,1.);
+            }
         }
         const auto scale =
             2 * distance * std::tan(camera_vertical_fov * std::numbers::pi / 360) / (s.zoom * size_.y);

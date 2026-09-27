@@ -8,6 +8,7 @@
 #include "mesh_shading.hpp"
 #include "blueprint_mesh_renderer.hpp"
 #include "starfield.hpp"
+#include "portal_haze.hpp"
 #include "../file_mesh_types.hpp"
 #include "../support/sun_renderer.hpp"
 #include "../support/sun_softening.hpp"
@@ -232,6 +233,7 @@ struct Runtime::Impl {
     std::optional<opengl::Framebuffer> composite;
     bool frame_ready{};
     std::optional<Starfield> stars;
+    std::optional<PortalHaze> portal_haze;
     u32 star_count{}, star_seed{};
     MeshVisibility mesh_visibility;
     u64 visibility_revision{1};
@@ -594,7 +596,8 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
                                    {.extent = extent,
                                     .color_encoding = render::ColorEncoding::linear,
                                     .clear_color = std::array<f32, 4>{.001F, .002F, .005F, 1},
-                                    .clear_depth = 1}));
+                                    .clear_depth = 1,
+                                    .depth_mapping = render::DepthMapping::reversed}));
     if (!frame)
         return std::unexpected(frame.error());
     const auto sun_draw = [&](const SceneInstance& instance) {
@@ -629,7 +632,8 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
                                            {.extent = extent,
                                             .color_encoding = render::ColorEncoding::linear,
                                             .clear_color = {},
-                                            .clear_depth = {}}));
+                                            .clear_depth = {},
+                                            .depth_mapping = render::DepthMapping::reversed}));
         if (!frame)
             return std::unexpected(frame.error());
         // Only the sun's fine surface/strand detail receives the intentional
@@ -658,6 +662,26 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
         ++p.stats.last_mesh_renderer_calls;
         p.stats.last_mesh_draw_calls+=resource.renderer.stats().draw_calls;
         p.stats.last_mesh_instances+=resource.renderer.stats().instances;
+    }
+    // The authored tunnel ends at Z=0 in kilometres. Veil the opening after
+    // ALL opaque meshes, not just the star background: this also covers Earth
+    // and its addons. The scene depth buffer keeps nearby ships/walls crisp.
+    if(!captures_surface && state.viewport.mode==ViewMode::scene && std::ranges::any_of(mesh_draws,[&](const auto& mesh){
+        const auto style=lighting_style(p.meshes.at(mesh.target.blueprint).source_document);
+        return mesh.settings.visible && (style==LightingStyle::tunnel_departure||style==LightingStyle::tunnel_departure_night);
+    })) {
+        const auto eye=view->camera()->position;
+        constexpr f32 bend=6371.F;
+        if(eye.z>1 && eye.z<1000) {
+            const auto center_y=-eye.z*eye.z/(bend+std::sqrt(bend*bend-eye.z*eye.z));
+            if(std::hypot(eye.x,eye.y-center_y)<example::earth::cinematic_tunnel_radius_km) {
+                if(!p.portal_haze) {
+                    auto haze=PortalHaze::create(device);if(!haze)return std::unexpected(haze.error());
+                    p.portal_haze=std::move(*haze);
+                }
+                if(auto r=p.portal_haze->render(*frame,*view,eye.z);!r)return std::unexpected(r.error());
+            }
+        }
     }
     if (captures_surface) {
         if (selected_sun) {
@@ -765,7 +789,8 @@ resources::Result<std::optional<gfx::ImageData>> Runtime::draw(opengl::Device& d
                                              {.extent = extent,
                                               .color_encoding = render::ColorEncoding::srgb,
                                               .clear_color = {},
-                                              .clear_depth = {}}));
+                                              .clear_depth = {},
+                                              .depth_mapping = render::DepthMapping::reversed}));
     if (!output)
         return std::unexpected(output.error());
     if (auto v = p.bloom.apply(
