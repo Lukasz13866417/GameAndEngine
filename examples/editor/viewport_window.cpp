@@ -48,7 +48,7 @@ std::expected<void, std::string> ViewportWindow::open(bool visible) {
 }
 input::Frame ViewportWindow::take_input() { return surface_->session.window().take_input(); }
 std::expected<bool, std::string> ViewportWindow::present(const ui::DrawList& list,const ui::DrawList& foreground, window::VSync vsync,
-    const State& state, const MeshTools& tools, ui::Rect viewport, Extent2D camera_extent,
+    const State& state, const MeshToolsUI& tools, ui::Rect viewport, Extent2D camera_extent,
     const gfx::Camera& camera, bool show_mesh) {
     auto& s=*surface_;
     auto& window=s.session.window();

@@ -7,7 +7,7 @@
 #include "editor/rotation_edits.hpp"
 #include "editor/scale_edits.hpp"
 #include "editor/selection_edits.hpp"
-#include "editor/navigation.hpp"
+#include "editor/camera_pointer_logic.hpp"
 #include "editor/runtime.hpp"
 #include "editor/preview_viewport.hpp"
 #include "editor/settings.hpp"
@@ -1001,7 +1001,7 @@ private:
     bool playing_{}, linked_{true};
     std::optional<project::CameraPose> play_camera_;
     bool play_camera_override_{};
-    project::NavigationTool navigation_;
+    project::CameraPointerLogic navigation_;
     project::Settings settings_;
     project::ViewportInbox view_inbox_;
     std::optional<project::MeshVisibilityRequest> pending_visibility_;

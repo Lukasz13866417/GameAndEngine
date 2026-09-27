@@ -1,6 +1,6 @@
 #include "app.hpp"
-#include "mesh_tools.hpp"
-#include "workspace.hpp"
+#include "mesh_tools_ui.hpp"
+#include "workspace_ui.hpp"
 #include "tool_panel.hpp"
 #include "mesh_overlay.hpp"
 #include "document_patch.hpp"
@@ -9,23 +9,24 @@
 #include "inspector_panel.hpp"
 #include "blueprint_mesh_panel.hpp"
 #include "translation_tool.hpp"
-#include "rotation_interaction.hpp"
+#include "instance_rotation_gizmo.hpp"
 #include "editing_session.hpp"
 #include "instance_controls.hpp"
 #include "scale_tool.hpp"
 #include "world_bounds_tool.hpp"
 #include "world_bounds_panel.hpp"
 #include "region_editor.hpp"
-#include "viewport_interaction.hpp"
+#include "viewport_tools_ui.hpp"
+#include "viewport_input.hpp"
 #include <numbers>
 #include "edit_clipboard.hpp"
 #include "edit_shortcuts.hpp"
-#include "preview_delivery.hpp"
+#include "preview_logic.hpp"
 #include "viewport_session.hpp"
 #include "presented_view.hpp"
 #include "timing_panel.hpp"
 #include "preview_fps.hpp"
-#include "navigation.hpp"
+#include "camera_pointer_logic.hpp"
 #include "scroll_trace.hpp"
 #include "selection.hpp"
 #include "vertex_drag.hpp"
@@ -116,7 +117,8 @@ int run(const Options& options) {
         if (auto inspected = inspect_mesh(initial, initial.viewport.inspected_mesh); !inspected)
             return fail(inspected.error().message);
     }
-    EditingSession editing{std::move(initial), std::move(scene_file)};
+    EditingWorkspaceUI workspace{std::move(initial), std::move(scene_file)};
+    auto& editing = workspace;
     if (auto configured = editing.timeline_track_limit(settings.timeline_track_limit); !configured)
         return fail(configured.error().message);
     if (auto configured = editing.instance_limit(settings.instance_limit); !configured)
@@ -126,8 +128,7 @@ int run(const Options& options) {
     auto font = text::Font::load(VNG_EXAMPLE_FONT_PATH);
     if (!font)
         return fail(font.error().message);
-    editor::Selection<u32> selected_instances;
-    if(view_state.selected_object) selected_instances.select(view_state.selected_object);
+    const auto& selected_instances=workspace.selected_instances();
     auto app = example::GlfwOpenGLSession::create(
         {.width = 1600,
          .height = 1000,
@@ -147,6 +148,7 @@ int run(const Options& options) {
     auto& window = app->window();
     ViewportWindow viewport_window{window};
     input::Frame viewport_raw;
+    input::EventSequence input_sequence;
     bool toggle_viewport{};
     UiSurfaceSize controls_size, detached_size;
     if (options.fullscreen && !options.automation)
@@ -164,7 +166,7 @@ int run(const Options& options) {
         return fail(display.error().message);
     const auto build_command = options.automation ? std::vector<std::string>{"/usr/bin/true"}
         : std::vector<std::string>{"cmake", "--build", VNG_EDITOR_BUILD_DIR, "--target", "vng_editor_worker", "-j", "2"};
-    auto session = editor::preview::PreviewSession::create(
+    auto session = PreviewLogic::create(
         {.build_command = build_command,
          .build_directory = VNG_EDITOR_SOURCE_DIR,
          .worker_executable = VNG_EDITOR_WORKER_PATH,
@@ -210,8 +212,8 @@ int run(const Options& options) {
                                                 {InteractionMode::vertices, "Mesh edit"}})
             .value(view_state.mode == ViewMode::mesh ? InteractionMode::vertices
                                                 : InteractionMode::objects);
-    GizmoSelector gizmo_mode{manipulation_panel.column().height(36).padding(0).gap(0)};
-    RotationPivotControls rotation_pivot{manipulation_panel};
+    auto gizmo_host=manipulation_panel.column().height(36).padding(0).gap(0);
+    auto pivot_host=manipulation_panel.column().padding(0).gap(0);
     auto image = viewport_screen.root()
                      .image()
                      .position({preview_bounds.x, preview_bounds.y})
@@ -228,7 +230,7 @@ int run(const Options& options) {
     auto object_title = properties_panel.label("INSTANCE / worker controls").height(26);
     auto blueprint_title = properties_panel.label("").height(24);
     auto transform_hint = properties_panel.label("").height(24);
-    BlueprintMeshPanel blueprint_mesh_panel{properties_panel.column().padding(0).gap(6),editing};
+    auto blueprint_panel_host=properties_panel.column().padding(0).gap(6);
     std::string last_blueprint_status;
     auto vertex_tools = properties_panel.column().padding(0).gap(6).visible(false);
     vertex_tools.label("BLUEPRINT / local XYZ");
@@ -336,9 +338,9 @@ int run(const Options& options) {
     auto open_host = screen.column();
     OpenSceneDialog open_dialog{open_host};
     auto mesh_menu_host = viewport_popups.column();
-    EditingWorkspace workspace{editing, vertex_tools, mesh_menu_host, viewport_popups.root(),
+    workspace.initialize(vertex_tools, mesh_menu_host, viewport_popups.root(),
         {scene_list,region_list,blueprint_list,screen.column(),screen.column()},
-        {timeline_host,keyframe_list,keyframe_inspector,keyframe_actions,screen.column()},viewport_popups.column()};
+        {timeline_host,keyframe_list,keyframe_inspector,keyframe_actions,screen.column()},viewport_popups.column());
     const auto& mesh_tools = workspace.mesh_components();
     const auto mesh_input = [&](MeshInput input = {}) {
         return dispatch(workspace, workspace_situation(view_state), WorkspaceContext{input}).mesh;
@@ -350,9 +352,14 @@ int run(const Options& options) {
         return dispatch(workspace, workspace_situation(view_state), WorkspaceContext{.timeline=context}).timeline;
     };
     const auto tool_input_request = [&](ToolPanelInput input) {
-        dispatch(workspace,workspace_situation(view_state),WorkspaceContext{.tools=input});
+        return dispatch(workspace,workspace_situation(view_state),WorkspaceContext{.tools=input}).mesh;
     };
-    ViewportInteraction viewport_interaction{editing, region_controls, sidebar_sections[4], region_inspector, viewport_popups.column()};
+    workspace.attach_viewport_tools(blueprint_panel_host,region_controls,sidebar_sections[4],region_inspector,viewport_popups.column());
+    auto& blueprint_mesh_panel=workspace.blueprint_panel();
+    auto& viewport_interaction=workspace.interaction();
+    workspace.attach_manipulation(gizmo_host,pivot_host);
+    auto& gizmo_mode=workspace.gizmo_selector();
+    auto& rotation_pivot=workspace.rotation_pivot();
     auto& regions = viewport_interaction.regions;
     const auto& tool_panel=workspace.tools();
     auto camera_menu = screen.column().padding(12).gap(6).scrollbar(ui::ScrollBar::automatic).visible(false);
@@ -388,7 +395,7 @@ int run(const Options& options) {
     };
     std::string displayed_logs;
     bool logs_visible{};
-    PreviewDelivery delivery{*session};
+    auto& delivery = *session;
     editor::InteractionTimings timings;
     PreviewFps preview_fps;
     ScrollTrace scroll_trace{ScrollTrace::requested() ? &std::cerr : nullptr};
@@ -400,16 +407,10 @@ int run(const Options& options) {
     u64 minimum_inspector_sequence{};
     auto& translation = viewport_interaction.translation;
     auto& box_tool = viewport_interaction.selection_box;
-    editor::Selection<u32> box_instances;
-    std::vector<u32> box_mesh;
-    gfx::Camera box_camera;
-    Extent2D box_extent{};
-    ui::Rect box_viewport{};
     auto& rotation = viewport_interaction.rotation;
     auto& scaling = viewport_interaction.scale;
     auto& instance_transform = viewport_interaction.instances;
     auto& bounds_tool = viewport_interaction.bounds;
-    std::optional<editor::Schema> position_schema;
     bool selection_overlay_dirty{};
     std::shared_ptr<const gfx::ImageData> preview_pixels;
     u64 ui_frame{};
@@ -417,12 +418,11 @@ int run(const Options& options) {
     const auto& navigation = viewport_interaction.camera_navigation().pointer();
     const auto& walk = viewport_interaction.camera_navigation().walking();
     const auto navigate = [&](NavigationContext context) {
-        return dispatch(viewport_interaction,ViewportInteraction::Navigate{},context);
+        return dispatch(viewport_interaction,ViewportToolsUI::Navigate{},context);
     };
     DeleteTarget delete_target = DeleteTarget::object;
-    std::set<u64> candidates;
-    std::map<u64, editor::Schema> schemas;
-    PreviewMailbox completed_frames;
+    const auto& candidates=session->candidates();
+    const auto& schemas=session->schemas();
     u64 pending_generation{}, image_generation{}, image_id{}, image_revision{},
         minimum_frame_revision = state.document.revision, minimum_overlay_revision = state.document.revision;
     bool captured{}, playing = options.play, wanted_playing = options.play, mode_pending{};
@@ -441,23 +441,14 @@ int run(const Options& options) {
                 {"requested view sequence",std::to_string(view_state.sequence)},
                 {"presented view sequence",std::to_string(presented_info.view_sequence)},
                 {"pending playback transition",debug_bool(mode_pending)}},
-            .children={editing.debug_report(), workspace.debug_report(), viewport_interaction.debug_report(),
-                blueprint_mesh_panel.debug_report(),delivery.debug_report(),main_bar.debug_report(),scene_bar.debug_report(),
+            .children={workspace.debug_report(),delivery.debug_report(),main_bar.debug_report(),scene_bar.debug_report(),
                 save_dialog.debug_report(),open_dialog.debug_report(),import_dialog.debug_report()}};
     };
     auto refresh_selection = [&](bool synchronize_document = true) {
         const auto blueprints = blueprint_catalog(state);
         const bool synchronize = synchronize_document || (view_state.selected_object&&!workspace.contains_instance(view_state.selected_object));
         if(synchronize) list_input({.catalog=SceneListCatalog{scene_instances(state),blueprints,selected_instances}});
-        selected_instances.retain([&](u32 id){return workspace.contains_instance(id);});
-        if(selected_instances.active().value_or(0)!=view_state.selected_object) {
-            selected_instances.clear();
-            if(view_state.selected_object) selected_instances.select(view_state.selected_object);
-        }
-        gizmo_mode.show(state,selected_instances.items());
-        viewport_interaction.selected(view_state.selected_object, gizmo_mode.value());
-        std::vector<u64> selected_rows(selected_instances.items().begin(), selected_instances.items().end());
-        timeline_input({.input={.objects=std::span<const u64>{selected_rows}}});
+        workspace.reconcile_selection();
         list_input({.catalog=SceneListCatalog{scene_instances(state),blueprints,selected_instances,false,
             revealed_instance && revealed_instance!=view_state.selected_object ? std::optional{view_state.selected_object} : std::nullopt}});
         if(synchronize_document) {
@@ -666,7 +657,7 @@ int run(const Options& options) {
             traced_revision = state.document.revision;
             document_origin = timings.interaction();
         }
-        const auto reply=dispatch(delivery,PreviewDelivery::LiveLink{},DeliveryContext{
+        const auto reply=dispatch(delivery,PreviewLogic::LiveLink{},DeliveryContext{
             generation,state,document_origin,view_origin,true});
         if(!reply.error.empty()) status.text(reply.error);
     };
@@ -674,7 +665,7 @@ int run(const Options& options) {
         // Visibility is a reliable, change-only packet, never repeated in
         // camera navigation's latest-value mailbox.
         mesh_input();
-        const auto reply=dispatch(delivery,PreviewDelivery::LiveLink{},DeliveryContext{
+        const auto reply=dispatch(delivery,PreviewLogic::LiveLink{},DeliveryContext{
             generation,state,document_origin,view_origin,false,VisibilityDelivery{mesh_tools.visibility(),mesh_tools.visibility_revision()}});
         if(reply.view_submission) scroll_trace.submitted(generation,view_state.sequence,*reply.view_submission);
         if(!reply.error.empty()) status.text(reply.error);
@@ -705,13 +696,12 @@ int run(const Options& options) {
     };
     auto finish_position_drag = [&](bool cancel) {
         if (!editing.active(EditGesture::move)) return;
-        const auto finished = viewport_interaction.finish(ViewportTool::translation, cancel);
+        const auto finished = workspace.finish(viewport_interaction, ViewportTool::translation, cancel);
         if (!finished) {
             status.text(finished.error().message);
             return;
         }
         if (cancel) translation.cancel();
-        position_schema.reset();
         show_timeline();
         if (auto schema = schemas.find(session->active_generation());
             schema != schemas.end() && schema->second.stamp.revision == state.document.revision)
@@ -733,11 +723,11 @@ int run(const Options& options) {
                                    : "Rotation unchanged");
         }
     };
-    auto cancel_rotation = [&] { rotation_changed(rotation.cancel()); };
+    auto cancel_rotation = [&] { rotation_changed(workspace.execute(rotation, rotation.cancel())); };
     auto finish_scale = [&](bool cancel) {
         if(!editing.active(EditGesture::scale)) return;
         const auto object=editing.active_object();
-        const auto finished=viewport_interaction.finish(ViewportTool::scale, cancel);
+        const auto finished=workspace.finish(viewport_interaction, ViewportTool::scale, cancel);
         if(!finished) { status.text(finished.error().message); return; }
         if(cancel) scaling.cancel();
         if(cancel)
@@ -771,7 +761,7 @@ int run(const Options& options) {
     };
     auto finish_bounds = [&](bool cancel) {
         if (!editing.active(EditGesture::world_bounds)) return;
-        const auto result = viewport_interaction.finish(ViewportTool::bounds, cancel);
+        const auto result = workspace.finish(viewport_interaction, ViewportTool::bounds, cancel);
         if (!result) status.text(result.error().message);
         else if (*result) status.text(cancel ? "World bounds edit cancelled" : "World bounds updated");
         if (cancel) bounds_tool.cancel();
@@ -779,7 +769,7 @@ int run(const Options& options) {
     };
     auto finish_camera = [&](bool cancel) {
         if (!editing.active(EditGesture::camera)) return;
-        auto result = viewport_interaction.finish(ViewportTool::navigation, cancel);
+        auto result = workspace.finish(viewport_interaction, ViewportTool::navigation, cancel);
         if (!result) { status.text(result.error().message); return; }
         if (cancel) {
             navigate({.cancel=true});
@@ -821,22 +811,16 @@ int run(const Options& options) {
         minimum_inspector_sequence = view_state.sequence;
         pause.text(view_state.paused ? "Play (in editor)" : "Pause (in editor)");
     };
-    auto commit_selection = [&] {
-        const bool editing_keyframe = timeline.selected_keyframe().has_value();
+    auto commit_selection = [&](bool different) {
         // Keyboard actions follow the last explicitly selected kind. Keeping
         // the keyframe inspector open must not make Copy/Delete target keys
         // when the user has just selected an instance.
         delete_target = DeleteTarget::object;
         const auto object=selected_instances.active().value_or(0);
-        const bool different=view_state.selected_object!=object;
-        view_state.selected_object = object;
-        view_state.selected_vertex = 0;
         if(different) inspector.clear();
-        translation.cancel();
         selection_overlay_dirty = true;
         refresh_selection(false);
         if(view_state.mode==ViewMode::mesh)refresh_vertex();
-        if (editing_keyframe) timeline_input({.input={.focus=object}});
         if(different) {viewport_changed();minimum_inspector_sequence = view_state.sequence;}
         if(selected_instances.size()>1) {
             status.text("Selected " + std::to_string(selected_instances.size()) +
@@ -850,11 +834,8 @@ int run(const Options& options) {
                                : "Selection cleared / 0 instances selected");
     };
     auto select_object = [&](u32 object,editor::SelectionMode mode=editor::SelectionMode::replace) {
-        if(object) {
-            std::vector<u32> order;for(const auto& i:state.document.instances) order.push_back(i.id);
-            selected_instances.select(object,mode,order);
-        } else if(mode==editor::SelectionMode::replace) selected_instances.clear();
-        commit_selection();
+        const auto change=workspace.select_instance(object,mode);
+        commit_selection(change.active_changed);
     };
     auto view_changed = [&] {
         view_state.smooth_zoom = false;
@@ -917,9 +898,8 @@ int run(const Options& options) {
         if(viewport_interaction.pivot.dragging())rotation_pivot.cancel();
         const bool camera = editing.active(EditGesture::camera);
         const auto object = editing.active_object();
-        auto cancelled = viewport_interaction.cancel();
+        auto cancelled = workspace.cancel(viewport_interaction);
         if (!cancelled) { status.text(cancelled.error().message); return; }
-        position_schema.reset();
         bounds_panel.sync(state.document.world_bounds);
         if (const auto* instance = find_instance(state, object))
             inspector.reset_number("transform", "scale", evaluate_instance(state, *instance, view_state.time).transform.scale);
@@ -938,7 +918,7 @@ int run(const Options& options) {
         consume_edits();
         // Explicit Play initializes from the current document even with live
         // debugging disconnected. It does not enable the debug data stream.
-        const auto reply=dispatch(delivery,PreviewDelivery::StartingIndependentPlay{},DeliveryContext{generation,state});
+        const auto reply=dispatch(delivery,PreviewLogic::StartingIndependentPlay{},DeliveryContext{generation,state});
         if(!reply.submitted) {status.text(reply.error);return;}
         diagnostic.value(false);
         playing = true;
@@ -949,7 +929,7 @@ int run(const Options& options) {
     };
     auto send_event = [&](editor::Event event) {
         if (!playing) {
-            auto local = apply_instance_control(editing, event, session->active_generation(), minimum_inspector_sequence);
+            auto local = workspace.apply_instance_control(event, session->active_generation(), minimum_inspector_sequence);
             if (!local) { status.text(local.error().message); return; }
             if (local->has_value()) { show_timeline(); return; }
         }
@@ -1029,6 +1009,7 @@ int run(const Options& options) {
             raw.overflow = false;
             options.automation->input(raw);
         }
+        input_sequence.identify(raw.events);
         if (viewport_window.opened() || !raw.framebuffer.empty()) controls_size.retain(raw);
         viewport_raw=viewport_window.opened() ? viewport_window.take_input() : raw;
         if (viewport_window.opened()) {
@@ -1037,6 +1018,7 @@ int run(const Options& options) {
                 viewport_raw.events.clear(); viewport_raw.focused=false; viewport_raw.overflow=false;
                 options.automation->viewport_input(viewport_raw);
             }
+            input_sequence.identify(viewport_raw.events);
             detached_size.retain(viewport_raw);
         }
         timings.begin_tick(viewport_window.opened() && viewport_raw.focused ? viewport_raw.events : raw.events);
@@ -1047,28 +1029,18 @@ int run(const Options& options) {
         auto now = std::chrono::steady_clock::now();
         const auto dt = std::chrono::duration<f32>(now - previous).count();
         previous = now;
-        for (const auto& event : session->poll()) {
+        session->poll();
+        while(auto pending=session->take_event()) {
+            const auto& event=pending->event;
             using K = editor::preview::EventKind;
             if (event.kind == K::candidate_started) {
-                candidates.insert(event.generation);
-                delivery.add(event.generation);
                 send_settings(event.generation);
                 send_snapshot(event.generation);
                 session->send(diagnostic.value() ? "diagnostic\n1" : "diagnostic\n0",
                               event.generation);
             } else if (event.kind == K::activated) {
-                completed_frames.clear();
-                candidates.erase(event.generation);
-                delivery.retain_extents(event.generation,candidates);
                 editing.abandon_remote();
                 unresponsive = false;
-                std::erase_if(schemas, [&](const auto& entry) {
-                    const bool remove =
-                        entry.first != event.generation && !candidates.contains(entry.first);
-                    if (remove)
-                        delivery.remove(entry.first);
-                    return remove;
-                });
                 status.text("Preview generation " + std::to_string(event.generation) +
                             " ready / scene retained");
                 session->send(debug_link.value() ? "link\n1" : "link\n0", event.generation);
@@ -1088,30 +1060,18 @@ int run(const Options& options) {
                     cancel_rotation();
                 if (event.kind == K::worker_failed && event.generation == image_generation)
                     finish_scale(true);
-                candidates.erase(event.generation);
-                delivery.forget_extent(event.generation);
-                if (event.kind == K::worker_failed)
-                    schemas.erase(event.generation);
-                if (event.kind == K::worker_failed)
-                    delivery.remove(event.generation);
                 status.text(event.message);
                 if (pending_generation == event.generation) {
                     editing.abandon_remote();
-                    completed_frames.clear();
+                    session->discard_frames();
                 }
                 std::cerr << event.message << '\n';
                 std::cerr << session->logs() << '\n';
             } else if (event.kind == K::message) {
                 const std::string_view message = event.message;
                 if (message.starts_with("revision\n")) {
-                    u64 revision{};
-                    const auto text = message.substr(9);
-                    const auto [end, error] =
-                        std::from_chars(text.data(), text.data() + text.size(), revision);
-                    if (error == std::errc{} && end == text.data() + text.size())
-                        delivery.acknowledge(event.generation, revision);
+                    // PreviewLogic owns revision acknowledgement.
                 } else if (message.starts_with("resync\n")) {
-                    delivery.reset_document(event.generation);
                     status.text(message.substr(7));
                 } else if (message.starts_with("status\n") &&
                            event.generation == session->active_generation()) {
@@ -1130,13 +1090,11 @@ int run(const Options& options) {
                         frame_label.text("Debug link OFF / preview frozen; Play renders directly "
                                          "in worker window");
                 } else if (message.starts_with("schema\n")) {
-                    auto schema = editor::decode_schema(message.substr(7));
-                    if (schema) {
-                        schemas.insert_or_assign(event.generation, *schema);
-                        if (event.generation == session->active_generation() &&
-                            schema->stamp.revision == state.document.revision && !viewport_interaction.busy())
-                            inspector.show(*schema);
-                    }
+                    if (const auto schema=schemas.find(event.generation);
+                        pending->schema_updated && schema!=schemas.end() &&
+                        event.generation==session->active_generation() &&
+                        schema->second.stamp.revision==state.document.revision && !viewport_interaction.busy())
+                        inspector.show(schema->second);
                 } else if (message.starts_with("state_patch\n") &&
                            event.generation == session->active_generation()) {
                     auto patch = decode_patch(message.substr(12));
@@ -1160,7 +1118,7 @@ int run(const Options& options) {
                     std::cerr << message.substr(6) << '\n';
                     if (editing.awaiting_remote() && event.generation == pending_generation) {
                         editing.abandon_remote();
-                        completed_frames.clear();
+                        session->discard_frames();
                     } else
                         delivery.reject(event.generation);
                 } else if (message.starts_with("info\n") &&
@@ -1170,10 +1128,7 @@ int run(const Options& options) {
                 }
             }
         }
-        if (auto arrived = session->take_latest_frame())
-            completed_frames.offer(std::move(*arrived), session->active_generation());
-        if (auto latest = completed_frames.take(session->active_generation(), minimum_frame_revision,
-                                                image_revision, state.document.revision);
+        if (auto latest = session->take_frame(minimum_frame_revision,image_revision,state.document.revision);
             latest &&
             (latest->info.generation != image_generation || latest->info.frame_id != image_id)) {
             // Keep showing completed geometry while dragging. A newer camera,
@@ -1217,7 +1172,7 @@ int run(const Options& options) {
         }
         if (editing.awaiting_remote() && now - pending_started > std::chrono::seconds(30)) {
             editing.abandon_remote();
-            completed_frames.clear();
+            session->discard_frames();
             unresponsive = true;
             status.text(
                 "Preview callback timed out. Fix C++ and Reload; scene + last image are retained.");
@@ -1232,7 +1187,7 @@ int run(const Options& options) {
             viewport_changed();
             stop_refresh = false;
         }
-        viewport_interaction.begin_frame();
+        workspace.begin_viewport_frame();
         const bool viewport_gesture = viewport_interaction.busy() || timeline.dragging();
         const bool camera_numeric_active = editing.active(EditGesture::camera) && !navigation.dragging() && !walk.moving();
         const bool settings_was_open = settings_panel.visible();
@@ -1340,9 +1295,6 @@ int run(const Options& options) {
         nudges.enabled(editing_mesh);
         if (raw.overflow || !raw.focused)
             timeline_input({.input={.cancel=true}});
-        if(viewport_raw.overflow || !viewport_raw.focused || (box_tool.active() &&
-            (image.bounds().width!=box_viewport.width || image.bounds().height!=box_viewport.height ||
-             image.bounds().x!=box_viewport.x || image.bounds().y!=box_viewport.y))) box_tool.cancel();
         if (raw.overflow || viewport_raw.overflow) {
             cancel_viewport();
         }
@@ -1447,7 +1399,7 @@ int run(const Options& options) {
         const bool tool_menu_input=workspace.viewport_controls_contain(viewport_raw.pointer) ||
             (tool_panel.opened() && (tool_panel.contains(viewport_raw.pointer) ||
             viewport_input->capturesPointer || viewport_input->capturesShortcuts));
-        tool_input_request({.context={.poll=true}});
+        mesh_reply(tool_input_request({.context={.poll=true}}));
         if(!tool_panel.status().empty())status.text(tool_panel.status());
         input::Frame viewport_background{.logical_size=viewport_ui_input.logical_size,
             .framebuffer=viewport_ui_input.framebuffer,.pointer=viewport_ui_input.pointer,
@@ -1489,7 +1441,10 @@ int run(const Options& options) {
         if(dialog_was_open && mesh_tools.menu_open()) {
             mesh_reply(mesh_input({.menu_events=viewport_raw.events, .poll_menu=true}));
         }
-        if(dialog_was_open && regions.menu_open())regions.poll_menu(editing,viewport_raw.events);
+        if(dialog_was_open && regions.menu_open()) {
+            regions.poll_menu(workspace.session(),viewport_raw.events);
+            if(auto result=workspace.apply_pending(regions); !result) status.text(result.error().message);
+        }
         if(pop_viewport.clicked() && !dialog_was_open) toggle_viewport=true;
         const bool toolbar_menu_was_open = main_bar.opened() || scene_bar.opened();
         main_bar.poll(raw.events, !dialog_was_open, input->capturesPointer);
@@ -1754,7 +1709,7 @@ int run(const Options& options) {
                     const auto result = shortcut == EditShortcut::undo ? editing.undo() : editing.redo();
                     if (!result) status.text(result.error().message);
                     else if (*result) {
-                        completed_frames.clear();
+                        session->discard_frames();
                         refresh(true);
                         broadcast();
                     }
@@ -1779,7 +1734,7 @@ int run(const Options& options) {
                         inspector.clear(); translation.cancel(); scaling.cancel();
                         refresh();
                         if(pasted->object) {
-                            selected_instances.select(pasted->objects);
+                            workspace.select_instances(pasted->objects);
                             refresh_selection();
                             delete_target=DeleteTarget::object;
                             if (sidebar_tab == SidebarTab::keyframe) sidebar_tab=SidebarTab::properties;
@@ -1931,7 +1886,10 @@ int run(const Options& options) {
             camera_edited(before, after);
         }
         const auto previous_mesh_part=blueprint_mesh_panel.selected_part();
-        if(blueprint_mesh_panel.poll(!dialog_was_open && !modal_visible() && !viewport_gesture && !mode_pending && !editing.busy())) {
+        (void)blueprint_mesh_panel.poll(!dialog_was_open && !modal_visible() && !viewport_gesture && !mode_pending && !editing.busy());
+        const auto blueprint_result=workspace.apply_pending(blueprint_mesh_panel);
+        if(!blueprint_result) status.text(blueprint_result.error().message);
+        if(blueprint_result && *blueprint_result) {
             // Attribute-only blueprint edits keep component selection, masks,
             // edge caches and unrelated scene/timeline widgets intact.
             mesh_input();refresh_vertex();
@@ -2019,495 +1977,77 @@ int run(const Options& options) {
                 return event.kind == input::EventKind::pointer_down && !camera_panel.contains(event.position);
             });
         const bool viewport_enabled = viewport_ready && !toolbar_blocks_viewport && !list_blocks_viewport && !camera_overlay_blocks;
-        const auto previous_camera = preview_camera_pose(state, view_state.time);
         if (walk_button.clicked() && viewport_enabled && !inspecting()) {
             finish_camera(false);
             navigate({.walk_active=!walk.active()});
             status.text(walk.active() ? "Walk: WASD / Q down / E up / Shift fast / middle drag turns / Escape exits" : "Walk mode off");
         }
-        const bool navigation_was_dragging = navigation.dragging();
-        const auto mesh_camera_origin=walk.active()?std::nullopt:workspace.mesh_camera_origin();
-        const auto* rotation_target=find_instance(state,view_state.selected_object);
-        const bool free_object_rotation=view_state.mode==ViewMode::scene && editing.can_edit_scene_pose() &&
-            interaction.value()==InteractionMode::objects && gizmo_mode.value()==GizmoMode::free_rotate &&
-            rotation_target && evaluate_visibility(state,*rotation_target,view_state.time);
-        const bool free_mesh_rotation=view_state.mode==ViewMode::mesh && interaction.value()==InteractionMode::vertices &&
-            mesh_tools.transform_mode()==GizmoMode::free_rotate &&
-            (mesh_tools.mode()==MeshSelectMode::whole || !mesh_tools.selected().empty());
-        const auto navigated=navigate({.frame=NavigationFrame{
-            .pose=previous_camera,.mode=view_state.mode,.smooth_zoom=view_state.smooth_zoom,
-            .viewport=viewport,.raw=viewport_raw,.unhandled=viewport_input->unhandled(),.seconds=dt,
-            .drag_speeds=settings.camera_drag,.walk_speeds=settings.walk,
-            .move_forward=move_camera_scroll.value(),
-            .orbit_enabled=!(free_object_rotation || free_mesh_rotation || regions.free_rotation_selected()),
-            .keyboard_enabled=!viewport_input->capturesShortcuts && (viewport_keyboard || !input->capturesShortcuts),
-            .controls_have_focus=viewport_window.opened() && raw.focused,
-            .origin=mesh_camera_origin,.mesh=mesh_camera_origin?editable_mesh(state):nullptr,
-            .mesh_to_world=mesh_camera_origin?mesh_transform(state):Mat4::identity()},
-            .enabled=viewport_enabled && !inspecting() && !camera_cancelled && !camera_numeric_active});
-        view_state.smooth_zoom=navigated.smooth_zoom;
-        walk_button.text(walk.active() ? "Stop walking" : "Walk camera");
-        if (navigated.cancelled) finish_camera(true);
-        else if (navigated.changed) {
-            camera_edited(previous_camera, navigated.pose);
-        }
-        viewport_interaction.gizmo_input.route(viewport_interaction.transforming(),
-            navigation_was_dragging || navigation.handledPointer(),tool_menu_input,viewport_raw.pointer,
-            viewport_raw.events,viewport_input->unhandled(),dt,
-            viewport_enabled && viewport_raw.focused && !walk.active() && !viewport_input->capturesShortcuts &&
-            (viewport_interaction.transforming() || image.bounds().contains(viewport_raw.pointer)) &&
-            (viewport_keyboard || !ui_shortcut_capture));
-        const auto tool_raw=viewport_interaction.gizmo_input.events();
-        const auto tool_input=viewport_interaction.gizmo_input.unhandled();
-        const auto arrow_step=viewport_interaction.gizmo_input.arrow_step();
-        const bool selected_gizmo_handle=viewport_interaction.selected_handle();
-        if (scroll_trace.enabled())
-            scroll_trace.input(viewport_raw.events, viewport_input->unhandled(), viewport, navigation_was_dragging,
-                previous_camera, preview_camera_pose(state, view_state.time), view_state.sequence,
-                {{"modal", dialog_was_open || modal_visible()}, {"independent-play", playing},
-                 {"mode-transition", mode_pending}, {"debug-link-off", !debug_link.value()},
-                 {"callback-pending", editing.awaiting_remote()}, {"worker-unresponsive", unresponsive},
-                 {"logs-panel", logs_visible}, {"timeline-drag", timeline.dragging() || timeline.handledPointer()},
-                 {"no-image", !image_id}, {"unfocused", !viewport_raw.focused}, {"input-overflow", viewport_raw.overflow},
-                 {"stale-generation", image_generation != session->active_generation()},
-                 {"wrong-view", !matches_view(presented_info, state)},
-                 {"vertex-drag", editing.active(EditGesture::vertices)}, {"translation-drag", translation.dragging() || editing.active(EditGesture::move)},
-                 {"rotation-drag", rotation.active()}});
-        if (editing.active(EditGesture::camera) && !navigation.dragging() && !walk.moving() && !yaw.isPressed() && !pitch.isPressed() &&
-            !orbit_distance.isPressed() && !optical_zoom.isPressed()) {
-            finish_camera(false);
-        }
-        if (viewport_tab && viewport_enabled && !navigation.handledPointer()) {
+        if (viewport_tab && viewport_enabled) {
             interaction.value(interaction.value() == InteractionMode::objects
-                                  ? InteractionMode::vertices
-                                  : InteractionMode::objects);
+                                  ? InteractionMode::vertices : InteractionMode::objects);
             interaction_changed();
         }
-        if(auto snapshot=image_camera.snapshot(image_extent)) {
-            if(viewport_enabled&&view_state.mode==ViewMode::mesh&&mesh_tools.mode()==MeshSelectMode::surface&&blueprint_mesh_panel.connecting())
-                viewport_interaction.mesh_sockets.update(blueprint_mesh_panel.connection_slots(),*snapshot,image.bounds());
-            else viewport_interaction.mesh_sockets.clear();
-            const auto part_handles=blueprint_mesh_panel.gizmo_handles();
-            const auto part_action=viewport_interaction.update(ViewportTool::mesh_part,[&](bool allowed) {
-                return viewport_interaction.mesh_part.update(part_handles,blueprint_mesh_panel.selected_handle(),*snapshot,image.bounds(),
-                    allowed ? tool_input : std::span<const input::Event>{},
-                    allowed ? tool_raw : std::span<const input::Event>{},
-                    viewport_enabled && view_state.mode==ViewMode::mesh && mesh_tools.mode()!=MeshSelectMode::whole && !diagnostic.value() && !walk.active(),
-                    allowed && !editing.busy() && !blueprint_mesh_panel.busy(),arrow_step);
-            });
-            if(part_action.selected_handle)(void)blueprint_mesh_panel.select_handle(*part_action.selected_handle);
-            if(part_action.began || part_action.changed || part_action.finished || part_action.cancelled) {
-                auto applied=blueprint_mesh_panel.edit_part(part_action);
-                if(!applied){status.text(applied.error().message);viewport_interaction.mesh_part.cancel();}
-                else if(*applied)refresh_vertex();
-            }
-            // Non-modal shortcuts select the same capability-listed gizmos as
-            // the dropdown. G/R/S/F start a gesture through the adapter below.
-            if(viewport_enabled && !viewport_interaction.busy() && !walk.active() &&
-               (viewport_keyboard || !ui_shortcut_capture) && editing.can_edit_scene_pose() &&
-               view_state.mode==ViewMode::scene && interaction.value()==InteractionMode::objects) {
-                for(const auto& event:viewport_input->unhandled()) {
-                    if(!image.bounds().contains(event.position))continue;
-                    if(auto mode=gizmo_shortcut(event,gizmo_mode.common());mode && !gizmo_description(*mode).gesture) {
-                        gizmo_mode.value(*mode);
-                        selection_overlay_dirty=true;
-                    }
-                }
-            }
-            auto action=viewport_interaction.update(ViewportTool::instances,[&](bool allowed) {
-                return instance_transform.update(session->active_generation(),selected_instances.items(),rotation_pivot.value(),
-                    *snapshot,image.bounds(),
-                    allowed && (viewport_keyboard || !ui_shortcut_capture) ? tool_input : std::span<const input::Event>{},
-                    allowed ? tool_raw : std::span<const input::Event>{},
-                    allowed && viewport_enabled && !walk.active() && !regions.component_editing() &&
-                    interaction.value()==InteractionMode::objects && view_state.mode==ViewMode::scene &&
-                    image_time_current && !diagnostic.value() && !session->busy(),arrow_step);
-            });
-            if(!action) status.text(action.error().message);
-            else {
-                if(action->began) {
-                    gizmo_mode.value(instance_transform.gizmo());
-                    status.text("Move mouse / Click or Enter confirms / Escape or RMB cancels");
-                }
-                if(action->finished) {
-                    selection_overlay_dirty=true; // Restore passive handles in this frame, with no replayed click.
-                    show_timeline();
-                    status.text(action->cancelled ? "Transform cancelled / original values restored" :
-                        action->committed ? "Transformed selection / Ctrl+Z undoes the whole gesture" : "Transform unchanged");
-                }
-            }
+        // Priority applies to one occurrence, never to every event collected
+        // since the previous render. Capture lives across these steps; elapsed
+        // time is advanced once on the final tick, regardless of event count.
+        ViewportInputSteps steps{viewport_raw,viewport_input->unhandled(),dt};
+        while(auto step=steps.next()) {
+        const auto& step_raw=step->frame;
+        const auto step_input=step->unhandled;
+        const ViewportInputContext viewport_context{
+            .input={step_raw,step_input,step->seconds,dt,step->tick,
+                !viewport_input->capturesShortcuts && (viewport_keyboard || !input->capturesShortcuts),
+                viewport_keyboard || !ui_shortcut_capture,tool_menu_input},
+            .presented={image_camera,image_extent,image.bounds(),session->active_generation(),image_revision,
+                minimum_overlay_revision,image_time_current,delivery.ready(session->active_generation(),state.document.revision),
+                current_schema!=schemas.end()?&current_schema->second:nullptr},
+            .navigation={settings.camera_drag,settings.walk,move_camera_scroll.value(),
+                viewport_enabled&&!inspecting()&&!camera_cancelled&&!camera_numeric_active,
+                viewport_window.opened()&&raw.focused,camera_numeric_active},
+            .tools={viewport_enabled&&!modal_visible(),viewport_ready&&!modal_visible(),interaction.value()==InteractionMode::vertices,
+                diagnostic.value(),session->busy(),toolbar_blocks_viewport,
+                view_state.mode==ViewMode::scene&&(!modal_visible()||regions.menu_open())&&!logs_visible&&!playing&&!diagnostic.value(),
+                bounds_panel.visible()}};
+        auto routed=workspace.interact_viewport(viewport_context);
+        walk_button.text(walk.active() ? "Stop walking" : "Walk camera");
+        if(routed.navigation.changed) camera_changed();
+        if(routed.navigation.cancelled) finish_camera(true);
+        if(routed.view_changed) viewport_changed();
+        if(routed.selection) commit_selection(routed.selection->active_changed);
+        if(routed.geometry_changed) refresh_vertex();
+        if(routed.bounds_changed) bounds_panel.sync(state.document.world_bounds);
+        if(routed.scale) inspector.reset_number("transform","scale",routed.scale->value);
+        if(routed.pose_finished) {
+            show_timeline();
+            if(auto schema=schemas.find(session->active_generation());
+               schema!=schemas.end() && schema->second.stamp.revision==state.document.revision)
+                inspector.show(schema->second);
         }
-        {
-            const auto snapshot=image_camera.snapshot(image_extent);
-            if(auto mode=regions.take_mode()){gizmo_mode.value(*mode);selection_overlay_dirty=true;}
-            viewport_interaction.selected(view_state.selected_object, gizmo_mode.value());
-            viewport_interaction.update(ViewportTool::boundary, [&](bool available) {
-                regions.update(editing,snapshot?*snapshot:gfx::CameraSnapshot{},image.bounds(),
-                    toolbar_blocks_viewport || (!viewport_keyboard && ui_shortcut_capture) ? std::span<const input::Event>{} : tool_input,
-                    toolbar_blocks_viewport ? std::span<const input::Event>{} : tool_raw,
-                    snapshot && view_state.mode==ViewMode::scene && (!modal_visible()||regions.menu_open()) && !logs_visible && !playing && !diagnostic.value(),
-                    available && viewport_ready && !walk.active() && view_state.paused &&
-                    (!editing.busy() || editing.active(EditGesture::region)),arrow_step);
-            });
-            if(viewport_enabled && view_state.paused && !regions.handled() && viewport_interaction.accepts(ViewportTool::boundary))
-                for(const auto& event:viewport_input->unhandled())
-                    if(event.kind==input::EventKind::pointer_down&&event.button==1&&image.bounds().contains(event.position)&&
-                       !event.modifiers.alt&&!event.modifiers.control)
-                        {tool_input_request({.context={.close=true}});regions.open_menu(event.position,viewport_raw.logical_size,image.bounds());}
-            if(auto selected=regions.take_selection()) {
-                const auto mode=viewport_interaction.picked_selection(click_modifiers(viewport_input->unhandled(),image.bounds()));
-                select_object(*selected,mode);
-            }
-            if(auto message=regions.take_message())status.text(*message);
-            sync_sidebar();
+        mesh_reply(routed.mesh);
+        selection_overlay_dirty|=routed.overlay_changed;
+        if(routed.native) send_event(std::move(*routed.native));
+        if(!routed.status.empty()) status.text(routed.status);
+        sync_sidebar();
+        if(scroll_trace.enabled())
+            scroll_trace.input(step_raw.events,step_input,viewport,routed.navigation_was_dragging,
+                routed.previous_camera,preview_camera_pose(state,view_state.time),view_state.sequence,
+                {{"modal",dialog_was_open||modal_visible()},{"independent-play",playing},
+                 {"mode-transition",mode_pending},{"debug-link-off",!debug_link.value()},
+                 {"callback-pending",editing.awaiting_remote()},{"worker-unresponsive",unresponsive},
+                 {"logs-panel",logs_visible},{"no-image",!image_id},{"unfocused",!step_raw.focused},
+                 {"input-overflow",step_raw.overflow},{"wrong-view",!matches_view(presented_info,state)}});
+        const auto picked=workspace.pick_viewport({viewport_context,routed.selected_gizmo_handle});
+        if(picked.selection) commit_selection(picked.selection->active_changed);
+        mesh_reply(picked.mesh);
+        if(picked.vertex_changed || picked.blueprint_changed) refresh_vertex();
+        if(picked.viewport_changed) viewport_changed();
+        if(picked.inspector_changed) minimum_inspector_sequence=view_state.sequence;
+        if(!picked.status.empty()) status.text(picked.status);
+        if(selection_overlay_dirty) {
+            selection_overlay_dirty=false;
+            workspace.refresh_viewport_gizmos(viewport_context);
         }
-        const bool show_regions = regions.boundaries_visible(), show_bounds = bounds_panel.visible();
-        if (view_state.show_regions != show_regions || view_state.show_world_bounds != show_bounds) {
-            view_state.show_regions = show_regions; view_state.show_world_bounds = show_bounds;
-            viewport_changed();
-        }
-        if (const auto snapshot = image_camera.snapshot(image_extent)) {
-            auto action = viewport_interaction.update(ViewportTool::bounds, [&](bool available) {
-                return bounds_tool.update(state.document.world_bounds, *snapshot, image.bounds(), tool_input, tool_raw,
-                bounds_panel.visible() && view_state.mode == ViewMode::scene && !modal_visible() && !logs_visible && !playing,
-                available && viewport_enabled && view_state.paused &&
-                (!editing.busy() || editing.active(EditGesture::world_bounds)));
-            });
-            if (action.cancelled) finish_bounds(true);
-            else {
-                if (action.began) {
-                    if (auto begun = editing.begin_world_bounds(); !begun) {
-                        bounds_tool.cancel(); status.text(begun.error().message);
-                    }
-                }
-                if (editing.active(EditGesture::world_bounds) && (action.changed || action.finished)) {
-                    if (auto changed = editing.world_bounds(action.value); !changed) {
-                        finish_bounds(true); status.text(changed.error().message);
-                    } else if (action.finished) finish_bounds(false);
-                }
-            }
-        } else { finish_bounds(true); bounds_tool.cancel(); }
-        if(viewport_enabled && !walk.active() && !editing.active(EditGesture::mesh_draft) && !editing.active(EditGesture::mesh_transform) && !editing.active(EditGesture::vertices) && interaction.value()==InteractionMode::vertices &&
-            view_state.mode==ViewMode::mesh && (viewport_keyboard || !ui_shortcut_capture) && image.bounds().contains(viewport_raw.pointer)) {
-            mesh_reply(mesh_input({.shortcuts=viewport_input->unhandled()}));
-        }
-        // The modal adapter owns its session transaction until confirmation.
-        // Ring/arrow/scale-handle adapters must not finish or cancel that edit.
-        if (!instance_transform.active() && !instance_transform.handled()) {
-        if (current_schema != schemas.end() || position_schema || session->active_generation()) {
-            auto snapshot = image_camera.snapshot(image_extent);
-            if (snapshot) {
-                // Freeze the drag's original schema while our own position
-                // revisions are in flight. Outside capture, draw the gizmo at
-                // the current local position; worker readiness gates only a
-                // new drag, never the feedback for an existing one.
-                auto local_schema = local_position_gizmo(state, session->active_generation());
-                if (current_schema != schemas.end() &&
-                    current_schema->second.stamp.object == view_state.selected_object) {
-                    local_schema = current_schema->second;
-                    local_schema.stamp.revision = state.document.revision;
-                }
-                auto gizmo_schema = position_schema ? *position_schema
-                                                          : selection_gizmo_schema(state, local_schema);
-                filter_translation_gizmos(gizmo_schema,gizmo_mode.common());
-                const auto control = std::ranges::find_if(gizmo_schema.controls, [](const auto& c) {
-                    return c.kind == editor::Kind::translation_gizmo;
-                });
-                const bool scene_position = control != gizmo_schema.controls.end() && control->key == "position";
-                const bool can_begin = image_time_current && current_schema != schemas.end() &&
-                                       image_revision == state.document.revision &&
-                                       current_schema->second.stamp.object == view_state.selected_object &&
-                                       current_schema->second.stamp.revision == state.document.revision &&
-                                       delivery.ready(session->active_generation(), state.document.revision);
-                const auto presses = can_begin ? tool_input
-                                               : std::span<const vng::input::Event>{};
-                auto event = viewport_interaction.update(ViewportTool::translation, [&](bool available) {
-                    // Input ownership is not visibility: e.g. a held selection
-                    // click must not erase the freshly selected object's gizmo.
-                    return translation.update(
-                    gizmo_schema, *snapshot, image.bounds(), available ? presses : std::span<const input::Event>{},
-                    available ? tool_raw : std::span<const input::Event>{},
-                    (available || !translation.dragging()) && translation_mode(gizmo_mode.value()) &&
-                        interaction.value() == InteractionMode::objects && viewport_enabled &&
-                        editing.can_edit_scene_pose() && image_time_current &&
-                        (scene_position || image_revision >= minimum_overlay_revision) &&
-                        view_state.mode == ViewMode::scene && !logs_visible && !diagnostic.value() &&
-                        !playing && !mode_pending && debug_link.value() && !editing.awaiting_remote() &&
-                        !unresponsive && !session->busy() &&
-                        gizmo_schema.stamp.generation == session->active_generation(), gizmo_mode.value()!=GizmoMode::forward,arrow_step);
-                });
-                // Only the built-in instance position has this compact model
-                // contract. Custom effect gizmos keep their native callbacks.
-                if (!scene_position && event) {
-                    send_event(std::move(*event));
-                    event.reset();
-                }
-                if (scene_position && !editing.active(EditGesture::move) && (translation.dragging() || event)) {
-                    auto begun = editing.begin_move(view_state.selected_object,selected_instances.items());
-                    if (!begun) {
-                        status.text(begun.error().message);
-                        translation.cancel();
-                        event.reset();
-                    } else {
-                        position_schema = gizmo_schema;
-                    }
-                }
-                auto preview = translation.preview_position();
-                if (event) preview = std::get<Vec3>(event->values.front().value);
-                if (editing.active(EditGesture::move) && preview) {
-                    const auto moved = editing.move(*preview);
-                    if (!moved) {
-                        finish_position_drag(true);
-                        status.text(moved.error().message);
-                    }
-                }
-                if (editing.active(EditGesture::move) && !translation.dragging())
-                    finish_position_drag(!event.has_value());
-            } else
-                translation.cancel();
-        } else
-            translation.cancel();
-        if (editing.active(EditGesture::move) && !translation.dragging())
-            finish_position_drag(true);
-        const bool show_rotation_origin=rotation_mode(gizmo_mode.value()) && view_state.mode==ViewMode::scene &&
-            interaction.value()==InteractionMode::objects && view_state.selected_object!=0;
-        rotation_pivot.update(show_rotation_origin ? rotation.center(selected_instances.items()) : Vec3{},
-            show_rotation_origin,viewport_interaction.busy());
-        if(auto snapshot=image_camera.snapshot(image_extent);snapshot) {
-            viewport_interaction.update(ViewportTool::pivot,[&](bool allowed) {
-                rotation_pivot.update_tool(viewport_interaction.pivot,*snapshot,image.bounds(),
-                    allowed ? tool_input : std::span<const input::Event>{},
-                    allowed ? tool_raw : std::span<const input::Event>{},
-                    allowed && viewport_enabled && show_rotation_origin,arrow_step);
-            });
-        }
-        if (auto snapshot = image_camera.snapshot(image_extent); snapshot) {
-            const bool can_begin = image_time_current && image_revision == state.document.revision &&
-                delivery.ready(session->active_generation(), state.document.revision);
-            auto action = viewport_interaction.update(ViewportTool::rotation, [&](bool available) {
-                return rotation.update(session->active_generation(), *snapshot,
-                image.bounds(), available && can_begin ? tool_input : std::span<const input::Event>{},
-                available ? tool_raw : std::span<const input::Event>{},
-                (available || !rotation.active()) && !rotation_pivot.moving() && rotation_mode(gizmo_mode.value()) &&
-                interaction.value() == InteractionMode::objects && viewport_enabled &&
-                view_state.mode == ViewMode::scene && editing.can_edit_scene_pose() && image_time_current &&
-                image_revision >= minimum_overlay_revision && !diagnostic.value() && !session->busy(),
-                selected_instances.items(),gizmo_mode.value()==GizmoMode::attitude,rotation_pivot.value(),
-                gizmo_mode.value()==GizmoMode::free_rotate,arrow_step);
-            });
-            if (!action) cancel_rotation();
-            rotation_changed(std::move(action));
-        } else cancel_rotation();
-        if(const auto* instance=find_instance(state,view_state.selected_object)) {
-            const auto snapshot=image_camera.snapshot(image_extent);
-            if(snapshot) {
-                const auto value=evaluate_instance(state,*instance,view_state.time);
-                const bool available=image_time_current && image_revision==state.document.revision &&
-                    delivery.ready(session->active_generation(),state.document.revision);
-                auto action=viewport_interaction.update(ViewportTool::scale, [&](bool allowed) {
-                    return scaling.update({instance->id,session->active_generation(),state.document.revision},
-                    value.transform.position,value.transform.scale,*snapshot,image.bounds(),
-                    allowed && available ? tool_input : std::span<const input::Event>{},
-                    allowed ? tool_raw : std::span<const input::Event>{},
-                    (allowed || !scaling.dragging()) && gizmo_mode.value()==GizmoMode::scale && interaction.value()==InteractionMode::objects &&
-                    viewport_enabled && view_state.mode==ViewMode::scene && editing.can_edit_scene_pose() &&
-                    image_time_current && !diagnostic.value() &&
-                    (!editing.active(EditGesture::scale) || scaling.dragging()) &&
-                    std::visit([](const auto& settings) { return settings.visible; },value.settings),{},arrow_step);
-                });
-                if(action.cancelled) finish_scale(true);
-                else if(action.began || action.changed || action.finished)
-                    edit_scale(action.value,action.finished,true);
-            } else { finish_scale(true); scaling.cancel(); }
-        } else { finish_scale(true); scaling.cancel(); }
-        }
-        if(auto snapshot=image_camera.snapshot(image_extent);snapshot) {
-            auto changed=viewport_interaction.update(ViewportTool::components,[&](bool allowed) {
-                auto result = viewport_interaction.mesh.update(mesh_tools,*snapshot,image.bounds(),
-                    allowed && (viewport_keyboard || !ui_shortcut_capture) ? tool_input : std::span<const input::Event>{},
-                    allowed ? tool_raw : std::span<const input::Event>{},
-                    allowed && viewport_enabled && !walk.active() && interaction.value()==InteractionMode::vertices &&
-                    view_state.mode==ViewMode::mesh && view_state.paused && !editing.awaiting_remote() && !blueprint_mesh_panel.connecting() &&
-                    (mesh_tools.mode()==MeshSelectMode::whole || !blueprint_mesh_panel.gizmo()),arrow_step);
-                mesh_input({.gizmo=viewport_interaction.mesh.gizmo()});
-                return result;
-            });
-            if(!changed)status.text(changed.error().message);else if(*changed)refresh_vertex();
-        }
-        auto& selection_input=viewport_interaction.selection_input;
-        const auto selection_events=selection_input.route(viewport_raw.events,viewport_input->unhandled(),
-            image.bounds(),selected_gizmo_handle,viewport_enabled && viewport_interaction.accepts(ViewportTool::selection));
-        for (const auto& event : selection_events) {
-            if(blueprint_mesh_panel.connecting()&&((event.kind==input::EventKind::key_down&&event.key==input::Key::escape)||
-                (event.kind==input::EventKind::pointer_down&&event.button==1&&!event.modifiers.control&&!event.modifiers.shift))) {
-                blueprint_mesh_panel.cancel_connection();viewport_interaction.mesh_sockets.clear();continue;
-            }
-            if(blueprint_mesh_panel.placing()&&event.kind==input::EventKind::key_down&&event.key==input::Key::escape) {
-                blueprint_mesh_panel.cancel_placement();continue;
-            }
-            if(box_tool.active()) {
-                if(auto result=box_tool.update(event)) {
-                    const ui::Rect normalized{(result->rect.x-box_viewport.x)/box_viewport.width,
-                        (result->rect.y-box_viewport.y)/box_viewport.height,
-                        result->rect.width/box_viewport.width,result->rect.height/box_viewport.height};
-                    if(interaction.value()==InteractionMode::objects) {
-                        std::vector<u32> hits;
-                        for(const auto& point:viewport_interaction.instance_projection.get(state,box_extent,box_camera))
-                            if(point.point.x>=normalized.x && point.point.x<=normalized.x+normalized.width &&
-                               point.point.y>=normalized.y && point.point.y<=normalized.y+normalized.height) hits.push_back(point.object);
-                        selected_instances=box_instances;
-                        selected_instances.select(hits,result->mode);
-                        commit_selection();
-                    } else if(editable_mesh(state)) {
-                        const auto hits=mesh_tools.box(state,normalized,box_extent,box_camera);
-                        const std::array changes{MeshSelectionInput{box_mesh,editor::SelectionMode::replace},
-                                                 MeshSelectionInput{hits,result->mode}};
-                        mesh_input({.selection=changes});
-                        const auto vertices=mesh_tools.vertices(*editable_mesh(state));
-                        if(!vertices.empty()) view_state.selected_vertex=vertices.back();
-                        refresh_vertex();viewport_changed();
-                        status.text(std::to_string(mesh_tools.selected().size())+" mesh elements selected");
-                    }
-                }
-                continue;
-            }
-            if (!viewport_interaction.accepts(ViewportTool::selection))
-                break;
-            // Escape first cancels an active tool (which consumes the frame).
-            // With no gesture, it clears blueprint-local selection like an
-            // empty-surface click, without touching geometry or history.
-            if(event.kind==input::EventKind::key_down && event.key==input::Key::escape &&
-               !event.repeat && selection_input.available(event) && viewport_enabled &&
-               (viewport_keyboard || !ui_shortcut_capture) && image.bounds().contains(event.position) &&
-               view_state.mode==ViewMode::mesh && !blueprint_mesh_panel.busy() &&
-               blueprint_mesh_panel.selected_part()) {
-                if(blueprint_mesh_panel.select_part({})) {
-                    viewport_interaction.mesh_part.cancel();
-                    viewport_interaction.selection_handled();
-                    status.text("Whole blueprint / 5: transform mesh");
-                }
-                continue;
-            }
-            const bool available_press =
-                event.kind == input::EventKind::pointer_down && event.button == 0 &&
-                image.bounds().contains(event.position) && viewport_enabled &&
-                image_time_current && image_revision == state.document.revision && !diagnostic.value() &&
-                selection_input.available(event);
-            if (available_press && view_state.mode != ViewMode::mesh &&
-                interaction.value() == InteractionMode::objects) {
-                const auto b = image.bounds();
-                box_instances=selected_instances;
-                box_camera=image_camera;box_extent=image_extent;box_viewport=b;
-                box_tool.begin(event.position,b,event.modifiers);
-                viewport_interaction.selection_handled();
-                select_object(pick_object(state,
-                                          {(event.position.x - b.x) / b.width,
-                                           (event.position.y - b.y) / b.height},
-                                          image_extent, &image_camera)
-                                  .value_or(0),click_selection(event.modifiers));
-                continue;
-            }
-            if(available_press && view_state.mode==ViewMode::mesh && mesh_tools.mode()==MeshSelectMode::surface &&
-               !blueprint_mesh_panel.busy()) {
-                const auto b=image.bounds();
-                if(auto snapshot=image_camera.snapshot(image_extent)) {
-                    if(blueprint_mesh_panel.connecting()) {
-                        if(auto slot=viewport_interaction.mesh_sockets.hit(event.position)) {
-                            (void)blueprint_mesh_panel.attach_slot(*slot);viewport_interaction.mesh_sockets.clear();
-                        } else {
-                            (void)blueprint_mesh_panel.pick_connection_target({(event.position.x-b.x)/b.width,(event.position.y-b.y)/b.height},*snapshot);
-                            viewport_interaction.mesh_sockets.update(blueprint_mesh_panel.connection_slots(),*snapshot,b);
-                        }
-                        viewport_interaction.selection_handled();continue;
-                    }
-                    if(blueprint_mesh_panel.placing()) {
-                        (void)blueprint_mesh_panel.place_part({(event.position.x-b.x)/b.width,(event.position.y-b.y)/b.height},*snapshot);
-                        viewport_interaction.selection_handled();continue;
-                    }
-                    const auto part=blueprint_mesh_panel.pick_part(
-                        {(event.position.x-b.x)/b.width,(event.position.y-b.y)/b.height},*snapshot);
-                    (void)blueprint_mesh_panel.select_part(part);
-                    // Present the selected handle in the clicking frame, without
-                    // replaying the click as the start of a drag.
-                    const auto handles=blueprint_mesh_panel.gizmo_handles();
-                    (void)viewport_interaction.mesh_part.update(handles,blueprint_mesh_panel.selected_handle(),*snapshot,b,{},{},true,true);
-                    status.text(part?"Blueprint part selected / drag its surface handle":"Whole blueprint / 5: transform mesh");
-                }
-                viewport_interaction.selection_handled();
-                continue;
-            }
-            if (event.kind == input::EventKind::pointer_down && event.button == 1 &&
-                interaction.value()==InteractionMode::vertices && mesh_tools.component_mode() && viewport_enabled && !editing.active(EditGesture::vertices) &&
-                image.bounds().contains(event.position) && !navigation.handledPointer() &&
-                !event.modifiers.alt && !event.modifiers.control) {
-                tool_input_request({.context={.close=true}});mesh_input({.open_menu=MeshMenuPlacement{event.position,viewport_raw.logical_size,image.bounds()}});
-                continue;
-            }
-            if (event.kind == input::EventKind::pointer_down && event.button == 0 &&
-                interaction.value() == InteractionMode::vertices && viewport_enabled &&
-                mesh_tools.component_mode() &&
-                view_state.paused && image.bounds().contains(event.position) && !playing &&
-                !mode_pending && !editing.awaiting_remote() && !logs_visible && !diagnostic.value() &&
-                editable_mesh(state) && image_time_current && image_revision == state.document.revision &&
-                selection_input.available(event)) {
-                const auto b = image.bounds();
-                auto id = mesh_tools.pick(
-                    state,
-                    {(event.position.x - b.x) / b.width, (event.position.y - b.y) / b.height},
-                    image_extent, image_camera, b);
-                if (id) {
-                    const std::array selected_id{*id};
-                    const std::array selection{MeshSelectionInput{selected_id,
-                        event.modifiers.shift || event.modifiers.control ? editor::SelectionMode::toggle : editor::SelectionMode::replace}};
-                    mesh_input({.selection=selection});
-                    const auto chosen=mesh_tools.vertices(*editable_mesh(state));
-                    if(chosen.empty()) { refresh_vertex(); continue; }
-                    view_state.selected_vertex = chosen.back();
-                    viewport_changed();
-                    minimum_inspector_sequence = view_state.sequence;
-                    refresh_vertex();
-                    viewport_interaction.selection_handled();
-                } else {
-                    box_mesh.assign(mesh_tools.selected().begin(),mesh_tools.selected().end());
-                    box_camera=image_camera;box_extent=image_extent;box_viewport=b;
-                    box_tool.begin(event.position,b,event.modifiers);
-                    viewport_interaction.selection_handled();
-                    if(!event.modifiers.shift && !event.modifiers.control) mesh_input({.select_all=true});
-                }
-            }
-        }
-        // Picking runs after gizmo hit-testing so handles win overlapping
-        // clicks. Refresh its passive geometry now, in that same input frame,
-        // without waiting for a new worker schema or replaying the click.
-        // A pasted instance already has a local transform: its passive handle
-        // must not wait for the worker to accept/render the new document.
-        if (selection_overlay_dirty) {
-            selection_overlay_dirty = false;
-            if (auto snapshot = image_camera.snapshot(image_extent); snapshot) {
-                auto schema=local_position_gizmo(state,session->active_generation());
-                filter_translation_gizmos(schema,gizmo_mode.common());
-                (void)translation.update(schema,
-                    *snapshot, image.bounds(), {}, {},
-                    translation_mode(gizmo_mode.value()) &&
-                    viewport_enabled && interaction.value() == InteractionMode::objects &&
-                    editing.can_edit_scene_pose() && image_time_current &&
-                    view_state.mode == ViewMode::scene && !diagnostic.value(),gizmo_mode.value()!=GizmoMode::forward);
-                rotation_changed(rotation.update(session->active_generation(), *snapshot,
-                    image.bounds(), {}, {}, !rotation_pivot.moving() && rotation_mode(gizmo_mode.value()) &&
-                    viewport_enabled && interaction.value() == InteractionMode::objects &&
-                    editing.can_edit_scene_pose() && view_state.mode == ViewMode::scene && !diagnostic.value() &&
-                    image_revision >= minimum_overlay_revision,selected_instances.items(),gizmo_mode.value()==GizmoMode::attitude,rotation_pivot.value()));
-                if (const auto* instance=find_instance(state,view_state.selected_object)) {
-                    const auto value=evaluate_instance(state,*instance,view_state.time);
-                    (void)scaling.update({instance->id,session->active_generation(),state.document.revision},
-                        value.transform.position,value.transform.scale,*snapshot,image.bounds(),{}, {},
-                        gizmo_mode.value()==GizmoMode::scale && viewport_enabled &&
-                        interaction.value()==InteractionMode::objects && view_state.mode==ViewMode::scene &&
-                        editing.can_edit_scene_pose() && image_time_current && !diagnostic.value() &&
-                        std::visit([](const auto& settings) { return settings.visible; },value.settings));
-                } else scaling.cancel();
-            }
-        }
+        } // ordered viewport input steps
         if (delete_pressed(shortcut_events, shortcut_raw.events,
                            shortcut_raw.focused && !shortcut_raw.overflow && !dialog_was_open && !modal_visible() &&
                            !save_dialog.visible() && !editing.awaiting_remote() && !playing && !mode_pending &&
@@ -2517,6 +2057,7 @@ int run(const Options& options) {
             std::string removed;
             if(view_state.mode==ViewMode::mesh&&mesh_tools.mode()!=MeshSelectMode::whole&&blueprint_mesh_panel.has_gizmo()) {
                 if(blueprint_mesh_panel.erase_handle())status.text("Removing selected handle...");
+                if(auto applied=workspace.apply_pending(blueprint_mesh_panel); !applied)status.text(applied.error().message);
             } else if (delete_target == DeleteTarget::keyframe) {
                 if (!timeline.selected_keyframes().empty()) {
                     result = editing.erase_keyframes(timeline.selected_keyframes());
@@ -2631,8 +2172,8 @@ int run(const Options& options) {
                 else {
                     open_dialog.close();
                     camera_visit.reset();
-                    completed_frames.clear();
-                    selected_instances.clear();
+                    session->discard_frames();
+                    workspace.reset_selection();
                     mesh_input({.reset=true});
                     timeline_input({.input={.reset=true}});
                     revealed_instance.reset();
@@ -2812,7 +2353,7 @@ int run(const Options& options) {
                 .scale_gizmo = instance_transform.active() ? instance_transform.gesture().scale_gizmo() :
                     gizmo_mode.value() == GizmoMode::scale ? &scaling : nullptr,
                 .translation_gizmo = instance_transform.active() ? instance_transform.gesture().translation_gizmo() :
-                    translation_mode(gizmo_mode.value()) ? &translation : nullptr,
+                    translation_mode(gizmo_mode.value()) ? &translation.tool() : nullptr,
                 .gizmo_axis = instance_transform.active() ? instance_transform.gesture().axis() : -1,
                 .bounds_gizmo = &bounds_tool,
                 .region_gizmo = &regions.tool(),
@@ -2832,7 +2373,7 @@ int run(const Options& options) {
                 .capture_viewport = [&]() -> resources::Result<gfx::ImageData> {
                     return viewport_window.opened() ? viewport_window.capture() : example::capture_screenshot(device,extent);
                 },
-                .rotation_origin_gizmo = rotation_pivot.moving() ? &viewport_interaction.pivot : nullptr,
+                .rotation_origin_gizmo = rotation_pivot.moving() ? &viewport_interaction.pivot.tool() : nullptr,
                 .rotation_origin = rotation_pivot.value().point,
                 .mesh_part_gizmo = &viewport_interaction.mesh_part,
                 .blueprint_pending = blueprint_mesh_panel.pending(image_revision),

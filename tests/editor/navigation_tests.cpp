@@ -1,5 +1,5 @@
-#include "../../examples/editor/navigation.hpp"
-#include "../../examples/editor/camera_walk.hpp"
+#include "../../examples/editor/camera_pointer_logic.hpp"
+#include "../../examples/editor/camera_walk_logic.hpp"
 #include "../../examples/editor/ui_scale.hpp"
 #include "../../examples/editor/scroll_trace.hpp"
 #include <catch2/catch_approx.hpp>
@@ -19,7 +19,7 @@ input::Event event(Kind kind, Vec2 position = {500, 350}, input::Modifiers mods 
 input::Event wheel(f32 amount, Vec2 position = {500, 350}) {
     return {.kind = Kind::scroll, .position = position, .scroll = {0, amount}};
 }
-bool update(NavigationTool& tool, State& state, std::initializer_list<input::Event> events) {
+bool update(CameraPointerLogic& tool, State& state, std::initializer_list<input::Event> events) {
     const std::span<const input::Event> input{events.begin(), events.size()};
     return tool.update(state, origin, size, input, input);
 }
@@ -52,7 +52,7 @@ TEST_CASE("Mesh-centered wheel and dolly slow near the surface rather than the c
         const auto step=[&](f32 eye) {
             auto state=scene();state.viewport.mode=ViewMode::mesh;
             state.viewport.editor_camera={0,0,8,{0,0,eye-8*.52F},1};
-            NavigationTool tool;tool.drag_origin(Vec3{},&mesh);
+            CameraPointerLogic tool;tool.drag_origin(Vec3{},&mesh);
             const auto before=camera(state).position().z;
             const auto old=state.viewport.editor_camera;
             const auto revision=state.document.revision;
@@ -76,7 +76,7 @@ TEST_CASE("Surface approach retains smooth fractional input and transformed geom
     auto whole=scene();whole.viewport.mode=ViewMode::mesh;
     whole.viewport.editor_camera={0,0,8,{10,5,14-8*.52F},1};
     auto split=whole;
-    NavigationTool single,fractional;single.drag_origin(Vec3{10,5,10},&mesh,transform);fractional.drag_origin(Vec3{10,5,10},&mesh,transform);
+    CameraPointerLogic single,fractional;single.drag_origin(Vec3{10,5,10},&mesh,transform);fractional.drag_origin(Vec3{10,5,10},&mesh,transform);
     REQUIRE(update(single,whole,{wheel(1)}));
     for(unsigned i=0;i<20;++i)REQUIRE(update(fractional,split,{wheel(.05F)}));
     CHECK(camera(whole).position().z==Catch::Approx(13+std::exp(-.15*.7)).margin(.00001));
@@ -93,7 +93,7 @@ TEST_CASE("Close surface optical zoom is finer and disabling centered mode resto
     auto state=scene();state.viewport.mode=ViewMode::mesh;
     state.viewport.editor_camera={0,0,8,{0,0,1.1F-8*.52F},1};
     const auto before=state.viewport.editor_camera;
-    NavigationTool tool;tool.drag_origin(Vec3{},&mesh);tool.scroll_mode(NavigationTool::ScrollMode::zoom);
+    CameraPointerLogic tool;tool.drag_origin(Vec3{},&mesh);tool.scroll_mode(CameraPointerLogic::ScrollMode::zoom);
     REQUIRE(update(tool,state,{wheel(1)}));
     CHECK(state.viewport.editor_camera.zoom==Catch::Approx(std::exp(.15*.7*.1/1.1)).margin(.000001));
     CHECK(state.viewport.editor_camera.target==before.target);
@@ -101,7 +101,7 @@ TEST_CASE("Close surface optical zoom is finer and disabling centered mode resto
     REQUIRE(update(tool,state,{wheel(1)}));
     CHECK(state.viewport.editor_camera.zoom==Catch::Approx(std::exp(.15)));
     // A ray missing the mesh (or an invalid transform) keeps usable navigation.
-    tool.scroll_mode(NavigationTool::ScrollMode::move_forward);
+    tool.scroll_mode(CameraPointerLogic::ScrollMode::move_forward);
     tool.drag_origin(Vec3{10,0,0},&mesh);
     REQUIRE(update(tool,state,{wheel(1)}));CHECK(valid_camera_pose(state.viewport.editor_camera));
     auto singular=Mat4{};tool.drag_origin(Vec3{},&mesh,singular);
@@ -113,7 +113,7 @@ TEST_CASE("Surface-aware scrolling preserves panned view direction and Alt boost
     auto state=scene();state.viewport.mode=ViewMode::mesh;
     state.viewport.editor_camera={0,0,8,{.5F,0,1.1F-8*.52F},1};
     auto fast=state;
-    NavigationTool normal,boosted;normal.drag_origin(Vec3{},&mesh);boosted.drag_origin(Vec3{},&mesh);
+    CameraPointerLogic normal,boosted;normal.drag_origin(Vec3{},&mesh);boosted.drag_origin(Vec3{},&mesh);
     REQUIRE(update(normal,state,{wheel(1)}));
     auto input=wheel(1);input.modifiers.alt=input.modifiers.left_alt=true;
     REQUIRE(update(boosted,fast,{input}));
@@ -133,7 +133,7 @@ TEST_CASE("Mesh-centered pan slows at surface depth and retains lens speed and A
         state.viewport.editor_camera={0,0,8,{0,0,eye-8*.52F},zoom};
         const auto before=state.viewport.editor_camera;
         const auto revision=state.document.revision;
-        NavigationTool tool;tool.drag_origin(Vec3{},&mesh);
+        CameraPointerLogic tool;tool.drag_origin(Vec3{},&mesh);
         const input::Modifiers modifiers{.shift=true,.alt=fast,.left_alt=fast};
         REQUIRE(update(tool,state,{event(Kind::pointer_down,{500,350},modifiers),
             event(Kind::pointer_up,{510,355},modifiers)}));
@@ -157,7 +157,7 @@ TEST_CASE("Mesh-centered pan slows at surface depth and retains lens speed and A
 TEST_CASE("Camera drags have independent configurable sensitivities", "[editor][navigation]") {
     for (auto modifiers : {input::Modifiers{}, input::Modifiers{.shift=true}, input::Modifiers{.control=true}}) {
         auto a=scene(), b=a;
-        NavigationTool base, faster; faster.speeds({2,2,.6F});
+        CameraPointerLogic base, faster; faster.speeds({2,2,.6F});
         REQUIRE(update(base,a,{event(Kind::pointer_down,{500,350},modifiers),event(Kind::pointer_up,{520,360})}));
         REQUIRE(update(faster,b,{event(Kind::pointer_down,{500,350},modifiers),event(Kind::pointer_up,{520,360})}));
         const auto before=scene().viewport.editor_camera;
@@ -173,23 +173,23 @@ TEST_CASE("Camera drags have independent configurable sensitivities", "[editor][
     }
 }
 TEST_CASE("Left Alt boosts pan dolly and optical zoom but not orbit or Right Alt", "[editor][navigation][fast-pan]") {
-    for(const auto mode:{NavigationTool::ScrollMode::move_forward,NavigationTool::ScrollMode::zoom}) {
+    for(const auto mode:{CameraPointerLogic::ScrollMode::move_forward,CameraPointerLogic::ScrollMode::zoom}) {
         for(const auto mods:{input::Modifiers{.shift=true},input::Modifiers{.control=true},input::Modifiers{}}) {
             auto a=scene(),b=a,c=a;const auto before=a.viewport.editor_camera;
-            NavigationTool normal,fast,right;normal.scroll_mode(mode);fast.scroll_mode(mode);right.scroll_mode(mode);
+            CameraPointerLogic normal,fast,right;normal.scroll_mode(mode);fast.scroll_mode(mode);right.scroll_mode(mode);
             auto boosted=mods;boosted.alt=boosted.left_alt=true;
             auto altgr=mods;altgr.alt=true;
             REQUIRE(update(normal,a,{event(Kind::pointer_down,{500,350},mods),event(Kind::pointer_up,{510,355},mods)}));
             REQUIRE(update(fast,b,{event(Kind::pointer_down,{500,350},boosted),event(Kind::pointer_up,{510,355},boosted)}));
             REQUIRE(update(right,c,{event(Kind::pointer_down,{500,350},altgr),event(Kind::pointer_up,{510,355},altgr)}));
             CHECK(c.viewport.editor_camera==a.viewport.editor_camera);
-            if(mods.control&&mode==NavigationTool::ScrollMode::zoom)
+            if(mods.control&&mode==CameraPointerLogic::ScrollMode::zoom)
                 CHECK(std::log(b.viewport.editor_camera.zoom/before.zoom)==Catch::Approx(4*std::log(a.viewport.editor_camera.zoom/before.zoom)).margin(.00001));
             else if(mods.control||mods.shift)for(unsigned i=0;i<3;++i)
                 CHECK(b.viewport.editor_camera.target[i]-before.target[i]==Catch::Approx(4*(a.viewport.editor_camera.target[i]-before.target[i])).margin(.00001));
             else CHECK(b.viewport.editor_camera==a.viewport.editor_camera);
         }
-        auto a=scene(),b=a;NavigationTool normal,fast;normal.scroll_mode(mode);fast.scroll_mode(mode);
+        auto a=scene(),b=a;CameraPointerLogic normal,fast;normal.scroll_mode(mode);fast.scroll_mode(mode);
         auto scroll=wheel(1);auto boosted=scroll;boosted.modifiers.left_alt=true;
         REQUIRE(update(normal,a,{scroll,scroll,scroll,scroll}));REQUIRE(update(fast,b,{boosted}));
         CHECK(b.viewport.editor_camera.zoom==Catch::Approx(a.viewport.editor_camera.zoom));
@@ -198,7 +198,7 @@ TEST_CASE("Left Alt boosts pan dolly and optical zoom but not orbit or Right Alt
 }
 TEST_CASE("Free-rotate owns bare MMB without disabling modified camera navigation", "[editor][navigation][free-rotate]") {
     auto s=scene();const auto original=s.viewport.editor_camera;
-    NavigationTool tool;tool.orbit_enabled(false);
+    CameraPointerLogic tool;tool.orbit_enabled(false);
     CHECK_FALSE(update(tool,s,{event(Kind::pointer_down),event(Kind::pointer_up,{540,390})}));
     CHECK_FALSE(tool.dragging());CHECK_FALSE(tool.handledPointer());CHECK(s.viewport.editor_camera==original);
     for(auto mods:{input::Modifiers{.shift=true},input::Modifiers{.control=true},input::Modifiers{.alt=true}}) {
@@ -214,7 +214,7 @@ TEST_CASE("Mesh-centered drags use the object reference without reframing the ca
     auto& pose=s.viewport.editor_camera;pose={0,0,8,{3,2,4},2};
     const auto before=pose;
     const Vec3 center{1,1,0};
-    NavigationTool tool;tool.drag_origin(center);
+    CameraPointerLogic tool;tool.drag_origin(center);
     CHECK_FALSE(update(tool,s,{}));CHECK(pose==before);
     const auto eye=camera(pose,ViewMode::mesh).position();
     REQUIRE(update(tool,s,{event(Kind::pointer_down,{500,350},{.control=true}),event(Kind::pointer_up,{500,330})}));
@@ -239,14 +239,14 @@ TEST_CASE("Mesh-centered drags use the object reference without reframing the ca
 TEST_CASE("Navigation freezes the mesh reference per gesture and leaves wheel alone", "[editor][navigation][mesh-origin]") {
     auto s=scene();s.viewport.mode=ViewMode::mesh;s.viewport.editor_camera={0,0,8,{3,2,4},1};
     const auto before=s;
-    NavigationTool tool;tool.drag_origin(Vec3{});
+    CameraPointerLogic tool;tool.drag_origin(Vec3{});
     update(tool,s,{event(Kind::pointer_down,{500,350},{.control=true})});
     tool.drag_origin(Vec3{20,10,0});
     update(tool,s,{event(Kind::pointer_move,{500,340}),event(Kind::pointer_up,{500,330})});
-    auto once=before;NavigationTool single;single.drag_origin(Vec3{});
+    auto once=before;CameraPointerLogic single;single.drag_origin(Vec3{});
     update(single,once,{event(Kind::pointer_down,{500,350},{.control=true}),event(Kind::pointer_up,{500,330})});
     for(unsigned i=0;i<3;++i)CHECK(s.viewport.editor_camera.target[i]==Catch::Approx(once.viewport.editor_camera.target[i]));
-    s=before;once=before;NavigationTool regular;
+    s=before;once=before;CameraPointerLogic regular;
     update(tool,s,{wheel(1)});update(regular,once,{wheel(1)});
     CHECK(s.viewport.editor_camera==once.viewport.editor_camera);
 }
@@ -266,7 +266,7 @@ TEST_CASE("Mesh-centered orbit preserves the mesh view position and eye radius a
     };
     for(const auto pose:{CameraPose{0,0,8,{3,2,4},2},CameraPose{179,79,8,{3,2,4},1}}) {
         auto s=scene();s.viewport.mode=ViewMode::mesh;s.viewport.editor_camera=pose;
-        NavigationTool tool;tool.drag_origin(center);
+        CameraPointerLogic tool;tool.drag_origin(center);
         CHECK_FALSE(update(tool,s,{event(Kind::pointer_down)}));
         CHECK(s.viewport.editor_camera==pose);
         // A stationary release must not numerically reframe the view either.
@@ -280,7 +280,7 @@ TEST_CASE("Mesh-centered orbit preserves the mesh view position and eye radius a
         CHECK(s.viewport.editor_camera.distance==pose.distance);
         CHECK(s.viewport.editor_camera.target!=pose.target);
         auto split=scene();split.viewport.mode=ViewMode::mesh;split.viewport.editor_camera=pose;
-        NavigationTool split_tool;split_tool.drag_origin(center);
+        CameraPointerLogic split_tool;split_tool.drag_origin(center);
         update(split_tool,split,{event(Kind::pointer_down),event(Kind::pointer_move,{470,400}),event(Kind::pointer_up,{440,450})});
         for(unsigned c=0;c<3;++c)CHECK(split.viewport.editor_camera.target[c]==Catch::Approx(s.viewport.editor_camera.target[c]).margin(.00001));
     }
@@ -309,7 +309,7 @@ TEST_CASE("A minimized surface retains layout without retaining focus", "[editor
 }
 
 TEST_CASE("Walk uses the camera axes and separate world vertical speed", "[editor][navigation][walk]") {
-    CameraWalk walk; walk.active(true);
+    CameraWalkLogic walk; walk.active(true);
     CameraPose pose{90,0,8,{},2};
     input::Frame frame;
     frame.events={{.kind=Kind::key_down,.key=input::Key::w}};
@@ -327,7 +327,7 @@ TEST_CASE("Walk uses the camera axes and separate world vertical speed", "[edito
 }
 
 TEST_CASE("Walk is time-based and releases input on typing pause or focus loss", "[editor][navigation][walk]") {
-    CameraWalk a,b; a.active(true); b.active(true);
+    CameraWalkLogic a,b; a.active(true); b.active(true);
     CameraPose first{30,20,8},second=first;
     input::Frame frame; frame.events={{.kind=Kind::key_down,.key=input::Key::w}, {.kind=Kind::key_down,.key=input::Key::d}};
     REQUIRE(a.update(first,.01,frame,{},true)); REQUIRE(b.update(second,.1,frame,{},true));
@@ -348,6 +348,27 @@ TEST_CASE("Walk is time-based and releases input on typing pause or focus loss",
     CHECK_FALSE(a.update(first,.1,frame,{},true)); CHECK_FALSE(a.active());
 }
 
+TEST_CASE("Walk only starts on available keys but receives consumed lifecycle releases", "[editor][navigation][walk][parent-coordination]") {
+    CameraWalkLogic walk;walk.active(true);
+    CameraPose pose{0,0,8};
+    input::Frame frame;frame.events={{.kind=Kind::key_down,.key=input::Key::w}};
+    input::EventSequence sequence;sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.moving());CHECK(pose.target==Vec3{});
+    REQUIRE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{frame.events}));
+    const auto moved=pose;
+    frame.events={{.kind=Kind::key_up,.key=input::Key::w}};sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.moving());CHECK(pose==moved);
+    frame.events={{.kind=Kind::key_down,.key=input::Key::escape}};sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.active());
+    walk.active(true);
+    frame.events={{.kind=Kind::focus_lost}};sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.active());
+}
+
 TEST_CASE("Explicit viewing distance controls clipping independently of orbit distance", "[editor][navigation][viewing-distance]") {
     CameraPose pose{0,0,8};
     auto close=camera(pose,ViewMode::scene,20).snapshot({800,600});
@@ -362,7 +383,7 @@ TEST_CASE("Explicit viewing distance controls clipping independently of orbit di
 }
 
 TEST_CASE("Walk look rotates the camera without orbiting its position", "[editor][navigation][walk]") {
-    auto state=scene(); NavigationTool tool; tool.look_in_place(true);
+    auto state=scene(); CameraPointerLogic tool; tool.look_in_place(true);
     const auto eye=camera(state).position();
     const auto before=state.viewport.editor_camera;
     REQUIRE(update(tool,state,{event(Kind::pointer_down),event(Kind::pointer_up,{540,370})}));
@@ -419,7 +440,7 @@ TEST_CASE("Viewport MMB orbits about a persistent pivot without editing the scen
     state.viewport.editor_camera.target = {2, 3, 4};
     const auto document = state.document.mesh.document();
     const auto revision = state.document.revision;
-    NavigationTool tool;
+    CameraPointerLogic tool;
     CHECK_FALSE(update(tool, state, {event(Kind::pointer_down)}));
     CHECK(tool.dragging());
     CHECK(tool.handledPointer());
@@ -444,7 +465,7 @@ TEST_CASE("Viewport MMB orbits about a persistent pivot without editing the scen
 TEST_CASE("Viewport Shift MMB pans in the camera plane at pivot depth", "[editor][navigation]") {
     auto state = scene();
     state.viewport.editor_camera.yaw = state.viewport.editor_camera.pitch = 0;
-    NavigationTool tool;
+    CameraPointerLogic tool;
     REQUIRE(update(tool, state,
                    {event(Kind::pointer_down, {500, 350}, {.shift = true}),
                     event(Kind::pointer_move, {560, 380})}));
@@ -476,7 +497,7 @@ TEST_CASE("Pilot mode routes navigation into the animation camera without losing
     state.viewport.editor_camera = {-20, 5, 3, {1, 2, 3}};
     state.document.animation_camera = {70, 20, 12, {-3, 1, 2}};
     const auto original_animation = state.document.animation_camera;
-    NavigationTool tool;
+    CameraPointerLogic tool;
     REQUIRE(update(tool, state, {wheel(1)}));
     CHECK(state.document.animation_camera == original_animation);
     const auto editor_pose = state.viewport.editor_camera;
@@ -505,7 +526,7 @@ TEST_CASE("Pan follows rotated camera axes and logical viewport size", "[editor]
     REQUIRE(snapshot);
     const auto scale =
         2 * state.viewport.editor_camera.distance * std::tan(camera_vertical_fov * std::numbers::pi / 360) / 600;
-    NavigationTool tool;
+    CameraPointerLogic tool;
     const std::array events{event(Kind::pointer_down, {500, 350}, {.shift = true}),
                             event(Kind::pointer_up, {520, 360})};
     REQUIRE(tool.update(state, origin, size, events, events));
@@ -524,8 +545,8 @@ TEST_CASE("Pan follows rotated camera axes and logical viewport size", "[editor]
 
 TEST_CASE("Wheel and Ctrl MMB zoom the lens without moving the camera", "[editor][navigation]") {
     auto state = scene();
-    NavigationTool tool;
-    tool.scroll_mode(NavigationTool::ScrollMode::zoom);
+    CameraPointerLogic tool;
+    tool.scroll_mode(CameraPointerLogic::ScrollMode::zoom);
     REQUIRE(update(tool, state, {wheel(1)}));
     CHECK(state.viewport.editor_camera.zoom == Catch::Approx(std::exp(.15)));
     REQUIRE(update(tool, state, {wheel(-1)}));
@@ -547,8 +568,8 @@ TEST_CASE("Wheel and Ctrl MMB zoom the lens without moving the camera", "[editor
 TEST_CASE("Fractional wheel input updates immediately and sums across UI ticks", "[editor][navigation]") {
     auto state = scene();
     const auto revision = state.document.revision;
-    NavigationTool tool;
-    tool.scroll_mode(NavigationTool::ScrollMode::zoom);
+    CameraPointerLogic tool;
+    tool.scroll_mode(CameraPointerLogic::ScrollMode::zoom);
     for (int i = 1; i <= 120; ++i) {
         const auto before = state.viewport.editor_camera.zoom;
         REQUIRE(update(tool, state, {wheel(1.0F / 120)}));
@@ -561,11 +582,11 @@ TEST_CASE("Fractional wheel input updates immediately and sums across UI ticks",
 }
 
 TEST_CASE("Forward scroll translates eye and pivot along view direction without changing zoom", "[editor][navigation][zoom]") {
-    auto state = scene(); NavigationTool tool;
+    auto state = scene(); CameraPointerLogic tool;
     state.viewport.editor_camera.zoom=2;
     const auto before=state.viewport.editor_camera;
     const auto first=camera(state).snapshot({800,600}); REQUIRE(first);
-    tool.scroll_mode(NavigationTool::ScrollMode::move_forward);
+    tool.scroll_mode(CameraPointerLogic::ScrollMode::move_forward);
     REQUIRE(update(tool,state,{wheel(1)}));
     const auto after=camera(state).snapshot({800,600}); REQUIRE(after);
     for(unsigned i=0;i<3;++i) {
@@ -579,7 +600,7 @@ TEST_CASE("Forward scroll translates eye and pivot along view direction without 
     REQUIRE(update(tool,state,{event(Kind::pointer_down,{500,350},{.control=true}),event(Kind::pointer_up,{500,300})}));
     for(unsigned i=0;i<3;++i) CHECK(state.viewport.editor_camera.target[i]==Catch::Approx(first->forward[i]*4).margin(.00001));
     const auto translated=state.viewport.editor_camera;
-    tool.scroll_mode(NavigationTool::ScrollMode::zoom);
+    tool.scroll_mode(CameraPointerLogic::ScrollMode::zoom);
     REQUIRE(update(tool,state,{wheel(1)}));
     CHECK(state.viewport.editor_camera.target==translated.target);
     CHECK(state.viewport.editor_camera.zoom>translated.zoom);
@@ -588,7 +609,7 @@ TEST_CASE("Forward scroll translates eye and pivot along view direction without 
 TEST_CASE("Navigation captures raw movement and final release across UI panels",
           "[editor][navigation]") {
     auto state = scene();
-    NavigationTool tool;
+    CameraPointerLogic tool;
     const std::array begin{event(Kind::pointer_down)};
     CHECK_FALSE(tool.update(state, origin, size, {}, begin)); // UI consumed the press.
     CHECK_FALSE(tool.dragging());
@@ -615,16 +636,16 @@ TEST_CASE("Optical zoom changes projection only and pan speed follows the lens",
     CHECK(wide->position==tele->position);
     CHECK(wide->forward==tele->forward);
     CHECK(tele->projection[0][0]==Catch::Approx(wide->projection[0][0]*4));
-    NavigationTool first,second;
+    CameraPointerLogic first,second;
     REQUIRE(update(first,a,{event(Kind::pointer_down,{500,350},{.shift=true}),event(Kind::pointer_up,{520,360})}));
     REQUIRE(update(second,b,{event(Kind::pointer_down,{500,350},{.shift=true}),event(Kind::pointer_up,{520,360})}));
     for (unsigned i=0;i<3;++i) CHECK(b.viewport.editor_camera.target[i]==Catch::Approx(a.viewport.editor_camera.target[i]/4));
 }
 
 TEST_CASE("Forward motion retains fractional steps and stays finite at navigation limits", "[editor][navigation][zoom]") {
-    auto state=scene(); NavigationTool tool;
+    auto state=scene(); CameraPointerLogic tool;
     state.viewport.editor_camera={0,0,8,{},3};
-    tool.scroll_mode(NavigationTool::ScrollMode::move_forward);
+    tool.scroll_mode(CameraPointerLogic::ScrollMode::move_forward);
     for(int i=0;i<120;++i) REQUIRE(update(tool,state,{wheel(1.F/120)}));
     CHECK(state.viewport.editor_camera.target.z==Catch::Approx(-1.2F));
     CHECK(state.viewport.editor_camera.zoom==3);
@@ -637,7 +658,7 @@ TEST_CASE("Forward motion retains fractional steps and stays finite at navigatio
 TEST_CASE("Navigation only begins on unhandled viewport middle button or wheel",
           "[editor][navigation]") {
     auto state = scene();
-    NavigationTool tool;
+    CameraPointerLogic tool;
     CHECK_FALSE(update(tool, state, {event(Kind::pointer_down, {99, 50}), wheel(1, {900, 650})}));
     CHECK_FALSE(tool.dragging());
     CHECK_FALSE(tool.handledPointer());
@@ -655,7 +676,7 @@ TEST_CASE("Navigation only begins on unhandled viewport middle button or wheel",
 TEST_CASE("Navigation releases capture on focus loss escape disabling or resized viewport",
           "[editor][navigation]") {
     auto state = scene();
-    NavigationTool tool;
+    CameraPointerLogic tool;
     for (const auto kind : {Kind::focus_lost, Kind::key_down}) {
         update(tool, state, {event(Kind::pointer_down)});
         REQUIRE(tool.dragging());
@@ -687,7 +708,7 @@ TEST_CASE("Navigation releases capture on focus loss escape disabling or resized
 TEST_CASE("Navigation ignores invalid inputs and keeps extreme gestures finite",
           "[editor][navigation]") {
     auto state = scene();
-    NavigationTool tool;
+    CameraPointerLogic tool;
     const auto nan = std::numeric_limits<f32>::quiet_NaN();
     const auto huge = std::numeric_limits<f32>::max();
     CHECK_FALSE(update(tool, state, {wheel(nan), event(Kind::pointer_down, {nan, 350})}));

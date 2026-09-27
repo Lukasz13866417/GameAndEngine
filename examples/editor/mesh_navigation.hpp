@@ -1,7 +1,6 @@
 #pragma once
 #include "project.hpp"
 #include "mesh_camera_bake.hpp"
-#include "component_dispatch.hpp"
 #include "component_debug.hpp"
 #include "../support/mesh_frame.hpp"
 #include <vng/ui/ui.hpp>
@@ -64,7 +63,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend struct Dispatcher;
+    friend class EditingViewportUI;
     std::optional<CameraBakeOptions> handle(const MeshView& situation,const Context& context) {
         layout(context.viewport,true,situation.whole,context.show_fps,context.can_bake,context.covered);
         return context.poll_input && !context.covered ? poll() : std::nullopt;

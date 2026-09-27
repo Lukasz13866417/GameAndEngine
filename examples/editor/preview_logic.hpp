@@ -1,10 +1,13 @@
 #pragma once
 #include "component_dispatch.hpp"
-#include "preview_updates.hpp"
+#include "preview_delivery_logic.hpp"
 #include "viewport_session.hpp"
 #include "mesh_visibility.hpp"
 #include "preview_viewport.hpp"
+#include "preview_mailbox.hpp"
 #include <vng/editor/preview.hpp>
+#include <charconv>
+#include <deque>
 
 namespace editor_example {
 struct VisibilityDelivery { const MeshVisibility& visibility; vng::u64 revision; };
@@ -22,13 +25,85 @@ struct DeliveryReply {
     std::optional<bool> view_submission{};
 };
 
-// This boundary owns delivery bookkeeping, not scene state or process lifetime.
-// Ordered document/visibility packets and replaceable views remain separate.
-class PreviewDelivery final {
+// One behavior owner for process lifetime and delivery. Transport is its child,
+// not a sibling reached through a mutable reference. The editor host supplies
+// immutable document/view observations and polls worker outcomes.
+class PreviewLogic final {
 public:
     struct LiveLink {};
     struct StartingIndependentPlay {};
-    explicit PreviewDelivery(vng::editor::preview::PreviewSession& transport) : transport_(transport) {}
+    struct Observation {
+        vng::editor::preview::PreviewEvent event;
+        bool schema_updated{};
+    };
+    [[nodiscard]] static vng::editor::preview::Result<PreviewLogic> create(
+        vng::editor::preview::PreviewConfig config) {
+        auto transport = vng::editor::preview::PreviewSession::create(std::move(config));
+        if (!transport) return std::unexpected(transport.error());
+        return PreviewLogic{std::move(*transport)};
+    }
+    auto request_reload() { return transport_.request_reload(); }
+    void poll() {
+        auto events=transport_.poll();
+        for(auto& event:events) events_.push_back(std::move(event));
+    }
+    // Process one observation immediately before returning it to the host.
+    // The host can react before the next lifecycle event changes these facts.
+    [[nodiscard]] std::optional<Observation> take_event() {
+        if(events_.empty())return {};
+        Observation observed{std::move(events_.front())};events_.pop_front();
+        const auto& event=observed.event;
+        {
+            using Kind=vng::editor::preview::EventKind;
+            if(event.kind==Kind::candidate_started) {
+                candidates_.insert(event.generation);
+                add(event.generation);
+            } else if(event.kind==Kind::activated) {
+                frames_.clear();
+                candidates_.erase(event.generation);
+                retain_extents(event.generation,candidates_);
+                std::erase_if(schemas_,[&](const auto& entry) {
+                    const bool obsolete=entry.first!=event.generation&&!candidates_.contains(entry.first);
+                    if(obsolete) remove(entry.first);
+                    return obsolete;
+                });
+            } else if(event.kind==Kind::worker_failed || event.kind==Kind::build_failed) {
+                candidates_.erase(event.generation);
+                forget_extent(event.generation);
+                if(event.kind==Kind::worker_failed) {
+                    schemas_.erase(event.generation);
+                    remove(event.generation);
+                }
+            } else if(event.kind==Kind::message) {
+                const std::string_view message=event.message;
+                if(message.starts_with("revision\n")) {
+                    vng::u64 revision{};
+                    const auto text=message.substr(9);
+                    const auto [end,error]=std::from_chars(text.data(),text.data()+text.size(),revision);
+                    if(error==std::errc{}&&end==text.data()+text.size()) acknowledge(event.generation,revision);
+                } else if(message.starts_with("resync\n")) reset_document(event.generation);
+                else if(message.starts_with("schema\n")) {
+                    if(auto schema=vng::editor::decode_schema(message.substr(7))) {
+                        schemas_.insert_or_assign(event.generation,std::move(*schema));
+                        observed.schema_updated=true;
+                    }
+                }
+            }
+        }
+        return observed;
+    }
+    auto send(std::string_view message, vng::u64 generation = 0) { return transport_.send(message,generation); }
+    auto flush_requests() { return transport_.flush_requests(); }
+    auto take_frame(vng::u64 minimum_revision,vng::u64 displayed_revision,vng::u64 authored_revision) {
+        if(auto arrived=transport_.take_latest_frame()) frames_.offer(std::move(*arrived),active_generation());
+        return frames_.take(active_generation(),minimum_revision,displayed_revision,authored_revision);
+    }
+    void discard_frames() { frames_.clear(); }
+    [[nodiscard]] const auto& candidates() const { return candidates_; }
+    [[nodiscard]] const auto& schemas() const { return schemas_; }
+    [[nodiscard]] vng::u64 active_generation() const { return transport_.active_generation(); }
+    [[nodiscard]] bool busy() const { return transport_.busy(); }
+    [[nodiscard]] auto logs() const { return transport_.logs(); }
     void add(vng::u64 generation) { updates_.add(generation); }
     void remove(vng::u64 generation) {
         updates_.remove(generation); extents_.erase(generation); views_.erase(generation); masks_.erase(generation);
@@ -52,16 +127,21 @@ public:
         return {};
     }
     [[nodiscard]] DebugReport debug_report() const {
-        DebugReport report{.name="preview",.role="nonblocking document/view delivery",
+        DebugReport report{.name="preview",.role="worker lifecycle, nonblocking delivery and completed-frame adoption",
             .situation=std::string(situation_),
             .owned={{"view peers",std::to_string(views_.size())},{"visibility peers",std::to_string(masks_.size())},
-                {"requested extents",std::to_string(extents_.size())}},.children={updates_.debug_report()}};
+                {"requested extents",std::to_string(extents_.size())},
+                {"candidate workers",std::to_string(candidates_.size())},
+                {"unobserved worker events",std::to_string(events_.size())},
+                {"schema peers",std::to_string(schemas_.size())},
+                {"active generation",std::to_string(active_generation())}},.children={updates_.debug_report()}};
         for(const auto& [generation,sequence]:views_)
             report.observations.push_back({"submitted view / "+std::to_string(generation),std::to_string(sequence)});
         return report;
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
+    explicit PreviewLogic(vng::editor::preview::PreviewSession transport) : transport_(std::move(transport)) {}
     friend struct Dispatcher;
     DeliveryReply handle(const LiveLink&,const DeliveryContext& c) {
         situation_="LiveLink";
@@ -108,8 +188,12 @@ private:
         if(!sent) { updates_.reset(c.generation); return {.error=sent.error().message}; }
         return {.submitted=true};
     }
-    vng::editor::preview::PreviewSession& transport_;
-    PreviewUpdates updates_;
+    vng::editor::preview::PreviewSession transport_;
+    std::deque<vng::editor::preview::PreviewEvent> events_;
+    std::set<vng::u64> candidates_;
+    std::map<vng::u64,vng::editor::Schema> schemas_;
+    PreviewMailbox frames_;
+    PreviewDeliveryLogic updates_;
     std::map<vng::u64,vng::u64> views_,masks_;
     std::map<vng::u64,vng::Extent2D> extents_;
     std::string_view situation_{"Not dispatched"};

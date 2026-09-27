@@ -1,5 +1,5 @@
 #include "../../examples/editor/playback.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/animation.hpp"
 #include "../../examples/editor/selection.hpp"
 #include "../../examples/editor/vertex_drag.hpp"
@@ -22,7 +22,7 @@ State source() {
     REQUIRE(mesh);
     return {.document = {.mesh = std::move(*mesh)}};
 }
-std::string packet(PreviewUpdates& updates, const State& state) {
+std::string packet(PreviewDeliveryLogic& updates, const State& state) {
     auto result = updates.next(1, state);
     REQUIRE(result);
     REQUIRE(*result);
@@ -64,7 +64,7 @@ TEST_CASE("Playback messages are compact, validated and transactional") {
 }
 TEST_CASE("Continuous timeline scrubbing coalesces to the latest playhead") {
     auto state = source();
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     REQUIRE(packet(updates, state).starts_with("snapshot\n"));
     for (u32 n = 1; n <= 100; ++n) {
@@ -99,7 +99,7 @@ TEST_CASE("Mixed unsent playback and vertex or camera edits become a full snapsh
     for (const bool playback_first : {false, true}) {
         for (const bool camera : {false, true}) {
             auto state = source();
-            PreviewUpdates updates;
+            PreviewDeliveryLogic updates;
             updates.accepted(1, 1);
             const auto other = [&] {
                 ++state.document.revision;

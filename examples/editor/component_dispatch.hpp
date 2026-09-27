@@ -3,9 +3,10 @@
 #include <variant>
 
 namespace editor_example {
-// The only caller of a component's private situation handlers. Concrete
-// situations use ordinary overload resolution; runtime alternatives visit here,
-// never in component-specific routing code. No base class or registry is needed.
+// Optional entry point for components which friend Dispatcher. Runtime
+// alternatives visit here; a parent which already knows the concrete situation
+// can instead call its child's private handler through owner friendship.
+// No base class or registry is needed.
 struct Dispatcher final {
     template<class Component, class Situation, class Context>
         requires requires(Component& component, const Situation& situation, const Context& context) {

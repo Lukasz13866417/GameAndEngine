@@ -1,6 +1,6 @@
 #pragma once
 #include "blueprint_mesh_controls.hpp"
-#include "editing_session.hpp"
+#include "blueprint_mesh_edit.hpp"
 #include "inspector_panel.hpp"
 #include "tool_options.hpp"
 #include <vng/gfx/camera.hpp>
@@ -12,17 +12,19 @@ namespace editor_example {
 // the document/history. Background jobs only see an owned mesh snapshot.
 class BlueprintMeshPanel final : public ToolOptions {
 public:
-    BlueprintMeshPanel(vng::ui::Container, EditingSession&);
+    BlueprintMeshPanel(vng::ui::Container, const EditingSession&);
     BlueprintMeshPanel(const BlueprintMeshPanel&)=delete;
     BlueprintMeshPanel& operator=(const BlueprintMeshPanel&)=delete;
     BlueprintMeshPanel(BlueprintMeshPanel&&)=delete;
     BlueprintMeshPanel& operator=(BlueprintMeshPanel&&)=delete;
     void sync();
     void enabled(bool);
-    // Poll after Screen::update(). Returns true only when a draft was committed.
+    // Poll after Screen::update(). Proposals never mutate the session.
     [[nodiscard]] bool poll(bool accept_input);
+    [[nodiscard]] std::optional<BlueprintMeshEdit> take_edit();
+    void accept_edit(const BlueprintMeshEdit&, const vng::content::Result<bool>&);
     [[nodiscard]] std::string_view status() const { return status_; }
-    [[nodiscard]] bool busy() const { return job_.valid() || gesture_source_ != nullptr || setup_gesture_; }
+    [[nodiscard]] bool busy() const { return job_.valid() || gesture_source_ != nullptr || setup_gesture_ || !edits_.empty() || awaiting_adoption_; }
     [[nodiscard]] DebugReport debug_report() const {
         return {.name="blueprint_recipe",.role="local blueprint declarations and asynchronous CPU edits",
             .situation=placing()?"Placing":connecting()?"Connecting":busy()?"Editing":"Inspecting",
@@ -33,6 +35,8 @@ public:
                 {"declared parts",std::to_string(declared_parts_.size())},{"declared gizmos",std::to_string(declared_gizmos_.size())},
                 {"job result outstanding",debug_bool(job_.valid())},{"job source revision",std::to_string(job_revision_)},
                 {"latest edit queued",debug_bool(queued_.has_value())},{"gesture source held",debug_bool(gesture_source_!=nullptr)},
+                {"parent proposals awaiting collection",std::to_string(edits_.size())},
+                {"awaiting parent adoption",debug_bool(awaiting_adoption_)},
                 {"finishing",debug_bool(finishing_)},{"discard job result",debug_bool(discard_job_)},
                 {"pending rendered revision",std::to_string(pending_revision_)}},.observations={{"status",status_}}};
     }
@@ -67,7 +71,7 @@ public:
     [[nodiscard]] MeshPartId pick_part(vng::Vec2 normalized, const vng::gfx::CameraSnapshot&) const;
     // Wait for the rendered image, not merely CPU completion or worker ACK.
     [[nodiscard]] bool pending(vng::u64 presented_revision) const {
-        return job_.valid() || queued_.has_value() ||
+        return job_.valid() || queued_.has_value() || !edits_.empty() || awaiting_adoption_ ||
             (shown_ == pending_blueprint_ && presented_revision < pending_revision_);
     }
 private:
@@ -78,6 +82,7 @@ private:
     struct Hit {vng::u32 face;vng::Vec3 position;};
     [[nodiscard]] std::optional<Hit> hit(vng::Vec2,const vng::gfx::CameraSnapshot&) const;
     [[nodiscard]] vng::content::Result<bool> finish_gesture(bool cancel);
+    void complete_job(bool failed, bool changed);
     vng::ui::Container host_;
     vng::ui::Label hint_;
     vng::ui::Container menu_buttons_host_,menu_body_;
@@ -108,7 +113,7 @@ private:
     std::optional<std::size_t> connection_,connection_target_;
     std::vector<vng::ui::Button> placement_buttons_;
     std::optional<MeshPartPlacement> placement_;
-    EditingSession& editing_;
+    const EditingSession& editing_;
     InspectorPanel panel_;
     std::optional<vng::editor::Inspector> description_;
     std::optional<MeshPartHandle> gizmo_;
@@ -121,6 +126,10 @@ private:
     std::optional<MeshDraftEdit> queued_;
     bool finishing_{}, discard_job_{}, job_gesture_{};
     bool job_select_new_part_{};
+    std::deque<BlueprintMeshEdit> edits_;
+    bool begin_pending_{}, awaiting_adoption_{};
+    std::optional<vng::u64> gesture_transaction_{};
+    std::vector<MeshPart> adoption_parts_;
     std::optional<BlueprintId> pending_blueprint_;
     vng::u64 pending_revision_{};
     std::string status_;

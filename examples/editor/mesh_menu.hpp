@@ -1,7 +1,6 @@
 #pragma once
 
 #include "component_debug.hpp"
-#include "component_dispatch.hpp"
 #include <vng/ui/ui.hpp>
 
 namespace editor_example {
@@ -20,7 +19,6 @@ public:
     struct Edges { std::size_t selected{}; };
     struct Faces { std::size_t selected{}; };
     struct Inactive {};
-    using Situation = std::variant<Inactive, Vertices, Edges, Faces>;
 
     explicit MeshMenu(vng::ui::Container);
     MeshMenu(const MeshMenu&) = delete;
@@ -32,7 +30,7 @@ public:
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 
 private:
-    friend struct Dispatcher;
+    friend class MeshToolsUI;
     std::optional<MeshAction> handle(const Vertices&, const MeshMenuContext&);
     std::optional<MeshAction> handle(const Edges&, const MeshMenuContext&);
     std::optional<MeshAction> handle(const Faces&, const MeshMenuContext&);

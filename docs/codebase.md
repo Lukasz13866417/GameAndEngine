@@ -299,9 +299,9 @@ UI process · editor_example::run
 │   ├── EditClipboard
 │   └── SceneFile
 ├── Screens, panels and local multi-selection sets
-├── ViewportInteraction → tools (borrows EditingSession&)
+├── ViewportToolsUI → tools (borrows EditingSession&)
 ├── PreviewSession → worker/build processes and communication handles
-├── PreviewUpdates + PreviewMailbox → delivery/pending-image state
+├── PreviewDeliveryLogic + PreviewMailbox → delivery/pending-image state
 └── Display resources + optional detached editable viewport window
 
 Worker process · editor_worker.cpp
@@ -344,12 +344,12 @@ An authored move follows this path:
 
 ```text
 Tool/panel → EditingSession operation → EditNotice / DocumentChanges
-  → PreviewUpdates → DocumentPatch or structural snapshot
+  → PreviewDeliveryLogic → DocumentPatch or structural snapshot
   → worker validation + acknowledgment + targeted GPU invalidation
   → rendered frame + camera/revision metadata → PreviewMailbox → display
 ```
 
-[PreviewUpdates](../examples/editor/preview_updates.hpp) coalesces affected
+[PreviewDeliveryLogic](../examples/editor/preview_delivery_logic.hpp) coalesces affected
 properties/vertices while one authored revision waits for acknowledgment. It
 does not accumulate a historical copy for each mouse move. Structural changes,
 reconnects and recovery can require full snapshots; a narrow patch is not always
@@ -380,7 +380,7 @@ Play is a worker-owned window and can exist separately.
 | Draw policy / live graphics state | Concrete renderer and `opengl/commands.hpp` | `tests/render`, `tests/opengl` |
 | Resource reconstruction / transactional reload | Provider recipe and concrete resource owner | `tests/resources`, `tests/opengl/resource_owner_tests.cpp` |
 | Authoring operation / undo / clipboard | `EditingSession`, `DocumentChanges`, `DocumentPatch` | `tests/editor/editing_session_tests.cpp`, operation-specific tests |
-| Gizmo, region points or component transform | `ViewportInteraction`, the tool, `ComponentTransform` | `tests/editor/component_transform_tests.cpp`, `region_ui_tests.cpp` |
+| Gizmo, region points or component transform | `ViewportToolsUI`, the tool, `ComponentTransform` | `tests/editor/component_transform_tests.cpp`, `region_ui_tests.cpp` |
 | Picking speed | `EditableMesh`, `TriangleBvh`, editor selection/projection | `tests/editor/picking_acceleration_tests.cpp` |
 | Widget behavior / text interaction | `src/ui/ui.cpp`; renderer only for visual realization | `tests/ui/ui_tests.cpp`, `tests/opengl/ui_renderer_tests.cpp` |
 | Scene rendering/batching | `Runtime`, `BlueprintMeshRenderer` | `tests/editor/mesh_batch_tests.cpp`, `runtime_tests.cpp` |

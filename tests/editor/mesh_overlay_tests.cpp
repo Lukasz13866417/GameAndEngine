@@ -30,7 +30,7 @@ TEST_CASE("Dense spaceship overlays stay resident across frames and camera navig
     auto context=Context::create();auto& device=context.device;
     auto ship=editor::EditableMesh::load(assets/"spaceship.vmesh");REQUIRE(ship);
     State state{.document={.mesh=std::move(*ship)}};state.viewport.mode=ViewMode::mesh;
-    ui::Screen screen{ui::dark_theme(font())};MeshTools tools{screen.column(),screen.column()};tools.sync(state);
+    ui::Screen screen{ui::dark_theme(font())};MeshToolsUI tools{screen.column(),screen.column()};tools.sync(state);
     auto overlay=MeshOverlay::create(device);REQUIRE(overlay);
     constexpr Extent2D extent{800,600};
     auto target=opengl::RenderTarget::create(device,{.color=gfx::ImageFormat::srgb8_alpha8,.depth=true},extent);REQUIRE(target);
@@ -86,7 +86,7 @@ TEST_CASE("Mesh overlay depth hides back vertices while X-ray is explicit", "[ed
     d.vertex_fields={{"position",{content::vmesh::ScalarType::Float32,3},std::vector<f32>{0,0,-1,-20,-20,0,20,-20,0,0,20,0}}};d.faces={{1,2,3}};
     auto mesh=editor::EditableMesh::create(std::move(d));REQUIRE(mesh);
     State state{.document={.mesh=std::move(*mesh)}};state.viewport.mode=ViewMode::mesh;
-    ui::Screen screen{ui::dark_theme(font())};MeshTools tools{screen.column(),screen.column()};tools.sync(state);
+    ui::Screen screen{ui::dark_theme(font())};MeshToolsUI tools{screen.column(),screen.column()};tools.sync(state);
     auto overlay=MeshOverlay::create(device);REQUIRE(overlay);
     constexpr Extent2D extent{100,100};auto target=opengl::RenderTarget::create(device,{.color=gfx::ImageFormat::rgba8,.depth=true},extent);REQUIRE(target);
     gfx::Camera camera;camera.set_position({0,0,5}).look_at({0,0,0});
@@ -118,7 +118,7 @@ TEST_CASE("Opening RMB with two selected vertices preserves every overlay pixel"
     auto mesh=editor::EditableMesh::create(std::move(d));REQUIRE(mesh);
     State state{.document={.mesh=std::move(*mesh)}};state.viewport.mode=ViewMode::mesh;
     ui::Screen screen{ui::dark_theme(font())};
-    MeshTools tools{screen.column(),screen.column()};tools.sync(state);
+    MeshToolsUI tools{screen.column(),screen.column()};tools.sync(state);
     tools.mode(MeshSelectMode::vertex);tools.select(0,false);tools.select(1,true);
     REQUIRE(tools.selected().size()==2);
     auto overlay=MeshOverlay::create(device);REQUIRE(overlay);
@@ -153,7 +153,7 @@ TEST_CASE("Vertex mode draws legible constant-screen-size dots and orange select
     d.vertex_fields={{"position",{content::vmesh::ScalarType::Float32,3},std::vector<f32>{0,0,0}}};
     auto mesh=editor::EditableMesh::create(std::move(d));REQUIRE(mesh);
     State state{.document={.mesh=std::move(*mesh)}};state.viewport.mode=ViewMode::mesh;
-    ui::Screen screen{ui::dark_theme(font())};MeshTools tools{screen.column(),screen.column()};tools.sync(state);
+    ui::Screen screen{ui::dark_theme(font())};MeshToolsUI tools{screen.column(),screen.column()};tools.sync(state);
     auto overlay=MeshOverlay::create(device);REQUIRE(overlay);
     for(u32 scale:{1U,2U}) {
         const Extent2D extent{100*scale,100*scale};
@@ -182,7 +182,7 @@ TEST_CASE("Surface mode leaves the rendered image untouched and submits no overl
     auto context=Context::create();auto& device=context.device;
     auto mesh=editor::EditableMesh::load(assets/"colored_cube.vmesh");REQUIRE(mesh);
     State state{.document={.mesh=std::move(*mesh)}};state.viewport.mode=ViewMode::mesh;
-    ui::Screen screen{ui::dark_theme(font())};MeshTools tools{screen.column(),screen.column()};tools.sync(state);
+    ui::Screen screen{ui::dark_theme(font())};MeshToolsUI tools{screen.column(),screen.column()};tools.sync(state);
     auto overlay=MeshOverlay::create(device);REQUIRE(overlay);
     constexpr Extent2D extent{128,128};
     auto target=opengl::RenderTarget::create(device,{.color=gfx::ImageFormat::rgba8,.depth=true},extent);REQUIRE(target);

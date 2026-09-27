@@ -45,6 +45,7 @@ public:
     bool selecting() const {return box_.active();}
     bool handled() const {return handled_;}
     std::optional<vng::u64> picked_object() const {return picked_;}
+    vng::input::Modifiers picked_modifiers() const {return picked_modifiers_;}
     vng::u64 selected() const {return object_;}
     vng::u32 point() const {return point_;}
     std::optional<vng::Vec2> handle(std::string_view axis) const {return transform_.handle(axis);}
@@ -63,9 +64,10 @@ private:
     bool hidden_{};
     bool components_{true};
     std::optional<vng::u64> picked_;
+    vng::input::Modifiers picked_modifiers_{};
     ComponentTransform transform_;
     BoxSelection box_;
-    SelectionInput selection_input_;
+    SelectionInputLogic selection_input_;
     void validate_selection();
 };
 } // namespace editor_example

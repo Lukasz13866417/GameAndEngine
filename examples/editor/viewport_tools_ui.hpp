@@ -1,21 +1,23 @@
 #pragma once
 
 #include "box_selection.hpp"
-#include "navigation.hpp"
-#include "camera_navigation.hpp"
-#include "camera_walk.hpp"
+#include "component_dispatch.hpp"
+#include "camera_pointer_logic.hpp"
+#include "camera_navigation_logic.hpp"
+#include "camera_walk_logic.hpp"
 #include "region_editor.hpp"
-#include "rotation_interaction.hpp"
+#include "instance_rotation_gizmo.hpp"
 #include "scale_tool.hpp"
 #include "world_bounds_tool.hpp"
 #include "selection.hpp"
-#include "mesh_transform.hpp"
-#include "instance_transform.hpp"
+#include "mesh_transform_gizmo.hpp"
+#include "instance_transform_gizmo.hpp"
 #include "surface_part_tool.hpp"
 #include "socket_pick_tool.hpp"
-#include "gizmo_input.hpp"
-#include <functional>
-#include <type_traits>
+#include "gizmo_controls.hpp"
+#include "move_gizmo.hpp"
+#include "rotation_origin_movement.hpp"
+#include "scene_move_gizmo.hpp"
 
 namespace editor_example {
 enum class ViewportTool { none, navigation, boundary, bounds, instances, translation, rotation, scale, components, mesh_part, pivot, selection };
@@ -26,54 +28,58 @@ enum class ViewportTool { none, navigation, boundary, bounds, instances, transla
 // navigation may temporarily borrow pointer input without taking that ownership.
 // Passive gizmos may still be presented by updating them with empty
 // input. Input availability must not be used as their visibility predicate.
-class ViewportInteraction {
+class ViewportToolsUI {
 public:
-    ViewportInteraction(EditingSession& editing, vng::ui::Container controls,
+    ViewportToolsUI(const EditingSession& editing, vng::ui::Container controls,
                         vng::ui::Container creation, vng::ui::Container inspector, vng::ui::Container popup)
         : regions(controls, creation, inspector, popup), instances(editing), rotation(editing), mesh(editing), editing_(editing) {}
 
     struct Navigate {};
-    [[nodiscard]] const CameraNavigation& camera_navigation() const { return navigation_; }
+    [[nodiscard]] const CameraNavigationLogic& camera_navigation() const { return navigation_; }
     [[nodiscard]] DebugReport debug_report() const {
         const auto name=[](ViewportTool tool) {
             constexpr std::array names{"none","navigation","boundary","bounds","instances","translation",
                 "rotation","scale","components","mesh part","pivot","selection"};
             return std::string(names[static_cast<std::size_t>(tool)]);
         };
-        return {.name="interaction",.role="viewport tool arbitration and gesture ownership",.situation=name(active()),
-            .owned={{"handled this batch",name(handled_)},{"selected handle",debug_bool(selected_handle())},
+        return {.name="interaction",.role="viewport input arbitration and local tool captures",.situation=name(active()),
+            .owned={{"handled this occurrence",name(handled_)},{"selected handle",debug_bool(selected_handle())},
                 {"transforming",debug_bool(transforming())},{"instance gesture",debug_bool(instances.active())},
                 {"region selected",debug_bool(regions.selected())},{"region gesture",debug_bool(regions.dragging())},
                 {"region menu",debug_bool(regions.menu_open())},{"bounds gesture",debug_bool(bounds.dragging())},
                 {"move gesture",debug_bool(translation.dragging())},{"rotate gesture",debug_bool(rotation.dragging())},
                 {"scale gesture",debug_bool(scale.dragging())},{"mesh gesture",debug_bool(mesh.active())},
                 {"part gesture",debug_bool(mesh_part.dragging())},{"box selection",debug_bool(selection_box.active())}},
-            .children={navigation_.debug_report()}};
+            .children={navigation_.debug_report(),translation.debug_report(),pivot.debug_report()}};
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
-    GizmoInput gizmo_input;
+    GizmoControls gizmo_input;
     RegionEditor regions;
     WorldBoundsTool bounds;
-    InstanceTransformInteraction instances;
-    TranslationTool translation;
-    RotationInteraction rotation;
+    InstanceTransformGizmo instances;
+    SceneMoveGizmo translation;
+    InstanceRotationGizmo rotation;
     ScaleTool scale;
-    MeshTransform mesh;
+    MeshTransformGizmo mesh;
     SurfacePartTool mesh_part;
     SocketPickTool mesh_sockets;
-    TranslationTool pivot;
+    MoveGizmo<RotationOriginMovement> pivot;
     BoxSelection selection_box;
-    SelectionInput selection_input;
+    SelectionInputLogic selection_input;
     InstanceProjection instance_projection;
 
     void begin_frame() {
         handled_ = ViewportTool::none;
+        gizmo_input.begin_frame();
         const auto& limits=gizmo_input.scale_limits();
         scale.maximum(limits.instance);
         instances.scale_limits(limits);
         mesh.scale_limits(limits);
         regions.scale_limits(limits);
     }
+    // Input consumption belongs to one occurrence. Captured tools, held keys,
+    // selected handles and domain transactions survive between these steps.
+    void begin_step() {handled_=ViewportTool::none;}
     [[nodiscard]] ViewportTool active() const {
         if (instances.active()) return ViewportTool::instances;
         if (regions.dragging() || editing_.active(EditGesture::region)) return ViewportTool::boundary;
@@ -106,45 +112,17 @@ public:
         return (owner == ViewportTool::none || owner == tool) &&
                (handled_ == ViewportTool::none || handled_ == tool || (handled_==ViewportTool::navigation&&owner==tool));
     }
-    // Call in viewport priority order: navigation, keyboard transforms, blueprint
-    // boundary, world bounds, transform handles, then selection. A same-frame press+release still
-    // consumes its input. GizmoInput removes navigation/panel pointer motion
-    // from a captured edit; the tool rebases its math when the view changes.
-    template<class Function>
-    decltype(auto) update(ViewportTool tool, Function&& function) {
-        const bool allowed = accepts(tool);
-        if constexpr (std::is_void_v<std::invoke_result_t<Function, bool>>) {
-            std::invoke(std::forward<Function>(function), allowed);
-            observe(tool, allowed);
-        } else {
-            auto result = std::invoke(std::forward<Function>(function), allowed);
-            observe(tool, allowed);
-            return result;
-        }
-    }
     // Selection is processed event-by-event, after the higher-priority tools.
     void selection_handled() { handled_ = ViewportTool::selection; }
 
-    [[nodiscard]] vng::content::Result<bool> finish(ViewportTool tool, bool cancelled = false) {
-        if (active() != tool || !editing_.busy() || editing_.awaiting_remote()) return false;
-        auto result = cancelled ? editing_.cancel() : editing_.commit();
-        if (!result) return result;
-        // Retain consumption for the rest of this input batch after release.
-        handled_ = tool;
-        return result;
-    }
+    // The parent acknowledges a successfully finished transaction. Retain
+    // consumption after release so the same input cannot select through it.
+    void finished(ViewportTool tool) { handled_=tool; }
 
-    // Model rollback and tool capture teardown have one owner. UI labels and
-    // preview notification remain the application's ordinary model reactions.
-    [[nodiscard]] vng::content::Result<bool> cancel() {
-        bool changed{};
-        if (busy() && editing_.busy() && !editing_.awaiting_remote()) {
-            auto restored = editing_.cancel();
-            if (!restored) return std::unexpected(restored.error());
-            changed = *restored;
-        }
-        auto rotated = rotation.cancel();
-        if (!rotated) return std::unexpected(rotated.error());
+    // Local capture teardown only. The workspace performs any document rollback
+    // first; this child cannot mutate its read-only authoring observations.
+    void reset() {
+        rotation.reset();
         navigation_.cancel();
         regions.cancel();
         bounds.cancel();
@@ -157,7 +135,6 @@ public:
         selection_box.cancel();
         selection_input.cancel();
         handled_ = ViewportTool::none;
-        return changed;
     }
 
     void selected(vng::u32 object, GizmoMode mode) {
@@ -180,12 +157,15 @@ private:
         if(!context.frame) return {};
         const bool allowed=context.enabled && accepts(ViewportTool::navigation);
         NavigationReply reply;
-        if(!allowed) reply=dispatch(navigation_,CameraNavigation::Unavailable{},*context.frame);
-        else if(navigation_.walking().active()) reply=dispatch(navigation_,CameraNavigation::Walking{},*context.frame);
-        else reply=dispatch(navigation_,CameraNavigation::Orbiting{},*context.frame);
+        if(!allowed) reply=navigation_.handle(CameraNavigationLogic::Unavailable{},*context.frame);
+        else if(navigation_.walking().active()) reply=navigation_.handle(CameraNavigationLogic::Walking{},*context.frame);
+        else reply=navigation_.handle(CameraNavigationLogic::Orbiting{},*context.frame);
         observe(ViewportTool::navigation,allowed);
         return reply;
     }
+public:
+    // The parent checks accepts(), invokes the child, then acknowledges its
+    // input handling. No stored or synchronously invoked parent callback.
     void observe(ViewportTool tool, bool allowed) {
         if (!allowed) return;
         bool handled{};
@@ -205,8 +185,9 @@ private:
         }
         if (handled) handled_ = tool;
     }
-    EditingSession& editing_;
-    CameraNavigation navigation_;
+private:
+    const EditingSession& editing_;
+    CameraNavigationLogic navigation_;
     ViewportTool handled_{ViewportTool::none};
 };
 } // namespace editor_example

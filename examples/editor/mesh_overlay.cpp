@@ -44,7 +44,7 @@ struct MeshOverlay::Impl {
     struct Range {u32 first{},count{};bool selected{};};
     Range surface, edges, vertices, centers, selected_faces, selected_edges, selected_points;
 
-    auto update(const opengl::Device& device,const State& state,const MeshTools& tools)
+    auto update(const opengl::Device& device,const State& state,const MeshToolsUI& tools)
         -> std::expected<void,opengl::Diagnostic> {
         const auto* mesh=editable_mesh(state);
         if(!mesh) return {};
@@ -125,7 +125,7 @@ auto MeshOverlay::create(opengl::Device& device)->std::expected<MeshOverlay,open
     return MeshOverlay{std::make_unique<Impl>(std::move(*program),std::move(*vao))};
 }
 MeshOverlay::Stats MeshOverlay::stats() const {return impl_->stats;}
-auto MeshOverlay::render(opengl::Frame& frame,const State& state,const MeshTools& tools,
+auto MeshOverlay::render(opengl::Frame& frame,const State& state,const MeshToolsUI& tools,
     ui::Rect bounds,Vec2 logical,Extent2D camera_extent,const gfx::Camera& camera)
     ->std::expected<void,opengl::Diagnostic> {
     auto& p=*impl_;p.stats={};

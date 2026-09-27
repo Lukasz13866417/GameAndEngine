@@ -4,7 +4,7 @@
 
 #include <vng/core/monotonic_clock.hpp>
 #include <vng/editor/preview.hpp>
-#include <vng/input/input.hpp>
+#include <vng/input/routing.hpp>
 #include <vng/ui/draw_list.hpp>
 #include <algorithm>
 #include <cstdlib>
@@ -33,12 +33,10 @@ public:
         if (!output_) return;
         const bool blocked = std::ranges::any_of(blockers, [](const auto& b) { return b.second; });
         bool routed = false;
+        const vng::input::AvailableEvents available_events{unhandled};
         for (const auto& event : raw) {
             if (event.kind != vng::input::EventKind::scroll) continue;
-            const bool available = std::ranges::any_of(unhandled, [&](const auto& other) {
-                return other.kind == event.kind && other.position == event.position &&
-                       other.scroll == event.scroll && other.received_ns == event.received_ns;
-            });
+            const bool available=available_events.contains(event);
             const bool inside = viewport.contains(event.position);
             const auto reason = !inside ? "outside-image" : !available ? "consumed-by-ui" :
                 blocked ? "blocked" : dragging ? "pointer-drag-active" :

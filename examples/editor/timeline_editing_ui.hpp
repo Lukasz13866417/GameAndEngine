@@ -1,5 +1,4 @@
 #pragma once
-#include "component_dispatch.hpp"
 #include "editing_session.hpp"
 #include "timeline_panel.hpp"
 
@@ -25,27 +24,29 @@ struct TimelineReply {
     bool interacted{}, authored{}, playback_changed{}, select_inspector{}, selection_requested{};
     std::optional<std::pair<vng::u32,vng::editor::SelectionMode>> select_instance{};
     std::string message{};
+    std::optional<TimelineAction> action{};
 };
 
-// Timeline drafts, selection and application of authoring intents have one
-// owner. Other components receive results, never this child's mutable panel.
-class TimelineEditing final {
+// Timeline owns drafts and selection presentation. It reports local actions;
+// its workspace parent executes them and supplies the result downward.
+class TimelineEditingUI final {
 public:
     struct Available {};
     struct Unavailable {};
-    TimelineEditing(EditingSession& editing, TimelineHosts hosts)
+    TimelineEditingUI(const EditingSession& editing, TimelineHosts hosts)
         : editing_(editing), panel_(hosts.strip,hosts.list,hosts.inspector,hosts.actions,hosts.menu) {}
     [[nodiscard]] const TimelinePanel& view() const { return panel_; }
     [[nodiscard]] bool enabled() const { return enabled_; }
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend struct Dispatcher;
+    friend class EditingWorkspaceUI;
     TimelineReply handle(const Available&,const TimelineContext&);
     TimelineReply handle(const Unavailable&,const TimelineContext&);
     void present(const TimelineInput&);
-    TimelineReply apply(const TimelineAction&);
-    EditingSession& editing_;
+    TimelineReply propose(TimelineAction);
+    TimelineReply accept(const TimelineAction&, const vng::content::Result<bool>&);
+    const EditingSession& editing_;
     TimelinePanel panel_;
     bool enabled_{true};
     bool inspector_visible_{};

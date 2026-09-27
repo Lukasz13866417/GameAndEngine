@@ -1,7 +1,7 @@
 #include "../../examples/editor/blueprint_mesh_controls.hpp"
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/mesh_camera_bake.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/support/earth_assets.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include "../../examples/support/earth_connections.hpp"
@@ -242,7 +242,7 @@ TEST_CASE("Blueprint draft patches are narrow atomic binary updates including fi
     auto geometry=mesh(original);
     State initial{.document={.mesh=geometry}};initial.viewport.mode=ViewMode::mesh;
     EditingSession editing{initial};auto worker=initial;
-    PreviewUpdates updates;updates.add(1);updates.accepted(1,initial.document.revision);
+    PreviewDeliveryLogic updates;updates.add(1);updates.accepted(1,initial.document.revision);
     const auto sync=[&]() {
         auto notice=editing.take_changes();REQUIRE(notice);REQUIRE_FALSE(notice->changes.full);
         REQUIRE(notice->changes.meshes.size()==1);updates.changed(notice->changes);
@@ -280,7 +280,7 @@ TEST_CASE("Pending blueprint edits coalesce with ordinary vertex movement withou
     initial.viewport.mode = ViewMode::mesh;
     EditingSession editing{initial};
     auto worker = initial;
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(1);
     updates.accepted(1, initial.document.revision);
     const auto changed = [&] {

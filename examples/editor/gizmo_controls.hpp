@@ -3,6 +3,7 @@
 #include "scale_limits.hpp"
 #include "transform_keys.hpp"
 #include <vng/input/input.hpp>
+#include <vng/input/routing.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -12,8 +13,11 @@ namespace editor_example {
 // Viewport-owned input policy, not a document edit. A virtual pointer keeps
 // sensitivity changes, camera drags and visits to tool options out of a captured
 // transform. Tools still own their math, transaction and blueprint vocabulary.
-class GizmoInput final : public ToolOptions {
+class GizmoControls final : public ToolOptions {
 public:
+    enum class Phase { frame, event, tick };
+    // Called once by the viewport owner before descending through occurrences.
+    void begin_frame() {advanced_arrows_.fill(false);}
     struct Settings { vng::f32 sensitivity{1}; };
     std::string_view title() const override { return options_ ? options_->title() : "Gizmo"; }
     bool options_available() const override { return active_; }
@@ -53,17 +57,18 @@ public:
     float arrow_step()const{return arrow_step_;}
     void route(bool captured,bool camera_held,bool menu_held,vng::Vec2 pointer,
         std::span<const vng::input::Event> raw,std::span<const vng::input::Event> unhandled,
-        float seconds=1.F/60.F,bool keyboard_enabled=true) {
+        float seconds=1.F/60.F,bool keyboard_enabled=true,Phase phase=Phase::frame) {
         using namespace vng;
+        if(phase==Phase::frame)begin_frame();
         events_.clear();available_.clear();
         arrow_step_=60.F*(std::isfinite(seconds)?std::clamp(seconds,0.F,.05F):0.F)*settings_.sensitivity;
         bool arrows_enabled=keyboard_enabled&&!camera_held&&!menu_held;
         if(!arrows_enabled || (route_captured_&&!captured))held_.fill(false);
         route_captured_=captured;
-        std::array<bool,4> emitted{};
         if(!captured) {virtual_=previous_=pointer;tracking_=false;menu_paused_=false;}
         bool resume_menu=menu_paused_&&!menu_held;
         bool navigating=camera_held;
+        const input::AvailableEvents available_events{unhandled};
         for(auto e:raw) {
             const bool pointer_event=e.kind==input::EventKind::pointer_move || e.kind==input::EventKind::pointer_down || e.kind==input::EventKind::pointer_up;
             const bool camera_press=camera_held&&e.kind==input::EventKind::pointer_down&&e.button==2;
@@ -81,9 +86,7 @@ public:
             }
             if(camera_press)navigating=true;
             if(camera_release)navigating=false;
-            const bool available=std::ranges::any_of(unhandled,[&](const auto& u){
-                return u.kind==original.kind&&u.key==original.key&&u.button==original.button&&u.position==original.position;
-            });
+            const bool available=available_events.contains(original);
             modifiers_=original.modifiers;
             if(modifiers_.control||modifiers_.alt||modifiers_.super)held_.fill(false);
             const bool finish=e.kind==input::EventKind::focus_lost ||
@@ -96,7 +99,11 @@ public:
                 if(e.kind==input::EventKind::key_up)held_[index]=false;
                 if(e.kind==input::EventKind::key_down && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.super) {
                     if(e.repeat || !arrows_enabled || !available)continue;
-                    held_[index]=true;emitted[index]=true;
+                    held_[index]=true;
+                    // A real press gets this frame's movement immediately; the
+                    // final held tick must not apply the same elapsed time again.
+                    if(advanced_arrows_[index])continue;
+                    advanced_arrows_[index]=true;
                 }
             }
             const bool lifecycle=e.kind==input::EventKind::focus_lost ||
@@ -108,10 +115,11 @@ public:
         }
         if(captured&&(menu_held||navigating))previous_=pointer;
         menu_paused_=captured&&menu_held;
-        if(arrows_enabled)for(std::size_t i=0;i<held_.size();++i)if(held_[i]&&!emitted[i]) {
+        if(phase!=Phase::event&&arrows_enabled)for(std::size_t i=0;i<held_.size();++i)if(held_[i]&&!advanced_arrows_[i]) {
             input::Event tick{.kind=input::EventKind::key_down,.position=captured?virtual_:pointer,
                 .key=arrow_keys_[i],.modifiers=modifiers_};
             events_.push_back(tick);available_.push_back(tick);
+            advanced_arrows_[i]=true;
         }
     }
     std::span<const vng::input::Event> events()const{return events_;}
@@ -127,6 +135,7 @@ private:
     float arrow_step_{1};
     static constexpr std::array arrow_keys_{vng::input::Key::left,vng::input::Key::right,vng::input::Key::up,vng::input::Key::down};
     std::array<bool,4> held_{};
+    std::array<bool,4> advanced_arrows_{};
     vng::input::Modifiers modifiers_{};
     vng::Vec2 previous_{},virtual_{};
     std::vector<vng::input::Event> events_,available_;

@@ -1,5 +1,5 @@
 #pragma once
-#include <vng/input/input.hpp>
+#include <vng/input/routing.hpp>
 #include <vng/ui/draw_list.hpp>
 #include <algorithm>
 #include <cmath>
@@ -16,10 +16,12 @@ public:
     void clear() { axis_.reset(); press_.reset(); }
     bool update(const vng::input::Event& event, std::span<const vng::input::Event> available,
                 vng::ui::Rect viewport) {
+        return update(event,vng::input::AvailableEvents{available},viewport);
+    }
+    bool update(const vng::input::Event& event, const vng::input::AvailableEvents& available,
+                vng::ui::Rect viewport) {
         using namespace vng;
-        const bool unhandled=std::ranges::any_of(available,[&](const auto& e) {
-            return e.kind==event.kind && e.button==event.button && e.position==event.position;
-        });
+        const bool unhandled=available.contains(event);
         if(event.kind==input::EventKind::focus_lost || event.kind==input::EventKind::scroll)press_.reset();
         if(event.kind==input::EventKind::pointer_down) {
             press_.reset();

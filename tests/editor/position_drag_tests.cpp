@@ -1,6 +1,6 @@
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/position_edits.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/preview_viewport.hpp"
 #include "../../examples/editor/animation.hpp"
 #include <catch2/catch_test_macros.hpp>
@@ -93,7 +93,7 @@ TEST_CASE("Position drag coalescing keeps delayed completed frames visible until
     EditingSession session{scene()}; session.select_keyframe(session.state().viewport.time);
     const auto& state = session.state();
     auto worker = state;
-    PreviewUpdates updates;
+    PreviewDeliveryLogic updates;
     updates.add(7);
     auto initial = updates.next(7, state);
     REQUIRE(initial);

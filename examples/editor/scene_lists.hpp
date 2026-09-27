@@ -1,5 +1,4 @@
 #pragma once
-#include "component_dispatch.hpp"
 #include "component_debug.hpp"
 #include "instance_list.hpp"
 #include "blueprint_list.hpp"
@@ -54,10 +53,11 @@ public:
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend struct Dispatcher;
+    friend class EditingWorkspaceUI;
     SceneListsReply handle(const Browsing&,const SceneListsContext&);
     void close();
     void catalog(const SceneListCatalog&);
+    void selection(const vng::editor::Selection<vng::u32>&,std::optional<vng::u32> reveal={});
     void layout(const SceneListPresentation&);
     InstanceList instances_, regions_;
     BlueprintList blueprints_;

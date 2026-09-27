@@ -20,6 +20,7 @@ DebugReport EditingSession::debug_report() const {
             {"selected keyframe",selected_keyframe_ ? std::to_string(*selected_keyframe_) : "none"},
             {"scene pose editable",debug_bool(can_edit_scene_pose())},
             {"active object",std::to_string(active_object())},
+            {"active transaction",gesture_ ? std::to_string(gesture_serial_) : "none"},
             {"mesh drafts",std::to_string(state_.document.mesh_drafts.size())},
             {"pending change notice",debug_bool(notice_.has_value())},
             {"scene file",file_.path() ? file_.path()->string() : "unsaved"},
@@ -250,6 +251,7 @@ content::Result<void> EditingSession::begin(EditGesture kind, DocumentChanges sc
     auto before = capture(scope);
     if (!before) return std::unexpected(before.error());
     gesture_ = Gesture{kind, std::move(*before), std::move(objects), {}, {}, {}, {}, false};
+    ++gesture_serial_;
     for (const auto& property : std::get<DocumentPatch>(gesture_->before.value).properties)
         gesture_->sampled.push_back(state_.document.timeline.sample(property.target, state_.viewport.time).value_or(property.base));
     return {};
@@ -331,6 +333,11 @@ content::Result<bool> EditingSession::updated(const Checkpoint& before_update) {
         if (existed != state_.document.mesh_drafts.contains(id)) changes = {.full = true};
     publish(changes);
     return true;
+}
+content::Result<bool> EditingSession::apply(const InstanceMovement::Edit& edit) {
+    if(!active(EditGesture::move) || active_object()!=edit.object)
+        return invalid("Movement proposal does not match the active instance gesture");
+    return move(edit.position);
 }
 content::Result<bool> EditingSession::move(Vec3 position) {
     if (!active(EditGesture::move)) return invalid("Begin a move gesture first");

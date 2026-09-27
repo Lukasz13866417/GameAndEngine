@@ -9,7 +9,7 @@
 #include "support/earth_infrastructure_placement.hpp"
 #include "editor/editing_session.hpp"
 #include "editor/animation.hpp"
-#include "editor/preview_updates.hpp"
+#include "editor/preview_delivery_logic.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -1244,7 +1244,7 @@ TEST_CASE("Cloud movement rejects ambiguous ownership invalid positions and join
 TEST_CASE("Cloud edits retain narrow change identity through history and preview transport", "[earth][cloud-update]") {
     auto original=earth::make_mesh();auto source=editor::EditableMesh::create(original);REQUIRE(source);
     project::State initial{.document={.mesh=std::move(*source)}};initial.viewport.mode=project::ViewMode::mesh;
-    project::EditingSession session{initial};project::PreviewUpdates updates;updates.add(1);updates.accepted(1,initial.document.revision);
+    project::EditingSession session{initial};project::PreviewDeliveryLogic updates;updates.add(1);updates.accepted(1,initial.document.revision);
     const auto start=std::chrono::steady_clock::now();
     auto moved=earth::move_cloud(original,15,{-15,5});REQUIRE(moved);
     auto next=editor::EditableMesh::create(*moved);REQUIRE(next);

@@ -56,7 +56,7 @@ std::optional<MeshAction> MeshMenu::handle(const Inactive&, const MeshMenuContex
 std::optional<MeshAction> MeshMenu::input(const MeshMenuContext& context) {
     if (!open_ || !context.accept_input) return {};
     // Only this handler consumes activations. Closing on the first result also
-    // prevents a later presentation dispatch from repeating a retained click.
+    // prevents a later presentation update from repeating a retained click.
     std::optional<MeshAction> action;
     if (enabled_[0] && fill_.clicked()) action = MeshAction::fill;
     if (enabled_[1] && subdivide_.clicked()) action = MeshAction::subdivide;

@@ -1,11 +1,10 @@
 #pragma once
-#include "camera_walk.hpp"
-#include "navigation.hpp"
-#include "component_dispatch.hpp"
+#include "camera_walk_logic.hpp"
+#include "camera_pointer_logic.hpp"
 #include <vng/ui/ui.hpp>
 
 namespace editor_example {
-// Borrowed input is consumed during this dispatch. Geometry is supplied only
+// Borrowed input is consumed during this call. Geometry is supplied only
 // by the viewport which owns the inspected target; no lookup by component type.
 struct NavigationFrame {
     CameraPose pose;
@@ -32,13 +31,13 @@ struct NavigationReply {
     CameraPose pose{};
     bool changed{}, smooth_zoom{}, cancelled{};
 };
-class CameraNavigation final {
+class CameraNavigationLogic final {
 public:
     struct Orbiting {};
     struct Walking {};
     struct Unavailable {};
-    [[nodiscard]] const NavigationTool& pointer() const { return pointer_; }
-    [[nodiscard]] const CameraWalk& walking() const { return walk_; }
+    [[nodiscard]] const CameraPointerLogic& pointer() const { return pointer_; }
+    [[nodiscard]] const CameraWalkLogic& walking() const { return walk_; }
     void walking(bool active) { walk_.active(active); }
     void cancel_pointer() { pointer_.cancel(); }
     void cancel() { pointer_.cancel(); walk_.active(false); }
@@ -49,7 +48,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend struct Dispatcher;
+    friend class ViewportToolsUI;
     NavigationReply handle(const Orbiting&,const NavigationFrame& input) {
         situation_="Orbiting";
         return update(input,true,false);
@@ -63,7 +62,7 @@ private:
         return update(input,false,walk_.active());
     }
     NavigationReply update(const NavigationFrame& input,bool enabled,bool walking) {
-        pointer_.scroll_mode(input.move_forward?NavigationTool::ScrollMode::move_forward:NavigationTool::ScrollMode::zoom);
+        pointer_.scroll_mode(input.move_forward?CameraPointerLogic::ScrollMode::move_forward:CameraPointerLogic::ScrollMode::zoom);
         pointer_.look_in_place(walking);
         pointer_.speeds(input.drag_speeds);
         pointer_.drag_origin(walking?std::nullopt:input.origin,walking?nullptr:input.mesh,input.mesh_to_world);
@@ -74,15 +73,15 @@ private:
             input.unhandled,input.raw.events,enabled && input.raw.focused && !input.raw.overflow);
         // A popout changes keyboard focus without disarming walk mode.
         if(input.controls_have_focus && !input.raw.focused) walk_.stop();
-        else if(walk_.update(reply.pose,input.seconds,input.raw,input.walk_speeds,enabled && input.keyboard_enabled)) {
+        else if(walk_.update(reply.pose,input.seconds,input.raw,input.walk_speeds,enabled && input.keyboard_enabled,input.unhandled)) {
             reply.changed=true;
             reply.smooth_zoom=false;
         }
         reply.cancelled=pointer_.cancelled();
         return reply;
     }
-    NavigationTool pointer_;
-    CameraWalk walk_;
+    CameraPointerLogic pointer_;
+    CameraWalkLogic walk_;
     std::string_view situation_{"Not dispatched"};
 };
 } // namespace editor_example

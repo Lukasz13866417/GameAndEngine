@@ -1,6 +1,6 @@
 #include "../../examples/editor/document_patch.hpp"
 #include "../../examples/editor/editing_session.hpp"
-#include "../../examples/editor/preview_updates.hpp"
+#include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/editor/keyframes.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
@@ -176,7 +176,7 @@ TEST_CASE("A property patch can remove its track without replacing unrelated tra
 }
 TEST_CASE("Coalescing survives view changes ACKs and independent target edits", "[editor][patch]") {
     auto state = scene();
-    PreviewUpdates updates; updates.add(1); updates.add(2);
+    PreviewDeliveryLogic updates; updates.add(1); updates.add(2);
     updates.accepted(1, 1); updates.accepted(2, 1);
     state.document.revision = 2; updates.position_changed(1);
     const auto first = updates.next(1, state); REQUIRE(first); REQUIRE(*first);
@@ -207,7 +207,7 @@ TEST_CASE("Coalescing survives view changes ACKs and independent target edits", 
 TEST_CASE("Placement updates cannot be lost to compact property or vertex packets", "[editor][patch][whole-mesh]") {
     for(bool vertex:{false,true}) {
         auto state=scene();auto worker=state;
-        PreviewUpdates updates;updates.add(1);updates.accepted(1,1);
+        PreviewDeliveryLogic updates;updates.add(1);updates.accepted(1,1);
         auto placement=Mat4::identity();placement[0][0]=2;
         state.document.mesh_placements[BlueprintId::mesh].draft=placement;
         DocumentChanges changes;changes.mesh_placements.insert(1);

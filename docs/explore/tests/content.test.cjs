@@ -116,6 +116,38 @@ test("core architectural boundaries and explicit ownership stay inspectable", ()
   assert.match(JSON.stringify(nodes.find(node => node.id === "code-edit-delivery")), /send_latest/);
 });
 
+test("editor role names match real components and the documented ownership tree", () => {
+  const guide = readFileSync(path.join(repository, "docs/editor_components.md"), "utf8");
+  const types = {
+    "workspace_ui.hpp": ["EditingWorkspaceUI", "EditingViewportUI"],
+    "mesh_editing_ui.hpp": ["MeshEditingUI"],
+    "mesh_tools_ui.hpp": ["MeshToolsUI"],
+    "timeline_editing_ui.hpp": ["TimelineEditingUI"],
+    "viewport_tools_ui.hpp": ["ViewportToolsUI"],
+    "camera_navigation_logic.hpp": ["CameraNavigationLogic"],
+    "camera_pointer_logic.hpp": ["CameraPointerLogic"],
+    "camera_walk_logic.hpp": ["CameraWalkLogic"],
+    "selection_input_logic.hpp": ["SelectionInputLogic"],
+    "preview_logic.hpp": ["PreviewLogic"],
+    "preview_delivery_logic.hpp": ["PreviewDeliveryLogic"],
+    "scene_move_gizmo.hpp": ["SceneMoveGizmo"],
+    "instance_transform_gizmo.hpp": ["InstanceTransformGizmo"],
+    "instance_rotation_gizmo.hpp": ["InstanceRotationGizmo"],
+    "mesh_transform_gizmo.hpp": ["MeshTransformGizmo"],
+    "mesh_operation_controls.hpp": ["MeshOperationControls"],
+    "gizmo_controls.hpp": ["GizmoControls"],
+  };
+  for (const [file, names] of Object.entries(types)) {
+    const source = readFileSync(path.join(repository, "examples/editor", file), "utf8");
+    for (const name of names) {
+      assert.match(source, new RegExp(`class ${name}\\b`), file);
+      assert.ok(guide.includes(name), `Document the role of ${name}`);
+    }
+  }
+  assert.match(guide, /UI ownership includes child panels, menus/);
+  assert.match(guide, /Diagnostic\s+paths and serialized scene\/protocol identifiers remain stable/);
+});
+
 test("the readable codebase tour links only to existing local material", () => {
   const file = path.join(repository, "docs/codebase.md");
   const text = readFileSync(file, "utf8").replace(/```[^\n]*\n[\s\S]*?```/g, "");

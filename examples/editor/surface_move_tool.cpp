@@ -1,4 +1,5 @@
 #include "surface_move_tool.hpp"
+#include <vng/input/routing.hpp>
 #include "transform_keys.hpp"
 #include "../support/mesh_frame.hpp"
 #include <algorithm>
@@ -113,9 +114,10 @@ SurfacePartAction SurfaceMoveTool::update(const std::optional<SurfaceMove>& targ
     if(!dragging_ && (can_begin || !same_target))ghost_=target_->position;
     geometry();
     if(dragging_&&reframe&&handle_)offset_={pointer_.x-handle_->x,pointer_.y-handle_->y};
+    const input::AvailableEvents available_events{unhandled};
     for(const auto& event:raw.empty()?unhandled:raw) {
         const auto arrow=transform_arrow(event,arrow_step);
-        const bool available=std::ranges::any_of(unhandled,[&](const auto& e){return e.kind==event.kind&&e.key==event.key;});
+        const bool available=available_events.contains(event);
         const bool grab=event.kind==input::EventKind::key_down&&event.key==input::Key::g&&!event.repeat&&
             !event.modifiers.control&&!event.modifiers.alt&&!event.modifiers.super;
         if(!dragging_ && can_begin && handle_ && available && viewport.contains(event.position) && (grab||arrow)) {
@@ -160,9 +162,7 @@ SurfacePartAction SurfaceMoveTool::update(const std::optional<SurfaceMove>& targ
         } else if(can_begin&&handle_&&event.kind==input::EventKind::pointer_down&&event.button==0&&
                   !event.modifiers.alt&&!event.modifiers.control&&
                   std::hypot(event.position.x-handle_->x,event.position.y-handle_->y)<=14 &&
-                  std::ranges::any_of(unhandled,[&](const auto& available) {
-                      return available.kind==event.kind&&available.button==event.button&&available.position==event.position;
-                  })) {
+                  available) {
             offset_={event.position.x-handle_->x,event.position.y-handle_->y};
             pointer_=event.position;
             keyboard_=false;dragging_=true;action.began=true;handled_=true;

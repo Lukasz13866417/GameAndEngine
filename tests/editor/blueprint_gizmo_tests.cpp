@@ -5,7 +5,8 @@
 #include "../../examples/editor/translation_tool.hpp"
 #include "../../examples/editor/editing_session.hpp"
 #include "../../examples/editor/gizmo_selector.hpp"
-#include "../../examples/editor/viewport_interaction.hpp"
+#include "../../examples/editor/viewport_tools_ui.hpp"
+#include "../../examples/editor/workspace_ui.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
 #include <array>
@@ -135,10 +136,10 @@ TEST_CASE("MMB rotation moves a mixed selection around its shared center with on
     const std::array<u32,2> selected{1,2};
     const auto center=selection_center(instance_centers(state,1,selected));
     EditingSession editing{state};editing.select_keyframe(0);
-    RotationInteraction tool{editing};const auto camera=orthographic();
+    InstanceRotationGizmo tool{editing};const auto camera=orthographic();
     const auto update=[&](std::initializer_list<input::Event> events) {
         const std::span<const input::Event> input{events.begin(),events.size()};
-        return tool.update(1,camera,viewport,input,input,true,selected,false,{},true);
+        return execute(editing,tool,tool.update(1,camera,viewport,input,input,true,selected,false,{},true));
     };
     auto began=update({{.kind=input::EventKind::pointer_down,.position={350,300},.button=2}});
     REQUIRE(began);REQUIRE(began->began);
@@ -217,30 +218,32 @@ TEST_CASE("Blueprint manipulation describes common tools and instance-local auth
 TEST_CASE("Viewport owns gesture priority completion and rollback", "[editor][viewport][interaction]") {
     auto loaded = text::Font::load(VNG_TEST_FONT_PATH); REQUIRE(loaded);
     ui::Screen screen{ui::dark_theme(*loaded)};
-    EditingSession editing{oriented_mesh()}; editing.select_keyframe(editing.state().viewport.time);
-    ViewportInteraction tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
+    EditingWorkspaceUI editing{oriented_mesh()}; editing.select_keyframe(editing.state().viewport.time);
+    ViewportToolsUI tools{editing.session(), screen.column(), screen.column(), screen.column(), screen.column()};
     tools.begin_frame();
     REQUIRE(tools.accepts(ViewportTool::navigation));
     REQUIRE(editing.begin_move(1));
     REQUIRE(editing.move({2, 3, 4}));
     CHECK(tools.active() == ViewportTool::translation);
-    tools.update(ViewportTool::navigation, [](bool available) { CHECK(available); });
-    tools.update(ViewportTool::translation, [](bool available) { CHECK(available); });
-    auto finished = tools.finish(ViewportTool::translation); REQUIRE(finished); CHECK(*finished);
+    CHECK(tools.accepts(ViewportTool::navigation));tools.observe(ViewportTool::navigation,true);
+    CHECK(tools.accepts(ViewportTool::translation));tools.observe(ViewportTool::translation,true);
+    auto finished = editing.finish(tools,ViewportTool::translation); REQUIRE(finished); CHECK(*finished);
     CHECK_FALSE(tools.busy());
     CHECK_FALSE(tools.accepts(ViewportTool::selection)); // release cannot click through
+    tools.begin_step();
+    CHECK(tools.accepts(ViewportTool::selection)); // the next occurrence is independent
     tools.begin_frame();
     CHECK(tools.accepts(ViewportTool::selection));
     REQUIRE(editing.begin_move(1));
     REQUIRE(editing.move({8, 9, 10}));
-    auto cancelled = tools.cancel(); REQUIRE(cancelled); CHECK(*cancelled);
+    auto cancelled = editing.cancel(tools); REQUIRE(cancelled); CHECK(*cancelled);
     CHECK(instance_transform(editing.state(), 1)->position == Vec3{2, 3, 4});
     CHECK_FALSE(tools.busy());
     tools.selection_box.begin({120, 120}, viewport, {});
     CHECK(tools.active() == ViewportTool::selection);
     CHECK_FALSE(tools.accepts(ViewportTool::boundary));
     CHECK_FALSE(tools.accepts(ViewportTool::bounds));
-    REQUIRE(tools.cancel());
+    REQUIRE(editing.cancel(tools));
     CHECK_FALSE(tools.selection_box.active());
 }
 
@@ -250,7 +253,7 @@ TEST_CASE("Viewport arbitration retains same-frame tool consumption and boundary
     auto state = oriented_mesh();
     auto region = instantiate(state, BlueprintId::region); REQUIRE(region);
     EditingSession editing{std::move(state)}; editing.select_keyframe(editing.state().viewport.time);
-    ViewportInteraction tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
+    ViewportToolsUI tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
     tools.selected(*region, GizmoMode::region_vertices);
     CHECK(tools.regions.tool().selected() == *region);
     tools.selected(1, GizmoMode::move);
@@ -259,17 +262,21 @@ TEST_CASE("Viewport arbitration retains same-frame tool consumption and boundary
     const auto schema = local_position_gizmo(editing.state(), 1);
     const auto camera = orthographic();
     tools.begin_frame();
-    (void)tools.update(ViewportTool::translation, [&](bool available) {
-        return tools.translation.update(schema, camera, viewport, {}, {}, available);
-    });
+    auto available=tools.accepts(ViewportTool::translation);
+    (void)dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
+            std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
+            MoveGizmoContext{schema.stamp,camera,viewport,{},{},available});
+    tools.observe(ViewportTool::translation,available);
     auto handle = tools.translation.handle("X"); REQUIRE(handle);
     const std::array events{
         input::Event{.kind=input::EventKind::pointer_down, .position=*handle},
         input::Event{.kind=input::EventKind::pointer_up, .position={handle->x + 20, handle->y}}};
-    auto moved = tools.update(ViewportTool::translation, [&](bool available) {
-        return tools.translation.update(schema, camera, viewport, events, events, available);
-    });
-    REQUIRE(moved);
+    available=tools.accepts(ViewportTool::translation);
+    auto moved=dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
+            std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
+            MoveGizmoContext{schema.stamp,camera,viewport,events,events,available});
+    tools.observe(ViewportTool::translation,available);
+    REQUIRE(moved.edit);
     CHECK_FALSE(tools.translation.dragging());
     CHECK_FALSE(tools.accepts(ViewportTool::selection));
     CHECK_FALSE(tools.accepts(ViewportTool::rotation));
@@ -281,31 +288,38 @@ TEST_CASE("A captured viewport tool allows camera navigation but excludes other 
     auto loaded = text::Font::load(VNG_TEST_FONT_PATH); REQUIRE(loaded);
     ui::Screen screen{ui::dark_theme(*loaded)};
     EditingSession editing{oriented_mesh()}; editing.select_keyframe(editing.state().viewport.time);
-    ViewportInteraction tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
+    ViewportToolsUI tools{editing, screen.column(), screen.column(), screen.column(), screen.column()};
     const auto schema = local_position_gizmo(editing.state(), 1);
     const auto camera = orthographic();
     tools.begin_frame();
-    (void)tools.update(ViewportTool::translation, [&](bool available) {
-        return tools.translation.update(schema, camera, viewport, {}, {}, available);
-    });
+    auto available=tools.accepts(ViewportTool::translation);
+    (void)dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
+            std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
+            MoveGizmoContext{schema.stamp,camera,viewport,{},{},available});
+    tools.observe(ViewportTool::translation,available);
     const auto handle = tools.translation.handle("X"); REQUIRE(handle);
     const std::array press{input::Event{.kind=input::EventKind::pointer_down, .position=*handle}};
-    (void)tools.update(ViewportTool::translation, [&](bool available) {
-        return tools.translation.update(schema, camera, viewport, press, press, available);
-    });
+    available=tools.accepts(ViewportTool::translation);
+    (void)dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
+            std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
+            MoveGizmoContext{schema.stamp,camera,viewport,press,press,available});
+    tools.observe(ViewportTool::translation,available);
     REQUIRE(tools.translation.dragging());
+    tools.begin_step();
+    CHECK(tools.translation.dragging()); // occurrence changes never lose capture
     tools.begin_frame();
-    tools.update(ViewportTool::navigation, [](bool available) { CHECK(available); });
-    tools.update(ViewportTool::boundary, [](bool available) { CHECK_FALSE(available); });
+    CHECK(tools.accepts(ViewportTool::navigation));tools.observe(ViewportTool::navigation,true);
+    CHECK_FALSE(tools.accepts(ViewportTool::boundary));tools.observe(ViewportTool::boundary,false);
     CHECK_FALSE(tools.accepts(ViewportTool::selection));
     // The release is UI-consumed/outside the viewport, but raw events belong
     // to the existing capture and must still complete the gesture.
     const std::array release{input::Event{.kind=input::EventKind::pointer_up, .position={900, handle->y}}};
-    auto moved = tools.update(ViewportTool::translation, [&](bool available) {
-        CHECK(available);
-        return tools.translation.update(schema, camera, viewport, {}, release, available);
-    });
-    REQUIRE(moved);
+    available=tools.accepts(ViewportTool::translation);CHECK(available);
+    auto moved=dispatch(tools.translation,SceneMoveGizmo::Instance{{static_cast<u32>(schema.stamp.object),
+            std::get<Vec3>(schema.controls[0].fields[0].value)},schema.controls[0].translation_axes},
+            MoveGizmoContext{schema.stamp,camera,viewport,{},release,available});
+    tools.observe(ViewportTool::translation,available);
+    REQUIRE(moved.edit);
     CHECK_FALSE(tools.translation.dragging());
     CHECK_FALSE(tools.accepts(ViewportTool::selection));
     tools.begin_frame();

@@ -13,7 +13,7 @@ class RotationTool;
 class TranslationTool;
 class CageTool;
 class ScaleTool;
-class MeshTools;
+class MeshToolsUI;
 class WorldBoundsTool;
 class SurfacePartTool;
 class SocketPickTool;
@@ -35,7 +35,7 @@ struct EditorObservation {
     int gizmo_axis{-1}; // -1: all features; otherwise the displayed keyboard constraint.
     const WorldBoundsTool* bounds_gizmo{};
     const CageTool* region_gizmo{};
-    const MeshTools* mesh_tools{};
+    const MeshToolsUI* mesh_tools{};
     bool playing{}, debug_link{}, modal{};
     std::optional<vng::f32> selected_keyframe;
     std::span<const vng::u32> selected_instances;

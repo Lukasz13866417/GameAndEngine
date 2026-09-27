@@ -1,5 +1,5 @@
-#include "../../examples/editor/instance_transform.hpp"
-#include "../../examples/editor/rotation_interaction.hpp"
+#include "../../examples/editor/instance_transform_gizmo.hpp"
+#include "../../examples/editor/instance_rotation_gizmo.hpp"
 #include "../../examples/editor/rotation_math.hpp"
 #include "../../examples/editor/scale_edits.hpp"
 #include <catch2/catch_test_macros.hpp>
@@ -28,7 +28,7 @@ State transform_scene(bool region=false, bool ship=false) {
 }
 struct Fixture {
     EditingSession editing;
-    InstanceTransformInteraction tool{editing};
+    InstanceTransformGizmo tool{editing};
     std::vector<u32> selection{1,3};
     TransformPivot pivot;
     gfx::CameraSnapshot camera;
@@ -40,8 +40,8 @@ struct Fixture {
     }
     InstanceTransformChange pump(std::initializer_list<input::Event> events={},bool available=true,bool enabled=true) {
         const std::span<const input::Event> raw{events.begin(),events.size()};
-        auto result=tool.update(generation,selection,pivot,camera,{0,0,800,600},
-            available ? raw : std::span<const input::Event>{},raw,enabled);
+        auto result=execute(editing,tool,tool.update(generation,selection,pivot,camera,{0,0,800,600},
+            available ? raw : std::span<const input::Event>{},raw,enabled));
         INFO((result ? "updated" : result.error().message)); REQUIRE(result); return *result;
     }
     InstanceTransform value(u32 id) const {
@@ -49,6 +49,11 @@ struct Fixture {
     }
 };
 void near(Vec3 a,Vec3 b) {for(unsigned c=0;c<3;++c)CHECK(a[c]==Catch::Approx(b[c]).margin(.0001));}
+void unchanged(const Document& a,const Document& b) {
+    CHECK(a.revision==b.revision);CHECK(a.instances==b.instances);CHECK(a.timeline==b.timeline);
+    CHECK(a.mesh.document()==b.mesh.document());CHECK(a.mesh_placements==b.mesh_placements);
+    CHECK(a.mesh_drafts.size()==b.mesh_drafts.size());
+}
 }
 
 TEST_CASE("F moves a ship selection on its primary blueprint forward axis with one undo", "[editor][ui][instance-transform][gizmo]") {
@@ -79,6 +84,110 @@ TEST_CASE("Forward shortcut is unavailable for generic or mixed blueprint select
         Fixture f(std::move(state));
         CHECK_FALSE(f.pump({{.kind=EventKind::key_down,.position={400,300},.key=Key::f}}).began);
         CHECK_FALSE(f.tool.active());CHECK_FALSE(f.editing.busy());
+    }
+}
+
+TEST_CASE("Instance transform input only proposes edits until its parent executes them", "[editor][ui][instance-transform][parent-coordination]") {
+    Fixture f;
+    const auto original=f.editing.state().document;
+    const auto propose=[&](std::initializer_list<input::Event> events) {
+        const std::span<const input::Event> input{events.begin(),events.size()};
+        return f.tool.update(f.generation,f.selection,f.pivot,f.camera,{0,0,800,600},input,input,true);
+    };
+    auto begin=propose({{.kind=EventKind::key_down,.position={460,300},.key=Key::g}});
+    REQUIRE(begin);CHECK(begin->change.began);
+    CHECK_FALSE(f.editing.busy());unchanged(f.editing.state().document,original);
+    REQUIRE(execute(f.editing,f.tool,std::move(begin)));
+    REQUIRE(f.editing.busy());
+
+    auto move=propose({{.kind=EventKind::pointer_move,.position={520,240}}});
+    REQUIRE(move);REQUIRE(move->move);
+    unchanged(f.editing.state().document,original);
+    auto moved=execute(f.editing,f.tool,std::move(move));REQUIRE(moved);CHECK(moved->changed);
+    near(f.value(1).position,{-1,1,0});
+    const auto preview=f.editing.state().document;
+
+    auto cancel=propose({{.kind=EventKind::key_down,.key=Key::escape}});
+    REQUIRE(cancel);CHECK(cancel->change.cancelled);
+    CHECK(f.editing.busy());unchanged(f.editing.state().document,preview);
+    auto cancelled=execute(f.editing,f.tool,std::move(cancel));REQUIRE(cancelled);CHECK(cancelled->cancelled);
+    CHECK_FALSE(f.editing.busy());CHECK_FALSE(f.editing.can_undo());
+    CHECK(f.editing.state().document.instances==original.instances);
+    CHECK(f.editing.state().document.timeline==original.timeline);
+}
+
+TEST_CASE("Parent rejects a transform proposal after its selected target changes", "[editor][ui][instance-transform][parent-coordination]") {
+    Fixture f;
+    const auto original=f.editing.state().document;
+    const std::array input{input::Event{.kind=EventKind::key_down,.position={460,300},.key=Key::s}};
+    auto proposal=f.tool.update(f.generation,f.selection,f.pivot,f.camera,{0,0,800,600},input,input,true);
+    REQUIRE(proposal);REQUIRE(proposal->change.began);CHECK_FALSE(f.editing.busy());
+    f.editing.viewport().selected_object=3;
+    auto rejected=execute(f.editing,f.tool,std::move(proposal));
+    REQUIRE_FALSE(rejected);CHECK(rejected.error().message.find("stale")!=std::string::npos);
+    CHECK_FALSE(f.editing.busy());CHECK_FALSE(f.tool.active());unchanged(f.editing.state().document,original);
+}
+
+TEST_CASE("Rotation input and cancellation cannot change the session without parent execution", "[editor][ui][rotation][parent-coordination]") {
+    Fixture f;
+    InstanceRotationGizmo rings{std::as_const(f.editing)};
+    const auto original=f.editing.state().document;
+    const auto propose=[&](std::initializer_list<input::Event> events) {
+        const std::span<const input::Event> input{events.begin(),events.size()};
+        return rings.update(1,f.camera,{0,0,800,600},input,input,true,f.selection,false,{},true);
+    };
+    auto begin=propose({{.kind=EventKind::pointer_down,.position={350,300},.button=2}});
+    REQUIRE(begin);REQUIRE(begin->change.began);
+    CHECK_FALSE(f.editing.busy());unchanged(f.editing.state().document,original);
+    REQUIRE(execute(f.editing,rings,std::move(begin)));
+    REQUIRE(rings.active());
+    auto move=propose({{.kind=EventKind::pointer_move,.position={470,380}}});
+    REQUIRE(move);REQUIRE(move->delta);
+    unchanged(f.editing.state().document,original);
+    auto moved=execute(f.editing,rings,std::move(move));REQUIRE(moved);CHECK(moved->changed);
+    const auto preview=f.editing.state().document;
+    auto cancel=rings.cancel();
+    REQUIRE(cancel);CHECK(cancel->owns_transaction);
+    CHECK(f.editing.busy());unchanged(f.editing.state().document,preview);
+    auto cancelled=execute(f.editing,rings,std::move(cancel));REQUIRE(cancelled);CHECK(cancelled->changed);
+    CHECK_FALSE(f.editing.busy());CHECK_FALSE(rings.active());CHECK_FALSE(f.editing.can_undo());
+    CHECK(f.editing.state().document.instances==original.instances);
+    CHECK(f.editing.state().document.timeline==original.timeline);
+}
+
+TEST_CASE("Stale transform cancellation cannot cancel a successor transaction on the same instance", "[editor][ui][instance-transform][rotation][parent-coordination]") {
+    Fixture f;
+    SECTION("Modal movement") {
+        REQUIRE(f.pump({{.kind=EventKind::key_down,.position={460,300},.key=Key::g}}).began);
+        const std::array escape{input::Event{.kind=EventKind::key_down,.key=Key::escape}};
+        auto stale=f.tool.update(f.generation,f.selection,f.pivot,f.camera,{0,0,800,600},escape,escape,true);
+        REQUIRE(stale);REQUIRE(stale->transaction);
+        REQUIRE(f.editing.cancel());
+        REQUIRE(f.editing.begin_move(1,f.selection));
+        REQUIRE(f.editing.move({7,8,9}));
+        const auto transaction=f.editing.active_transaction();
+        REQUIRE(transaction!=stale->transaction);
+        const auto preview=f.editing.state().document;
+        REQUIRE_FALSE(execute(f.editing,f.tool,std::move(stale)));
+        CHECK(f.editing.active_transaction()==transaction);unchanged(f.editing.state().document,preview);
+        CHECK_FALSE(f.tool.active());
+        REQUIRE(f.editing.cancel());
+    }
+    SECTION("Rotation rings") {
+        InstanceRotationGizmo rings{f.editing};
+        const std::array input{input::Event{.kind=EventKind::pointer_down,.position={350,300},.button=2}};
+        REQUIRE(execute(f.editing,rings,rings.update(1,f.camera,{0,0,800,600},input,input,true,f.selection,false,{},true)));
+        auto stale=rings.cancel();REQUIRE(stale);REQUIRE(stale->transaction);
+        REQUIRE(f.editing.cancel());
+        REQUIRE(f.editing.begin_rotation(1,f.selection));
+        REQUIRE(f.editing.rotate_by({10,20,30}));
+        const auto transaction=f.editing.active_transaction();
+        REQUIRE(transaction!=stale->transaction);
+        const auto preview=f.editing.state().document;
+        REQUIRE_FALSE(execute(f.editing,rings,std::move(stale)));
+        CHECK(f.editing.active_transaction()==transaction);unchanged(f.editing.state().document,preview);
+        CHECK_FALSE(rings.active());
+        REQUIRE(f.editing.cancel());
     }
 }
 
@@ -189,9 +298,9 @@ TEST_CASE("Modal instance transforms cancel on lost eligibility and never steal 
     CHECK_FALSE(f.editing.busy());CHECK_FALSE(f.editing.can_undo());
 }
 TEST_CASE("Ring adapter does not own a keyboard rotation's transaction", "[editor][ui][instance-transform]") {
-    Fixture f;RotationInteraction rings{f.editing};
+    Fixture f;InstanceRotationGizmo rings{f.editing};
     REQUIRE(f.pump({{.kind=EventKind::key_down,.position={460,300},.key=Key::r}}).began);
-    CHECK_FALSE(rings.active());REQUIRE(rings.cancel());CHECK(f.editing.busy());
+    CHECK_FALSE(rings.active());REQUIRE(execute(f.editing,rings,rings.cancel()));CHECK(f.editing.busy());
     REQUIRE(f.pump({{.kind=EventKind::key_down,.key=Key::escape}}).cancelled);
 }
 TEST_CASE("Instance G R S axis constraints and same-frame confirmation consume input", "[editor][ui][instance-transform]") {

@@ -1,5 +1,5 @@
 #include "../../examples/editor/component_transform.hpp"
-#include "../../examples/editor/mesh_transform.hpp"
+#include "../../examples/editor/mesh_transform_gizmo.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
@@ -230,14 +230,21 @@ TEST_CASE("Whole mesh transforms need no selection and include normals and hidde
     EditingSession editing{std::move(state)};
     auto font=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(font);
     ui::Screen screen{ui::dark_theme(*font)};
-    MeshTools selection{screen.column(),screen.column()};selection.sync(editing.state());
+    MeshToolsUI selection{screen.column(),screen.column()};selection.sync(editing.state());
     selection.mode(MeshSelectMode::face);selection.select(0,false);REQUIRE(selection.hide_selected()==1);
     selection.mode(MeshSelectMode::whole);
     const auto mask=selection.visibility();
-    MeshTransform transform{editing};Fixture view;
+    MeshTransformGizmo transform{editing};Fixture view;
     const auto pump=[&](std::initializer_list<input::Event> events) {
         std::span<const input::Event> raw{events.begin(),events.size()};
-        auto result=transform.update(selection,view.camera,{0,0,800,600},raw,raw,true);
+        const auto before=editing.state().document;
+        const auto busy=editing.busy();
+        auto proposal=transform.update(selection,view.camera,{0,0,800,600},raw,raw,true);
+        CHECK(editing.state().document.revision==before.revision);
+        CHECK(editing.state().document.mesh_placements==before.mesh_placements);
+        CHECK(editable_mesh(editing.state())->document()==before.mesh.document());
+        CHECK(editing.busy()==busy);
+        auto result=execute(editing,transform,std::move(proposal));
         selection.transform_mode(transform.gizmo()); // Selection's owner accepts the tool's requested mode.
         return result;
     };
@@ -278,4 +285,34 @@ TEST_CASE("Whole mesh transforms need no selection and include normals and hidde
     REQUIRE(selection.cycle(-1));CHECK(selection.transform_mode()==GizmoMode::free_rotate);
     REQUIRE(pump({{.kind=input::EventKind::key_down,.position={460,300},.key=input::Key::g}}));
     CHECK_FALSE(transform.active());CHECK_FALSE(editing.busy());
+}
+
+TEST_CASE("Stale mesh transform proposals cannot change a successor transaction", "[editor][ui][whole-mesh][parent-coordination]") {
+    content::vmesh::Document d;d.vertex_count=3;
+    d.vertex_fields={{"position",{content::vmesh::ScalarType::Float32,3},std::vector<f32>{-1,-1,0,1,-1,0,0,1,0}}};
+    d.faces={{0,1,2}};
+    auto mesh=editor::EditableMesh::create(d);REQUIRE(mesh);
+    State state{.document={.mesh=std::move(*mesh)}};state.viewport.mode=ViewMode::mesh;
+    EditingSession editing{std::move(state)};
+    auto font=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(font);
+    ui::Screen screen{ui::dark_theme(*font)};
+    MeshToolsUI selection{screen.column(),screen.column()};selection.sync(editing.state());selection.mode(MeshSelectMode::whole);
+    MeshTransformGizmo transform{editing};Fixture view;
+    const std::array begin{input::Event{.kind=input::EventKind::key_down,.position={460,300},.key=input::Key::s}};
+    REQUIRE(execute(editing,transform,transform.update(selection,view.camera,{0,0,800,600},begin,begin,true)));
+    const std::array move{input::Event{.kind=input::EventKind::pointer_move,.position={520,300}}};
+    auto stale=transform.update(selection,view.camera,{0,0,800,600},move,move,true);
+    REQUIRE(stale);REQUIRE(stale->transaction);
+    REQUIRE(editing.cancel());
+    REQUIRE(editing.begin_mesh_transform(BlueprintId::mesh));
+    auto placement=Mat4::identity();placement[0][0]=3;
+    REQUIRE(editing.mesh_transform(placement));
+    const auto transaction=editing.active_transaction();
+    REQUIRE(transaction!=stale->transaction);
+    const auto preview=editing.state().document.mesh_placements;
+    REQUIRE_FALSE(execute(editing,transform,std::move(stale)));
+    CHECK(editing.active_transaction()==transaction);
+    CHECK(editing.state().document.mesh_placements==preview);
+    CHECK_FALSE(transform.active());
+    REQUIRE(editing.cancel());
 }

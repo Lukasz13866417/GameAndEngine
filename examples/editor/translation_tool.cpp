@@ -160,11 +160,6 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
                         std::span<const vng::input::Event> raw, bool enabled, bool world_axes, float arrow_step,
                         std::optional<TranslationSegment> segment) {
     using namespace vng;
-    handled_ = false;
-    segment_=segment;
-    if(segment_&&(!finite(segment_->first)||!finite(segment_->last)))enabled=false;
-    if(stamp_.object!=schema.stamp.object || stamp_.generation!=schema.stamp.generation || world_axes_!=world_axes)
-        selection_.clear();
     const auto control = std::ranges::find_if(
         schema.controls, [](const auto& c) { return c.kind == editor::Kind::translation_gizmo; });
     const editor::Field* position{};
@@ -175,27 +170,47 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
         if (field != control->fields.end())
             position = &*field;
     }
-    if (!enabled || !position || (!world_axes && control->translation_axes.empty()) || !finite(Vec2{viewport.x, viewport.y}) ||
+    const TranslationTarget target{schema.stamp, position ? std::string_view{control->key} : std::string_view{},
+        position ? std::get<Vec3>(position->value) : Vec3{},
+        position ? std::span<const editor::TranslationAxis>{control->translation_axes} : std::span<const editor::TranslationAxis>{}};
+    auto result=update(target,camera,viewport,unhandled,raw,enabled&&position,world_axes,arrow_step,segment);
+    if(result)return editor::Event{schema.stamp,std::string(target.key),editor::Phase::apply,{{"position",*result}}};
+    return {};
+}
+std::optional<vng::Vec3>
+TranslationTool::update(const TranslationTarget& target, const vng::gfx::CameraSnapshot& camera,
+                        vng::ui::Rect viewport, std::span<const vng::input::Event> unhandled,
+                        std::span<const vng::input::Event> raw, bool enabled, bool world_axes, float arrow_step,
+                        std::optional<TranslationSegment> segment) {
+    using namespace vng;
+    handled_ = false;
+    const input::AvailableEvents available{unhandled};
+    segment_=segment;
+    if(segment_&&(!finite(segment_->first)||!finite(segment_->last)))enabled=false;
+    if(stamp_.object!=target.stamp.object || stamp_.generation!=target.stamp.generation || world_axes_!=world_axes)
+        selection_.clear();
+    if (!enabled || (!world_axes && target.axes.empty()) || !finite(Vec2{viewport.x, viewport.y}) ||
         !finite(Vec2{viewport.width, viewport.height}) || viewport.width <= 0 ||
-        viewport.height <= 0 || !finite(std::get<Vec3>(position->value))) {
+        viewport.height <= 0 || !finite(target.position)) {
         handled_ = dragging_;
-        if(!dragging_)for(const auto& event:raw)selection_.update(event,unhandled,viewport);
+        if(!dragging_)for(const auto& event:raw)selection_.update(event,available,viewport);
         cancel(enabled);
         visible_ = false;
         return {};
     }
-    const auto value = std::get<Vec3>(position->value);
-    if(key_!=control->key || extra_axes_!=control->translation_axes)selection_.clear();
+    const auto value = target.position;
+    const bool axes_changed=!std::ranges::equal(extra_axes_,target.axes);
+    if(key_!=target.key || axes_changed)selection_.clear();
     if (dragging_ &&
-        (stamp_ != schema.stamp || key_ != control->key || origin_ != value ||
-         extra_axes_ != control->translation_axes || world_axes_ != world_axes ||
+        (stamp_ != target.stamp || key_ != target.key || origin_ != value ||
+         axes_changed || world_axes_ != world_axes ||
          !same_rect(viewport_, viewport))) {
         handled_ = true;
         cancel();
     }
-    stamp_ = schema.stamp;
-    key_ = control->key;
-    extra_axes_ = control->translation_axes;
+    stamp_ = target.stamp;
+    key_ = target.key;
+    if(axes_changed)extra_axes_.assign(target.axes.begin(),target.axes.end());
     world_axes_ = world_axes;
     const bool reframe=dragging_ && camera_.view_projection!=camera.view_projection;
     camera_ = camera;
@@ -219,18 +234,15 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
     // Begin only from unhandled viewport input. Once captured, use the original
     // ordered event stream so release over an inspector still ends the gesture.
     const auto begins = [&](const input::Event& event) {
-        return std::ranges::any_of(unhandled, [&](const auto& available) {
-            return available.kind == event.kind && available.button == event.button &&
-                   available.position == event.position;
-        });
+        return available.contains(event);
     };
     const auto events = raw.empty() ? unhandled : raw;
     bool moved{};
     for (std::size_t index = 0; index < events.size(); ++index) {
         const auto& event = events[index];
-        const bool clicked=(!dragging_ || keyboard_) && selection_.update(event,unhandled,viewport_);
+        const bool clicked=(!dragging_ || keyboard_) && selection_.update(event,available,viewport_);
         if(auto arrow=transform_arrow(event,arrow_step);arrow && (dragging_ || (visible_ && viewport_.contains(event.position) &&
-            std::ranges::any_of(unhandled,[&](const auto& e){return e.kind==event.kind&&e.key==event.key;})))) {
+            available.contains(event)))) {
             if(!dragging_) {
                 keyboard_=dragging_=true;keyboard_delta_={};pointer_=event.position;
                 if(auto selected=selection_.axis();selected && *selected<axes_.size()) {
@@ -268,7 +280,7 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
             if(keyboard_ && ((event.kind==input::EventKind::key_down&&event.key==input::Key::enter) ||
                 clicked)) {
                 handled_=true;dragging_=keyboard_=false;
-                return editor::Event{stamp_,key_,editor::Phase::apply,{{"position",ghost_}}};
+                return ghost_;
             }
             if (event.kind == input::EventKind::focus_lost ||
                 (event.kind == input::EventKind::key_down && event.key == input::Key::escape) ||
@@ -295,7 +307,7 @@ TranslationTool::update(const vng::editor::Schema& schema, const vng::gfx::Camer
                 move(event.position);
                 geometry();
                 dragging_ = false;
-                return editor::Event{stamp_, key_, editor::Phase::apply, {{"position", ghost_}}};
+                return ghost_;
             }
             continue;
         }

@@ -66,6 +66,7 @@ enum class EventKind {
 struct Modifiers {
     bool shift{}, control{}, alt{}, super{};
     bool left_alt{}; // Side-specific navigation modifier; Right Alt/AltGr is distinct.
+    bool operator==(const Modifiers&) const = default;
 };
 struct Event {
     EventKind kind{};
@@ -78,6 +79,11 @@ struct Event {
     std::string text{}; // committed UTF-8, never derived from a key code
     // CPU callback receipt, not a device timestamp. Zero means untimed/synthetic input.
     u64 received_ns{};
+    // Assigned by the input-routing owner before forwarding a batch. Copies and
+    // coordinate/sensitivity transforms retain identity; equal-looking clicks
+    // remain distinct occurrences. Zero is reserved for untagged synthetic input.
+    u64 routing_id{};
+    bool operator==(const Event&) const = default;
 };
 struct Frame {
     Vec2 logical_size{};

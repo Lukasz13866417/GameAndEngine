@@ -13,9 +13,9 @@ enum class MeshSelectMode { vertex, edge, face, surface, whole };
 inline constexpr std::array whole_mesh_gizmos{GizmoMode::rotate,GizmoMode::scale,GizmoMode::free_rotate};
 // Owns local component selection and temporary visibility. Neither authors a
 // document change. Only the compact visibility mask crosses IPC, on change.
-class MeshTools {
+class MeshToolsUI {
 public:
-    MeshTools(vng::ui::Container controls, vng::ui::Container popup);
+    MeshToolsUI(vng::ui::Container controls, vng::ui::Container popup);
     void sync(const State&, bool accept_input = true);
     void mode(MeshSelectMode);
     [[nodiscard]] MeshSelectMode mode() const { return mode_; }
@@ -58,7 +58,7 @@ public:
     bool cycle(int direction);
 private:
     MeshMenu menu_;
-    [[nodiscard]] MeshMenu::Situation menu_situation() const;
+    [[nodiscard]] std::optional<MeshAction> handle_menu(const MeshMenuContext&);
     vng::ui::Dropdown<MeshSelectMode> modes_;
     vng::ui::Dropdown<GizmoMode> transform_;
     vng::ui::Dropdown<GizmoMode> whole_transform_;

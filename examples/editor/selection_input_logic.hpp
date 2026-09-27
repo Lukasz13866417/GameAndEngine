@@ -1,6 +1,7 @@
 #pragma once
 #include <vng/editor/selection.hpp>
 #include <vng/input/input.hpp>
+#include <vng/input/routing.hpp>
 #include <vng/ui/draw_list.hpp>
 #include <algorithm>
 #include <cmath>
@@ -11,15 +12,15 @@ namespace editor_example {
 // an outside click to complete before changing the selected object/components.
 // Crossing the box-selection threshold still starts a drag from the original
 // press; a release over UI or a lost focus never invents a viewport click.
-class SelectionInput {
+class SelectionInputLogic {
 public:
     void cancel() { press_.reset(); }
     std::span<const vng::input::Event> route(std::span<const vng::input::Event> raw,
         std::span<const vng::input::Event> unhandled,vng::ui::Rect viewport,bool defer,bool enabled) {
         using namespace vng;
-        events_.clear();available_.assign(unhandled.begin(),unhandled.end());
+        events_.clear();available_.reset(unhandled);
         if(!enabled)press_.reset();
-        const auto flush=[&] {events_.push_back(*press_);available_.push_back(*press_);press_.reset();};
+        const auto flush=[&] {events_.push_back(*press_);available_.include(*press_);press_.reset();};
         for(const auto& e:raw) {
             if(e.kind==input::EventKind::focus_lost ||
                (e.kind==input::EventKind::key_down && e.key==input::Key::escape))press_.reset();
@@ -35,13 +36,12 @@ public:
         return events_;
     }
     bool available(const vng::input::Event& e) const {
-        return std::ranges::any_of(available_,[&](const auto& u) {
-            return u.kind==e.kind && u.key==e.key && u.button==e.button && u.position==e.position;
-        });
+        return available_.contains(e);
     }
 private:
     std::optional<vng::input::Event> press_;
-    std::vector<vng::input::Event> events_,available_;
+    std::vector<vng::input::Event> events_;
+    vng::input::AvailableEvents available_{{}};
 };
 inline vng::editor::SelectionMode click_selection(vng::input::Modifiers m,bool list=false) {
     using Mode=vng::editor::SelectionMode;
