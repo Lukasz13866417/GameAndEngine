@@ -1,4 +1,5 @@
 #include "world_bounds_tool.hpp"
+#include <vng/input/routing.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -105,6 +106,7 @@ BoundsAction WorldBoundsTool::update(const WorldBounds& bounds, const gfx::Camer
         initial_=value_;start_=pointer_;
         if(handles_[face_].visible)axis_=handles_[face_];
     }
+    const input::AvailableEvents available{unhandled};
     for (const auto& event : raw.empty() ? unhandled : raw) {
         using K = input::EventKind;
         if (event.kind == K::focus_lost || (event.kind == K::key_down && event.key == input::Key::escape)) {
@@ -112,7 +114,7 @@ BoundsAction WorldBoundsTool::update(const WorldBounds& bounds, const gfx::Camer
             cancel(); return action;
         }
         if (!dragging_ && editable && event.kind == K::pointer_down && event.button == 0 && viewport.contains(event.position) &&
-            std::ranges::any_of(unhandled, [&](const auto& e) {return e.kind == event.kind && e.button == 0 && e.position == event.position;})) {
+            available.contains(event)) {
             float best = 12.F;
             for (unsigned face = 0; face < 6; ++face) {
                 const auto& handle = handles_[face];

@@ -1,9 +1,11 @@
 #pragma once
 #include "project.hpp"
 #include <vng/input/input.hpp>
+#include <vng/input/routing.hpp>
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 
 namespace editor_example {
 // Private input state, not a scene component. The host decides whether typing,
@@ -15,9 +17,13 @@ public:
     bool moving() const { return std::ranges::any_of(held_, [](bool key) { return key; }); }
     void stop() { held_.fill(false); fast_=false; }
     bool update(CameraPose& pose, double seconds, const vng::input::Frame& input,
-                WalkSpeeds speeds, bool enabled) {
+                WalkSpeeds speeds, bool enabled,
+                std::optional<std::span<const vng::input::Event>> unhandled = {}) {
         using namespace vng::input;
+        const AvailableEvents available{unhandled.value_or(std::span<const Event>{input.events})};
         if (!input.focused || input.overflow) { active(false); return false; }
+        // Escape is lifecycle cancellation, like focus loss or a key release:
+        // an already-running walk must stop even if UI consumed that key.
         for (const auto& event:input.events)
             if (event.kind==EventKind::focus_lost ||
                 (event.kind==EventKind::key_down && event.key==Key::escape)) {
@@ -30,7 +36,7 @@ public:
             if (event.modifiers.control || event.modifiers.alt || event.modifiers.super) { stop(); continue; }
             for (std::size_t i=0;i<keys.size();++i) if(event.key==keys[i]) {
                 if(event.kind==EventKind::key_up) held_[i]=false;
-                if(event.kind==EventKind::key_down && !event.repeat) held_[i]=true;
+                if(event.kind==EventKind::key_down && !event.repeat && available.contains(event)) held_[i]=true;
             }
         }
         if (!valid_camera_pose(pose) || !std::isfinite(seconds) || seconds<=0) return false;

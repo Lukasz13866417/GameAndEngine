@@ -107,7 +107,7 @@ void RegionEditor::open_menu(Vec2 at,Vec2 screen,std::optional<ui::Rect> viewpor
     subdivide_.enabled(!tool_.elements().empty());align_.enabled(vertices.size()>=3);
     erase_elements_.enabled(!tool_.elements().empty());menu_open_=true;
 }
-void RegionEditor::geometry(EditingSession& editing,RegionAction action) {
+void RegionEditor::geometry(const EditingSession& editing,RegionAction action) {
     const auto current=region_world_snapshot(editing.state(),static_cast<u32>(tool_.selected()));
     if(!current)return;
     auto candidate=*current;
@@ -115,22 +115,15 @@ void RegionEditor::geometry(EditingSession& editing,RegionAction action) {
     if(!changed){message_=changed.error().message;return;}
     const auto ids = moved_points(tool_, *current);
     const bool points_only = action == RegionAction::align;
-    auto begun=points_only ? editing.begin_region_points(candidate.id, ids) : editing.begin_region(candidate.id);
-    if(!begun){message_=begun.error().message;return;}
-    auto applied=points_only ? editing.region_points(point_values(editing.state(), candidate, ids))
-                            : editing.region(region_to_local(editing.state(),candidate));
-    if(!applied){(void)editing.cancel();message_=applied.error().message;return;}
-    auto committed=editing.commit();
-    if(!committed){message_=committed.error().message;return;}
-    if (points_only) pending_.regions[candidate.id].points.insert(ids.begin(), ids.end());
-    else pending_.regions[candidate.id].whole = true;
-    sync(editing.state());
-    requested_mode_=GizmoMode::region_vertices;gizmo_=*requested_mode_;tool_.components(true);
-    tool_.select_elements(editor::CageElement::vertex,*changed);
-    sync(editing.state());
-    message_="Region geometry updated / Undo restores it";
+    RegionEdit edit{.kind=points_only?RegionEdit::Kind::points:RegionEdit::Kind::replace,
+        .object=candidate.id,.source_revision=editing.state().document.revision};
+    edit.vertices=ids;
+    if(points_only)edit.points=point_values(editing.state(),candidate,ids);
+    else edit.region=region_to_local(editing.state(),candidate);
+    edit.select_vertices=std::move(*changed);
+    edit.success="Region geometry updated / Undo restores it";edits_.push_back(std::move(edit));
 }
-void RegionEditor::poll_menu(EditingSession& editing,std::span<const input::Event> events) {
+void RegionEditor::poll_menu(const EditingSession& editing,std::span<const input::Event> events) {
     if(!menu_open_)return;
     if(!selected()||editing.busy()||!editing.state().viewport.paused){close_menu();return;}
     for(unsigned i=0;i<3;++i)if(modes_[i].clicked()) {
@@ -235,56 +228,54 @@ void RegionEditor::sync(const State& state) {
     pending_ = {};
     sync_inspector(*cached_);
 }
-content::Result<bool> RegionEditor::erase(EditingSession& editing) {
-    auto result=editing.erase_region(static_cast<u32>(tool_.selected()));
-    if(result&&*result){pending_.full=true;close_menu();tool_.clear();displayed_.reset();selection_=0;}return result;
+content::Result<bool> RegionEditor::erase(const EditingSession& editing) {
+    if(!tool_.selected())return false;
+    edits_.push_back({.kind=RegionEdit::Kind::erase,.object=static_cast<u32>(tool_.selected()),
+        .source_revision=editing.state().document.revision,.success="Deleted region / Undo restores it"});
+    return false; // Queuing is not a successful authored deletion.
 }
-void RegionEditor::update(EditingSession& editing,const gfx::CameraSnapshot& camera,ui::Rect viewport,
-    std::span<const input::Event> input,std::span<const input::Event> raw,bool visible,bool editable,float arrow_step) {
+void RegionEditor::update(const EditingSession& editing,const gfx::CameraSnapshot& camera,ui::Rect viewport,
+    std::span<const input::Event> input,std::span<const input::Event> raw,bool visible,bool editable,float arrow_step,bool poll_controls) {
     visible_=visible;editable_=editable;host_.visible(visible);host_.enabled(editable&&!editing.busy());
     controls_.enabled(visible && editable && !editing.busy());
     details_.enabled(editable&&!editing.busy());
     for(auto field:xyz_)field.enabled(component_editing());
     transform_.visible(component_editing());
-    if(auto mode=transform_.changedValue())tool_.transform_mode(*mode);
+    if(poll_controls)if(auto mode=transform_.changedValue())tool_.transform_mode(*mode);
     previous_vertex_.enabled(component_editing()&&gizmo_==GizmoMode::region_vertices);
     next_vertex_.enabled(component_editing()&&gizmo_==GizmoMode::region_vertices);
     shape_.enabled(show_.value());radius_.enabled(show_.value());add_.enabled(show_.value());
     if(!visible||!show_.value()) {
-        if(editing.active(EditGesture::region)) {auto cancelled=editing.cancel();if(!cancelled)message_=cancelled.error().message;}
+        if(gesture_transaction_)edits_.push_back({.kind=RegionEdit::Kind::gesture,
+            .object=static_cast<u32>(tool_.selected()),.source_revision=editing.state().document.revision,.cancelled=true,
+            .transaction=gesture_transaction_});
         close_menu();tool_.hide();details_.visible(false);return;
     }
     sync(editing.state());
-    if(editable&&!editing.busy()) {
+    // Retained UI occurrence flags belong to Screen::update(), not to each
+    // raw input occurrence. The owner polls them once on the frame's final tick.
+    if(poll_controls&&editable&&!editing.busy()) {
         if (auto walls = walls_.changedValue())
             if (const auto* current = find_region(*cached_, static_cast<u32>(tool_.selected()))) {
                 auto next = *current; next.show_walls = *walls;
                 // Changing display style must not round-trip geometry through
                 // the instance transform (and accumulate floating-point drift).
                 static_cast<RegionGeometry&>(next) = region_settings(editing.state(),next.id)->boundary;
-                auto begun = editing.begin_region(next.id);
-                if (!begun) message_ = begun.error().message;
-                else if (auto changed = editing.region(next); !changed) {
-                    message_ = changed.error().message; (void)editing.cancel();
-                } else {
-                    auto committed = editing.commit();
-                    if (!committed) message_ = committed.error().message;
-                    pending_.regions[next.id].whole = true;
-                }
-                sync(editing.state());
+                edits_.push_back({.kind=RegionEdit::Kind::replace,.object=next.id,
+                    .source_revision=editing.state().document.revision,.region=std::move(next)});
             }
         if(add_.clicked()) {
             const auto radius=number(radius_.getText());
             if(!radius||*radius<=0)message_="Region radius must be a positive finite number";
             else {
                 auto p=camera.position;for(unsigned a=0;a<3;++a)p[a]+=camera.forward[a] * *radius * 6;
-                auto created=editing.add_region(shape_.value(),p,*radius);
-                if(!created)message_=created.error().message;
-                else {pending_.full=true;selection_=*created;selection(*created,GizmoMode::move);message_="Added region instance / use Gizmo to edit its boundary";}
+                edits_.push_back({.kind=RegionEdit::Kind::create,.source_revision=editing.state().document.revision,
+                    .shape=shape_.value(),.position=p,.radius=*radius,
+                    .success="Added region instance / use Gizmo to edit its boundary"});
             }
         }
-        if(deselect_.clicked()){tool_.select(0,0);selection_=0;}
-        if(remove_.clicked()) {auto removed=erase(editing);message_=removed?"Deleted region / Undo restores it":removed.error().message;}
+        if(deselect_.clicked()){tool_.select(0,0);selection_=Selection{};}
+        if(remove_.clicked())(void)erase(editing);
         const auto& world=*cached_;
         if(component_editing()&&gizmo_==GizmoMode::region_vertices&&(previous_vertex_.clicked()||next_vertex_.clicked()))
             if(const auto* r=find_region(world,static_cast<u32>(tool_.selected()));r&&!r->points.empty()) {
@@ -302,51 +293,62 @@ void RegionEditor::update(EditingSession& editing,const gfx::CameraSnapshot& cam
                 if(component_editing())place(next,tool_.vertices(),p);
                 const auto ids = moved_points(tool_, *r);
                 const bool points_only = next.name == r->name && next.note == r->note;
-                auto begun=points_only ? editing.begin_region_points(next.id, ids) : editing.begin_region(next.id);
-                if(!begun)message_=begun.error().message;
-                else {
-                    auto changed=points_only ? editing.region_points(point_values(editing.state(), next, ids))
-                                             : editing.region(region_to_local(editing.state(),next));
-                    if(!changed){(void)editing.cancel();message_=changed.error().message;}
-                    else {
-                        auto committed=editing.commit();message_=committed?"Region applied":committed.error().message;
-                        if (points_only) pending_.regions[next.id].points.insert(ids.begin(), ids.end());
-                        else pending_.regions[next.id].whole = true;
-                    }
-                }
+                RegionEdit edit{.kind=points_only?RegionEdit::Kind::points:RegionEdit::Kind::replace,
+                    .object=next.id,.source_revision=editing.state().document.revision};
+                edit.vertices=ids;
+                if(points_only)edit.points=point_values(editing.state(),next,ids);
+                else edit.region=region_to_local(editing.state(),next);
+                edit.success="Region applied";edits_.push_back(std::move(edit));
             }
         }
     }
     sync(editing.state());
     const auto selected_before=tool_.selected();
     auto action=tool_.update(camera,viewport,input,raw,editable&&(!editing.busy()||editing.active(EditGesture::region)),arrow_step);
-    transform_.value(tool_.transform_mode());
-    if(tool_.selected()!=selected_before)selection_=static_cast<u32>(tool_.selected());
-    if(auto picked=tool_.picked_object())selection_=static_cast<u32>(*picked);
-    if(action.began) {
-        const auto* current = find_region(*cached_, static_cast<u32>(action.object));
-        auto begun=current ? editing.begin_region_points(current->id, moved_points(tool_, *current))
-                           : content::Result<void>{std::unexpected(content::Diagnostic{.message="Unknown region"})};
-        if(!begun){tool_.clear();message_=begun.error().message;}
-    }
-    if(editing.active(EditGesture::region)) {
+    if(poll_controls)transform_.value(tool_.transform_mode());
+    if(tool_.selected()!=selected_before)selection_=Selection{static_cast<u32>(tool_.selected())};
+    if(auto picked=tool_.picked_object())selection_=Selection{static_cast<u32>(*picked),tool_.picked_modifiers()};
+    if(action.began||gesture_transaction_) {
         const auto id = static_cast<u32>(action.object);
         const auto* current = find_region(*cached_, id);
         const auto ids = current ? moved_points(tool_, *current) : std::vector<u32>{};
-        pending_.regions[id].points.insert(ids.begin(), ids.end());
-        if(action.cancelled) {auto result=editing.cancel();if(!result)message_=result.error().message;}
-        else {
-            if(action.changed && current) {
+        if(action.began||action.changed||action.cancelled||action.finished) {
+            RegionEdit edit{.kind=RegionEdit::Kind::gesture,.object=id,.source_revision=editing.state().document.revision,
+                .vertices=ids,.began=action.began,.changed=action.changed,.finished=action.finished,.cancelled=action.cancelled,
+                .transaction=gesture_transaction_};
+            if(action.changed&&current) {
                 Region subset;subset.id=id;
                 for(const auto& point:action.points)subset.points.push_back(point.position);
                 auto local=region_to_local(editing.state(),subset);
-                std::vector<RegionPointEdit> values;
-                for(std::size_t i=0;i<action.points.size();++i)values.push_back({action.points[i].id,local.points[i]});
-                if(auto result=editing.region_points(values);!result){message_=result.error().message;(void)editing.cancel();tool_.clear();}
+                for(std::size_t i=0;i<action.points.size();++i)edit.points.push_back({action.points[i].id,local.points[i]});
             }
-            if(action.finished&&editing.active(EditGesture::region)) {auto result=editing.commit();if(!result)message_=result.error().message;}
+            edits_.push_back(std::move(edit));
         }
     }
     sync(editing.state());
+}
+std::optional<RegionEdit> RegionEditor::take_edit() {
+    if(edits_.empty())return {};
+    auto edit=std::move(edits_.front());edits_.pop_front();return edit;
+}
+void RegionEditor::accept_edit(const RegionEdit& edit,const content::Result<RegionEditResult>& result,const State& state) {
+    if(!result){
+        message_=result.error().message;
+        if(edit.kind==RegionEdit::Kind::gesture){tool_.clear();gesture_transaction_.reset();}
+        return;
+    }
+    if(edit.kind==RegionEdit::Kind::gesture)gesture_transaction_=result->transaction;
+    if(result->created) {
+        pending_.full=true;selection_=Selection{*result->created};selection(*result->created,GizmoMode::move);
+    } else if(edit.kind==RegionEdit::Kind::erase&&result->changed) {
+        pending_.full=true;close_menu();tool_.clear();displayed_.reset();selection_=Selection{};
+    } else if(edit.kind==RegionEdit::Kind::replace)pending_.regions[edit.object].whole=true;
+    else pending_.regions[edit.object].points.insert(edit.vertices.begin(),edit.vertices.end());
+    sync(state);
+    if(edit.select_vertices) {
+        requested_mode_=GizmoMode::region_vertices;gizmo_=*requested_mode_;tool_.components(true);
+        tool_.select_elements(editor::CageElement::vertex,*edit.select_vertices);sync(state);
+    }
+    if(result->changed&&!edit.success.empty())message_=edit.success;
 }
 } // namespace editor_example

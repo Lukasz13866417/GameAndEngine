@@ -260,21 +260,22 @@ std::optional<u32> MeshTools::pick(const State& state,Vec2 p,Extent2D extent,con
 void MeshTools::open(Vec2 at,Vec2 screen,std::optional<ui::Rect> viewport) {
     if (!component_mode()) return;
     menu_.open(at, screen, viewport);
-    (void)dispatch(menu_, menu_situation(), MeshMenuContext{{}, !visibility_.hidden_faces.empty(), false});
+    (void)handle_menu(MeshMenuContext{{}, !visibility_.hidden_faces.empty(), false});
 }
 void MeshTools::close() { menu_.close(); }
 std::optional<MeshAction> MeshTools::poll(std::span<const input::Event> events) {
-    return dispatch(menu_, menu_situation(), MeshMenuContext{events, !visibility_.hidden_faces.empty()});
+    return handle_menu(MeshMenuContext{events, !visibility_.hidden_faces.empty()});
 }
-MeshMenu::Situation MeshTools::menu_situation() const {
-    switch (mode_) {
-    case MeshSelectMode::vertex: return MeshMenu::Vertices{selected_.size()};
-    case MeshSelectMode::edge: return MeshMenu::Edges{selected_.size()};
-    case MeshSelectMode::face: return MeshMenu::Faces{selected_.size()};
-    case MeshSelectMode::surface:
-    case MeshSelectMode::whole: return MeshMenu::Inactive{};
-    }
-    return MeshMenu::Inactive{};
+std::optional<MeshAction> MeshTools::handle_menu(const MeshMenuContext& context) {
+    // This owner already knows its selection mode. Pass that concrete situation
+    // straight to the leaf instead of constructing a variant just to visit it.
+    if (mode_ == MeshSelectMode::vertex)
+        return menu_.handle(MeshMenu::Vertices{selected_.size()}, context);
+    if (mode_ == MeshSelectMode::edge)
+        return menu_.handle(MeshMenu::Edges{selected_.size()}, context);
+    if (mode_ == MeshSelectMode::face)
+        return menu_.handle(MeshMenu::Faces{selected_.size()}, context);
+    return menu_.handle(MeshMenu::Inactive{}, context);
 }
 DebugReport MeshTools::debug_report() const {
     const auto mode = mode_ == MeshSelectMode::vertex ? "Vertices" : mode_ == MeshSelectMode::edge ? "Edges" :

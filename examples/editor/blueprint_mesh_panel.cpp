@@ -6,7 +6,7 @@
 
 namespace editor_example {
 using namespace vng;
-BlueprintMeshPanel::BlueprintMeshPanel(ui::Container host,EditingSession& editing)
+BlueprintMeshPanel::BlueprintMeshPanel(ui::Container host,const EditingSession& editing)
     :host_(host),hint_(host_.label("").height(56)),
       menu_buttons_host_(host.column().padding(0)),menu_body_(host.column().padding(0)),menu_panel_(menu_body_),
       parts_host_(host_.column().padding(0)),
@@ -19,7 +19,7 @@ void BlueprintMeshPanel::sync() {
         declared_gizmos_[selected_gizmo_].setup->finish(true);setup_gesture_=false;
     }
     if(gesture_source_) {
-        if(id==shown_ && editing_.active(EditGesture::mesh_draft))return;
+        if(id==shown_ && (begin_pending_ || editing_.active(EditGesture::mesh_draft)))return;
         if(auto cancelled=finish_gesture(true);!cancelled)status_=cancelled.error().message;
     }
     if(id==shown_ && (editing_.active(EditGesture::mesh_draft) || editing_.active(EditGesture::mesh_transform)))return;
@@ -290,11 +290,10 @@ void BlueprintMeshPanel::launch(MeshDraftEdit edit) {
 content::Result<bool> BlueprintMeshPanel::finish_gesture(bool cancel) {
     queued_.reset();
     if(cancel)discard_job_=true; // Drain, never wait for a cancelled std::async job on the UI thread.
-    auto result=editing_.active(EditGesture::mesh_draft) ? (cancel?editing_.cancel():editing_.commit()) : content::Result<bool>{false};
-    if(!result)return result;
-    pending_blueprint_=shown_;pending_revision_=editing_.state().document.revision;
+    if(shown_ && (begin_pending_ || editing_.active(EditGesture::mesh_draft)))
+        edits_.push_back({cancel?BlueprintMeshEdit::Kind::cancel:BlueprintMeshEdit::Kind::commit,*shown_,editing_.state().document.revision,{},gesture_transaction_});
     gesture_source_.reset();finishing_=false;revision_=0;
-    return result;
+    return false;
 }
 content::Result<bool> BlueprintMeshPanel::edit_part(const SurfacePartAction& action) {
     if(has_gizmo()&&declared_gizmos_[selected_gizmo_].setup) {
@@ -310,24 +309,24 @@ content::Result<bool> BlueprintMeshPanel::edit_part(const SurfacePartAction& act
     }
     if(action.cancelled) {
         auto result=finish_gesture(true);
-        if(result)status_="Blueprint edit cancelled / original placement restored";
         sync();return result;
     }
     if(action.began) {
         if(busy() || !gizmo_ || !shown_)return false;
         auto source=std::make_shared<const editor::EditableMesh>(*mesh_edit_geometry(editing_.state(),*shown_));
-        if(auto begun=editing_.begin_mesh_draft_edit(*shown_);!begun)return std::unexpected(begun.error());
+        edits_.push_back({BlueprintMeshEdit::Kind::begin,*shown_,editing_.state().document.revision,{}});
+        begin_pending_=true;
         gesture_source_=std::move(source);finishing_=false;
     }
     if(!gesture_source_)return false;
     if(action.changed) {
         auto edit=action.scale_value && gizmo_->scale ? gizmo_->scale(*action.scale_value) :
             action.rotation_degrees && gizmo_->rotate ? gizmo_->rotate(*action.rotation_degrees) : gizmo_->move(action.position);
-        if(job_.valid())queued_=std::move(edit); // At most one running job and one latest target.
+        if(job_.valid()||awaiting_adoption_)queued_=std::move(edit); // One job/result and one latest target.
         else launch(std::move(edit));
     }
     finishing_|=action.finished;
-    if(finishing_ && !job_.valid() && !queued_) {
+    if(finishing_ && !job_.valid() && !awaiting_adoption_ && !queued_) {
         auto result=finish_gesture(false);sync();return result;
     }
     return false;
@@ -340,12 +339,11 @@ bool BlueprintMeshPanel::poll(bool accept_input) {
             [](const auto& a,const auto& b){return a.surface==b.surface;});
         if(moved){mode.handles=next;show_handles();}
     }
-    if(gesture_source_ && !editing_.active(EditGesture::mesh_draft)) {
+    if(gesture_source_ && !begin_pending_ && !editing_.active(EditGesture::mesh_draft)) {
         if(auto cancelled=finish_gesture(true);!cancelled)status_=cancelled.error().message;
     }
     if(job_.valid() && job_.wait_for(std::chrono::seconds{0})==std::future_status::ready) {
-        const auto old_parts=declared_parts_;
-        const bool select_created=job_select_new_part_;
+        adoption_parts_=declared_parts_;
         auto mesh=job_.get();
         bool failed=discard_job_;
         if(discard_job_) { /* A cancelled job's immutable result is simply released. */ }
@@ -355,38 +353,11 @@ bool BlueprintMeshPanel::poll(bool accept_input) {
             status_="Edit discarded: the inspected blueprint changed";failed=true;
         }
         else {
-            auto adopted=job_gesture_ ? editing_.preview_mesh_draft(job_revision_,std::move(*mesh)) :
-                editing_.replace_mesh_draft(job_blueprint_,job_revision_,std::move(*mesh));
-            if(!adopted){status_=adopted.error().message;failed=true;}
-            else {
-                changed=*adopted;
-                if(changed){pending_blueprint_=shown_;pending_revision_=editing_.state().document.revision;}
-                status_=changed?"Blueprint draft updated / Apply mesh to scene to publish / Undo restores the draft":"Blueprint draft unchanged";
-            }
+            edits_.push_back({job_gesture_?BlueprintMeshEdit::Kind::preview:BlueprintMeshEdit::Kind::replace,
+                job_blueprint_,job_revision_,std::move(*mesh),gesture_transaction_});
+            awaiting_adoption_=true;
         }
-        if(gesture_source_) {
-            if(failed) {
-                auto cancelled=finish_gesture(true);
-                if(!cancelled)status_=cancelled.error().message;
-                else changed|=*cancelled;
-            } else if(queued_) {
-                auto next=std::move(*queued_);queued_.reset();launch(std::move(next));
-            } else if(finishing_) {
-                if(auto done=finish_gesture(false);!done)status_=done.error().message;
-            }
-        }
-        // Re-show committed values on success and original values on rejection.
-        if(!gesture_source_){
-            revision_=0;sync();
-            if(changed && !failed && select_created) {
-                const auto created=std::ranges::find_if(declared_parts_,[&](const auto& part){
-                    return std::ranges::find(old_parts,part.id,&MeshPart::id)==old_parts.end();
-                });
-                if(created!=declared_parts_.end()) {
-                    const auto id=created->id;(void)select_part(id);
-                }
-            }
-        }
+        if(failed)complete_job(true,false);
     }
     if(accept_input && !busy() && description_) {
         for(std::size_t i=0;i<menu_buttons_.size();++i)if(menu_buttons_[i].clicked()) {
@@ -419,5 +390,65 @@ bool BlueprintMeshPanel::poll(bool accept_input) {
         if(!panel_.status().empty())status_=panel_.status();
     }
     return changed;
+}
+
+std::optional<BlueprintMeshEdit> BlueprintMeshPanel::take_edit() {
+    if(edits_.empty())return {};
+    auto edit=std::move(edits_.front());edits_.pop_front();return edit;
+}
+void BlueprintMeshPanel::accept_edit(const BlueprintMeshEdit& edit,const content::Result<bool>& result) {
+    using Kind=BlueprintMeshEdit::Kind;
+    if(edit.kind==Kind::begin) {
+        begin_pending_=false;
+        if(!result) {
+            status_=result.error().message;discard_job_=true;queued_.reset();gesture_source_.reset();finishing_=false;
+            // A begin rejection must not leave a queued completion that might
+            // accidentally finish another owner's transaction.
+            std::erase_if(edits_,[](const auto& e){return e.kind==Kind::commit||e.kind==Kind::cancel;});
+        } else {
+            gesture_transaction_=editing_.active_transaction();
+            // A same-batch release/cancel may already be queued before the
+            // parent polls the begin. Bind it only to this accepted capture.
+            for(auto& queued:edits_)if(queued.kind!=Kind::begin&&queued.kind!=Kind::replace)
+                queued.transaction=gesture_transaction_;
+        }
+        return;
+    }
+    if(edit.kind==Kind::preview||edit.kind==Kind::replace) {
+        awaiting_adoption_=false;
+        if(!result)status_=result.error().message;
+        else {
+            if(*result){pending_blueprint_=edit.blueprint;pending_revision_=editing_.state().document.revision;}
+            status_=*result?"Blueprint draft updated / Apply mesh to scene to publish / Undo restores the draft":"Blueprint draft unchanged";
+        }
+        complete_job(!result,result&&*result);return;
+    }
+    if(!result) {
+        status_=result.error().message;
+        if(edit.kind==Kind::commit && editing_.active_transaction()==edit.transaction)
+            edits_.push_back({Kind::cancel,edit.blueprint,editing_.state().document.revision,{},edit.transaction});
+    }
+    else {
+        pending_blueprint_=edit.blueprint;pending_revision_=editing_.state().document.revision;
+        if(edit.kind==Kind::cancel)status_="Blueprint edit cancelled / original placement restored";
+    }
+    revision_=0;sync();
+}
+void BlueprintMeshPanel::complete_job(bool failed,bool changed) {
+    if(gesture_source_) {
+        if(failed)(void)finish_gesture(true);
+        else if(queued_) {
+            auto next=std::move(*queued_);queued_.reset();launch(std::move(next));
+        } else if(finishing_)(void)finish_gesture(false);
+    }
+    if(!gesture_source_) {
+        revision_=0;sync();
+        if(changed&&!failed&&job_select_new_part_&&!busy()) {
+            const auto created=std::ranges::find_if(declared_parts_,[&](const auto& part){
+                return std::ranges::find(adoption_parts_,part.id,&MeshPart::id)==adoption_parts_.end();
+            });
+            if(created!=declared_parts_.end()){const auto id=created->id;(void)select_part(id);}
+        }
+    }
 }
 }

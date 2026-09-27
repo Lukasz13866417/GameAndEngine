@@ -17,11 +17,25 @@ namespace editor_example {
 struct TranslationSegment {
     vng::Vec3 first, last;
 };
+// Synchronous borrowed presentation, independent of inspector fields/callbacks.
+// Keep the gesture-start stamp/position stable while streaming local previews.
+struct TranslationTarget {
+    vng::editor::Stamp stamp;
+    std::string_view key;
+    vng::Vec3 position;
+    std::span<const vng::editor::TranslationAxis> axes{};
+};
 // UI-side world XYZ + explicitly described translation axes for the first gizmo.
 // Dragging exposes a local preview position; release returns an atomic Apply.
 // The host decides how to stream previews and commit/cancel one history gesture.
 class TranslationTool final {
 public:
+    [[nodiscard]] std::optional<vng::Vec3>
+    update(const TranslationTarget&, const vng::gfx::CameraSnapshot&, vng::ui::Rect viewport,
+           std::span<const vng::input::Event> unhandled, std::span<const vng::input::Event> raw,
+           bool enabled, bool world_axes = true, float arrow_step = 1.F,
+           std::optional<TranslationSegment> segment = {});
+    // Compatibility adapter for runtime/native inspector callbacks only.
     [[nodiscard]] std::optional<vng::editor::Event>
     update(const vng::editor::Schema&, const vng::gfx::CameraSnapshot&, vng::ui::Rect viewport,
            std::span<const vng::input::Event> unhandled, std::span<const vng::input::Event> raw,

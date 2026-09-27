@@ -228,6 +228,7 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
                      std::span<const vng::input::Event> raw, bool enabled, float arrow_step) {
     using namespace vng;
     handled_ = false;
+    const input::AvailableEvents available{unhandled};
     if(target.stamp.object!=target_.stamp.object || target.stamp.generation!=target_.stamp.generation ||
        target.local_axes!=target_.local_axes || target.free_rotation!=target_.free_rotation || target.only_axis!=target_.only_axis)
         selection_.clear();
@@ -244,7 +245,7 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
         !std::isfinite(camera.projection[0][0]) || !std::isfinite(camera.projection[1][1]) ||
         camera.projection[0][0] == 0 || camera.projection[1][1] == 0) {
         handled_ = dragging_;
-        if(!dragging_)for(const auto& event:raw)selection_.update(event,unhandled,viewport);
+        if(!dragging_)for(const auto& event:raw)selection_.update(event,available,viewport);
         cancel(enabled); // Temporary UI/input suppression is not deselection.
         return {};
     }
@@ -275,16 +276,13 @@ RotationTool::update(const RotationGizmo& target, const vng::gfx::CameraSnapshot
         }
     }
     const auto begins = [&](const input::Event& event) {
-        return std::ranges::any_of(unhandled, [&](const auto& available) {
-            return available.kind == event.kind && available.button == event.button &&
-                   available.position == event.position;
-        });
+        return available.contains(event);
     };
     const auto events = raw.empty() ? unhandled : raw;
     for (const auto& event : events) {
-        const bool clicked=(!dragging_ || keyboard_) && selection_.update(event,unhandled,viewport_);
+        const bool clicked=(!dragging_ || keyboard_) && selection_.update(event,available,viewport_);
         if(auto arrow=transform_arrow(event,arrow_step);arrow && (dragging_ || (visible_ && viewport_.contains(event.position) &&
-            std::ranges::any_of(unhandled,[&](const auto& e){return e.kind==event.kind&&e.key==event.key;})))) {
+            available.contains(event)))) {
             if(!dragging_) {
                 axis_=target_.only_axis.value_or(selection_.axis().value_or(hit_axis(event.position).value_or(2)));
                 selection_.select(axis_);

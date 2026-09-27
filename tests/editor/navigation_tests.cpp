@@ -348,6 +348,27 @@ TEST_CASE("Walk is time-based and releases input on typing pause or focus loss",
     CHECK_FALSE(a.update(first,.1,frame,{},true)); CHECK_FALSE(a.active());
 }
 
+TEST_CASE("Walk only starts on available keys but receives consumed lifecycle releases", "[editor][navigation][walk][parent-coordination]") {
+    CameraWalk walk;walk.active(true);
+    CameraPose pose{0,0,8};
+    input::Frame frame;frame.events={{.kind=Kind::key_down,.key=input::Key::w}};
+    input::EventSequence sequence;sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.moving());CHECK(pose.target==Vec3{});
+    REQUIRE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{frame.events}));
+    const auto moved=pose;
+    frame.events={{.kind=Kind::key_up,.key=input::Key::w}};sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.moving());CHECK(pose==moved);
+    frame.events={{.kind=Kind::key_down,.key=input::Key::escape}};sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.active());
+    walk.active(true);
+    frame.events={{.kind=Kind::focus_lost}};sequence.identify(frame.events);
+    CHECK_FALSE(walk.update(pose,.1,frame,{},true,std::span<const input::Event>{}));
+    CHECK_FALSE(walk.active());
+}
+
 TEST_CASE("Explicit viewing distance controls clipping independently of orbit distance", "[editor][navigation][viewing-distance]") {
     CameraPose pose{0,0,8};
     auto close=camera(pose,ViewMode::scene,20).snapshot({800,600});

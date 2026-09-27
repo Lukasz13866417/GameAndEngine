@@ -10,6 +10,7 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
     const vng::gfx::CameraSnapshot& camera,vng::ui::Rect viewport,
     std::span<const vng::input::Event> unhandled,std::span<const vng::input::Event> raw,bool enabled,vng::Vec3 axes_rotation,float arrow_step,bool shortcut) {
     using namespace vng;
+    const input::AvailableEvents available{unhandled};
     ScaleAction action{.value=scale};
     handled_=false;
     if(stamp.object!=stamp_.object || stamp.generation!=stamp_.generation)selection_.clear();
@@ -18,7 +19,7 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
     if(!enabled || !std::isfinite(scale) || scale<min_instance_scale || scale>max_instance_scale ||
        (dragging_ && (stamp.object!=stamp_.object || stamp.generation!=stamp_.generation || resized))) {
         action.finished=action.cancelled=handled_=dragging_;
-        if(!dragging_)for(const auto& event:raw)selection_.update(event,unhandled,viewport);
+        if(!dragging_)for(const auto& event:raw)selection_.update(event,available,viewport);
         cancel(enabled);
         return action;
     }
@@ -57,13 +58,13 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
         using K=input::EventKind;
         if(shortcut&&!dragging_&&e.kind==K::key_down&&e.key==input::Key::s&&!e.repeat&&
            !e.modifiers.control&&!e.modifiers.alt&&!e.modifiers.super&&viewport.contains(e.position)&&
-           std::ranges::any_of(unhandled,[&](const auto& u){return u.kind==e.kind&&u.key==e.key;})) {
+           available.contains(e)) {
             keyboard_=pointer_keyboard_=dragging_=action.began=handled_=true;
             selection_.select(0);initial_=value_=scale;start_=pointer_=e.position;continue;
         }
-        const bool clicked=(!dragging_ || keyboard_) && selection_.update(e,unhandled,viewport_);
+        const bool clicked=(!dragging_ || keyboard_) && selection_.update(e,available,viewport_);
         if(auto arrow=transform_arrow(e,arrow_step);arrow && selected() &&
-           std::ranges::any_of(unhandled,[&](const auto& u){return u.kind==e.kind && u.key==e.key;})) {
+           available.contains(e)) {
             if(!dragging_) {keyboard_=dragging_=action.began=true;initial_=value_=scale;}
             const auto next=std::clamp(value_*std::exp((arrow->x-arrow->y)*.025F),min_instance_scale,std::max(initial_,maximum_));
             action.changed|=next!=value_;value_=next;handled_=true;
@@ -74,7 +75,7 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
             keyboard_=pointer_keyboard_=dragging_=false;action.finished=handled_=true;break;
         }
         const bool right_press=e.kind==K::pointer_down && e.button==1 &&
-            (!keyboard_ || std::ranges::any_of(unhandled,[&](const auto& u){return u.kind==e.kind && u.button==e.button && u.position==e.position;}));
+            (!keyboard_ || available.contains(e));
         if(e.kind==K::focus_lost || (e.kind==K::key_down && e.key==input::Key::escape) || (dragging_ && right_press)) {
             action.finished=action.cancelled=handled_=dragging_;
             cancel(!right_press); return action;
@@ -82,9 +83,7 @@ ScaleAction ScaleTool::update(vng::editor::Stamp stamp,vng::Vec3 position,vng::f
         if(!dragging_ && e.kind==K::pointer_down && e.button==0 &&
             !e.modifiers.alt && !e.modifiers.control && !e.modifiers.super &&
             ui::Rect{handle_.x-10,handle_.y-10,20,20}.contains(e.position) &&
-            std::ranges::any_of(unhandled,[&](const auto& p) {
-                return p.kind==e.kind && p.button==e.button && p.position==e.position;
-            })) {
+            available.contains(e)) {
             dragging_=action.began=handled_=true;
             keyboard_=pointer_keyboard_=false;selection_.select(0);
             initial_=value_=scale;

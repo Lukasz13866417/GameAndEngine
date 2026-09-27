@@ -26,8 +26,6 @@ void TimelineEditing::present(const TimelineInput& input) {
         panel_.focus_object(*pending_focus_);
         pending_focus_.reset();
     }
-    if(input.clear_selection || input.select || input.reset || input.synchronize)
-        editing_.select_keyframe(panel_.selected_keyframe());
 }
 TimelineReply TimelineEditing::handle(const Available&,const TimelineContext& context) {
     enabled_=true;
@@ -35,9 +33,7 @@ TimelineReply TimelineEditing::handle(const Available&,const TimelineContext& co
     present(context.input);
     TimelineReply reply;
     if(context.input.poll && !editing_.awaiting_remote()) {
-        if(auto action=panel_.poll(context.input.unhandled,context.input.raw)) reply=apply(*action);
-        // Ctrl-click/scrub can clear selection without changing the playhead.
-        editing_.select_keyframe(panel_.selected_keyframe());
+        if(auto action=panel_.poll(context.input.unhandled,context.input.raw)) reply=propose(std::move(*action));
     }
     return reply;
 }
@@ -47,51 +43,33 @@ TimelineReply TimelineEditing::handle(const Unavailable&,const TimelineContext& 
     present(context.input);
     return {};
 }
-TimelineReply TimelineEditing::apply(const TimelineAction& action) {
-    auto& view=editing_.viewport();
+TimelineReply TimelineEditing::propose(TimelineAction action) {
     const auto& state=editing_.state();
     TimelineReply reply{.interacted=true};
     if(action.kind==TimelineAction::Kind::select_object) {
         reply.selection_requested=true;
         if(action.object==camera_animation_object) {
-            if(const auto* camera=active_camera(state,view.time))
+            if(const auto* camera=active_camera(state,state.viewport.time))
                 reply.select_instance={{camera->id,action.selection_mode}};
             else panel_.focus_object(camera_animation_object);
         } else reply.select_instance={{static_cast<vng::u32>(action.object),action.selection_mode}};
         return reply;
     }
     reply.select_inspector=action.kind==TimelineAction::Kind::add || panel_.selected_keyframe().has_value();
-    const auto previous_time=view.time;
-    const auto previous_paused=view.paused;
-    if(action.kind==TimelineAction::Kind::seek) {
-        view.time=action.time;
-        view.paused=true;
-        panel_.show(state);
-    } else {
-        vng::content::Result<bool> result{false};
-        switch(action.kind) {
-        case TimelineAction::Kind::add: result=editing_.add_keyframe(action.time); break;
-        case TimelineAction::Kind::edit:
-            result=editing_.update_keyframe(action.time,action.destination,action.name,action.values); break;
-        case TimelineAction::Kind::apply_range:
-            result=editing_.apply_keyframe_range(action.time,action.destination,action.changes); break;
-        case TimelineAction::Kind::erase:
-            result=editing_.erase_keyframes(action.selection.empty()
-                ? std::span{&action.time,1} : std::span{action.selection}); break;
-        case TimelineAction::Kind::duration: result=editing_.duration(action.time); break;
-        case TimelineAction::Kind::seek: case TimelineAction::Kind::select_object: break;
-        }
-        if(!result) { last_result_=result.error().message; panel_.error(last_result_); }
-        else {
-            reply.authored=*result;
-            last_result_=*result ? "Applied authoring intent" : "No authored change";
-            if(action.kind==TimelineAction::Kind::apply_range)
-                reply.message="Applied edited fields to keyframes from " + std::to_string(action.time) +
-                    " to " + std::to_string(action.destination) + " seconds / Undo restores the whole range";
-            panel_.show(state);
-        }
+    reply.action=std::move(action);
+    return reply;
+}
+TimelineReply TimelineEditing::accept(const TimelineAction& action,const vng::content::Result<bool>& result) {
+    TimelineReply reply;
+    if(!result) { last_result_=result.error().message; panel_.error(last_result_); }
+    else {
+        reply.authored=*result;
+        last_result_=*result ? "Applied authoring intent" : "No authored change";
+        if(action.kind==TimelineAction::Kind::apply_range)
+            reply.message="Applied edited fields to keyframes from " + std::to_string(action.time) +
+                " to " + std::to_string(action.destination) + " seconds / Undo restores the whole range";
+        panel_.show(editing_.state());
     }
-    reply.playback_changed=view.time!=previous_time || view.paused!=previous_paused;
     return reply;
 }
 DebugReport TimelineEditing::debug_report() const {

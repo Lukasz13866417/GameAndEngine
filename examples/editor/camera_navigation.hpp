@@ -1,11 +1,10 @@
 #pragma once
 #include "camera_walk.hpp"
 #include "navigation.hpp"
-#include "component_dispatch.hpp"
 #include <vng/ui/ui.hpp>
 
 namespace editor_example {
-// Borrowed input is consumed during this dispatch. Geometry is supplied only
+// Borrowed input is consumed during this call. Geometry is supplied only
 // by the viewport which owns the inspected target; no lookup by component type.
 struct NavigationFrame {
     CameraPose pose;
@@ -49,7 +48,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend struct Dispatcher;
+    friend class ViewportInteraction;
     NavigationReply handle(const Orbiting&,const NavigationFrame& input) {
         situation_="Orbiting";
         return update(input,true,false);
@@ -74,7 +73,7 @@ private:
             input.unhandled,input.raw.events,enabled && input.raw.focused && !input.raw.overflow);
         // A popout changes keyboard focus without disarming walk mode.
         if(input.controls_have_focus && !input.raw.focused) walk_.stop();
-        else if(walk_.update(reply.pose,input.seconds,input.raw,input.walk_speeds,enabled && input.keyboard_enabled)) {
+        else if(walk_.update(reply.pose,input.seconds,input.raw,input.walk_speeds,enabled && input.keyboard_enabled,input.unhandled)) {
             reply.changed=true;
             reply.smooth_zoom=false;
         }

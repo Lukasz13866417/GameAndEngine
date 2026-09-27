@@ -219,7 +219,7 @@ CageAction CageTool::update(const gfx::CameraSnapshot& camera,
             handled_=true;continue;
         }
         const bool same=hit==object_;if(hit)object_=hit;handled_=hit!=0;
-        if(hit&&!components_)picked_=hit;
+        if(hit&&!components_){picked_=hit;picked_modifiers_=event.modifiers;}
         if(!same){mode_=editor::CageElement::vertex;elements_.clear();}
         if(hit) {
             if(component) {

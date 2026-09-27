@@ -2,6 +2,7 @@
 #include "../../examples/editor/regions.hpp"
 #include "../../examples/editor/project.hpp"
 #include "../../examples/editor/region_editor.hpp"
+#include <vng/ui/inspection.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 namespace {
@@ -187,4 +188,86 @@ TEST_CASE("Region vertices box-select without becoming scene instances and trans
             {.kind=input::EventKind::pointer_up,.position={10,10}}});
     CHECK(f.tool.selected()==1);CHECK(f.tool.vertices().empty());
     CHECK_FALSE(f.pump({{.kind=input::EventKind::key_down,.position={500,300},.key=input::Key::g}}).began);
+}
+
+TEST_CASE("Region deletion is polled and acknowledged by its parent", "[editor][ui][region-proposal]") {
+    content::vmesh::Document document;document.vertex_count=3;
+    document.vertex_fields={{"position",{content::vmesh::ScalarType::Float32,3},std::vector<f32>{0,0,0,1,0,0,0,1,0}}};
+    document.faces={{0,1,2}};
+    auto mesh=editor::EditableMesh::create(std::move(document));REQUIRE(mesh);
+    State state{.document={.mesh=std::move(*mesh)}};
+    auto id=instantiate(state,BlueprintId::region);REQUIRE(id);
+    EditingSession editing{std::move(state)};editing.select_keyframe(editing.state().viewport.time);
+    auto font=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(font);
+    ui::Screen screen{ui::dark_theme(*font)};
+    RegionEditor regions{screen.column(),screen.column(),screen.column(),screen.column()};
+    regions.selection(*id,GizmoMode::move);
+    const auto revision=editing.state().document.revision;
+    auto queued=regions.erase(editing);REQUIRE(queued);CHECK_FALSE(*queued);
+    CHECK(region_settings(editing.state(),*id));CHECK_FALSE(regions.take_message());
+    auto proposal=regions.take_edit();REQUIRE(proposal);CHECK_FALSE(regions.take_edit());
+    CHECK(editing.state().document.revision==revision);
+    auto result=apply_region_edit(editing,*proposal);REQUIRE(result);CHECK(result->changed);
+    regions.accept_edit(*proposal,result,editing.state());
+    CHECK_FALSE(region_settings(editing.state(),*id));
+    const auto selection=regions.take_selection();REQUIRE(selection);CHECK(selection->object==0);
+    auto message=regions.take_message();REQUIRE(message);CHECK(message->starts_with("Deleted region"));
+    REQUIRE(editing.undo());CHECK(region_settings(editing.state(),*id));
+
+    // The parent refuses a delayed topology proposal read before this undo.
+    RegionEdit stale{.kind=RegionEdit::Kind::erase,.object=*id,.source_revision=revision};
+    auto rejected=apply_region_edit(editing,stale);CHECK_FALSE(rejected);
+    CHECK(region_settings(editing.state(),*id));
+
+    const auto original=region_settings(editing.state(),*id)->boundary.points[0];
+    const auto source_revision=editing.state().document.revision;
+    REQUIRE(editing.begin_region_points(*id,std::array<u32,1>{0}));
+    const auto token=editing.active_transaction();REQUIRE(token);
+    auto moved=original;moved.x+=1;
+    REQUIRE(editing.region_points(std::array{RegionPointEdit{0,moved}}));
+    RegionEdit delayed{.kind=RegionEdit::Kind::gesture,.object=*id,.source_revision=source_revision,
+        .vertices={0},.points={{0,moved}},.changed=true,.transaction=token};
+    CHECK_FALSE(apply_region_edit(editing,delayed));
+    CHECK_FALSE(editing.busy());CHECK(region_settings(editing.state(),*id)->boundary.points[0]==original);
+
+    REQUIRE(editing.begin_region_points(*id,std::array<u32,1>{0}));
+    CHECK(editing.active_transaction()!=token);
+    delayed.cancelled=true;
+    CHECK_FALSE(apply_region_edit(editing,delayed));
+    CHECK(editing.busy());REQUIRE(editing.cancel());
+}
+
+TEST_CASE("Region controls produce one proposal across multiple viewport input steps",
+          "[editor][ui][region-proposal][input-routing]") {
+    content::vmesh::Document document;document.vertex_count=3;
+    document.vertex_fields={{"position",{content::vmesh::ScalarType::Float32,3},std::vector<f32>{0,0,0,1,0,0,0,1,0}}};
+    document.faces={{0,1,2}};
+    auto mesh=editor::EditableMesh::create(std::move(document));REQUIRE(mesh);
+    EditingSession editing{State{.document={.mesh=std::move(*mesh)}}};
+    editing.select_keyframe(editing.state().viewport.time);
+    auto font=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(font);
+    ui::Screen screen{ui::dark_theme(*font)};
+    auto host=screen.column().width(600).height(900);
+    RegionEditor regions{host.column().height(80),host.column().height(150),host.column().height(450),screen.column()};
+    const auto camera=*editor_example::camera(CameraPose{30,20,15,{}},ViewMode::scene).snapshot({800,600});
+    const ui::Rect viewport{600,0,800,600};
+    input::Frame frame{.logical_size={1400,900},.framebuffer={1400,900}};
+    regions.update(editing,camera,viewport,{},{},true,true);
+    REQUIRE(screen.update(frame,.016F));
+    const auto tree=screen.inspect();REQUIRE(tree);
+    auto button=std::ranges::find_if(tree->widgets,[](const auto& w){return w.visible&&w.text=="Add region";});
+    REQUIRE(button!=tree->widgets.end());
+    const Vec2 pointer{button->bounds.x+button->bounds.width*.5F,button->bounds.y+button->bounds.height*.5F};
+    frame.events={{.kind=input::EventKind::pointer_down,.position=pointer},
+                  {.kind=input::EventKind::pointer_up,.position=pointer}};
+    REQUIRE(screen.update(frame,.016F));
+    for(const auto& event:frame.events) {
+        regions.update(editing,camera,viewport,{},std::span{&event,1},true,true,1.F,false);
+        CHECK_FALSE(regions.take_edit());
+    }
+    regions.update(editing,camera,viewport,{},{},true,true,1.F,true);
+    auto edit=regions.take_edit();REQUIRE(edit);CHECK(edit->kind==RegionEdit::Kind::create);
+    CHECK_FALSE(regions.take_edit());
+    auto result=apply_region_edit(editing,*edit);REQUIRE(result);regions.accept_edit(*edit,result,editing.state());
+    CHECK(region_world_snapshot(editing.state()).items.size()==1);
 }

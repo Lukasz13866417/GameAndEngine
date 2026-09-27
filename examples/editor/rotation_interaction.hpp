@@ -10,13 +10,27 @@ struct RotationChange {
     vng::u32 object{};
     bool began{}, changed{}, finished{}, cancelled{}, committed{};
 };
+struct RotationProposal {
+    RotationChange change{};
+    vng::u64 revision{};
+    vng::f32 time{};
+    std::vector<vng::u32> selection{};
+    TransformPivot pivot{};
+    bool begin_attitude{}, owns_transaction{};
+    std::optional<vng::u64> transaction{};
+    std::optional<vng::Vec3> absolute{}, delta{};
+    std::optional<std::array<vng::f64,3>> attitude{};
+};
 
 // Joins a purely visual tool to the selected instances' rotation properties. No renderer, GPU object,
 // mesh copy, or worker callback is needed to preview a drag locally.
 class RotationInteraction {
 public:
-    explicit RotationInteraction(EditingSession& editing) : editing_(editing) {}
-    [[nodiscard]] bool active() const { return frozen_.has_value() && editing_.active(EditGesture::rotation); }
+    explicit RotationInteraction(const EditingSession& editing) : editing_(editing) {}
+    [[nodiscard]] bool active() const {
+        return frozen_&&transaction_&&editing_.active_transaction()==transaction_&&
+            editing_.active(EditGesture::rotation)&&editing_.active_object()==frozen_->stamp.object;
+    }
     [[nodiscard]] bool dragging() const { return tool_.dragging(); }
     [[nodiscard]] bool visible() const { return tool_.visible(); }
     [[nodiscard]] bool handledPointer() const { return tool_.handledPointer(); }
@@ -34,24 +48,34 @@ public:
     }
     void append(vng::ui::DrawList& list, const vng::text::Font& font = {}) const { tool_.append(list,font); }
 
-    [[nodiscard]] vng::content::Result<RotationChange> cancel() {
-        RotationChange change{.object = editing_.active_object(), .finished = active(), .cancelled = true};
-        auto restored = active() ? editing_.cancel() : vng::content::Result<bool>{false};
-        if (!restored) return std::unexpected(restored.error());
-        change.changed = *restored;
+    void accept_result(const vng::content::Result<RotationChange>& result) {
+        if(!result||result->cancelled)reset();
+        else if(result->finished){frozen_.reset();selection_.clear();transaction_.reset();}
+        else if(result->began)transaction_=editing_.active_transaction();
+    }
+    [[nodiscard]] vng::content::Result<RotationProposal> cancel() {
+        RotationProposal proposal{.change={.object=frozen_?static_cast<vng::u32>(frozen_->stamp.object):0,
+                .finished=frozen_.has_value(),.cancelled=true},
+            .revision=editing_.state().document.revision,.time=editing_.state().viewport.time,
+            .owns_transaction=transaction_.has_value(),.transaction=transaction_};
+        reset();
+        return proposal;
+    }
+    void reset() {
         tool_.cancel();
         frozen_.reset();
         selection_.clear();
-        return change;
+        transaction_.reset();
     }
 
-    [[nodiscard]] vng::content::Result<RotationChange>
+    [[nodiscard]] vng::content::Result<RotationProposal>
     update(vng::u64 generation,
            const vng::gfx::CameraSnapshot& camera, vng::ui::Rect viewport,
            std::span<const vng::input::Event> unhandled,
            std::span<const vng::input::Event> raw, bool enabled,
            std::span<const vng::u32> selection = {}, bool attitude = false, TransformPivot pivot = {}, bool free_rotation = false, float arrow_step = 1.F) {
         const auto& state = editing_.state();
+        if(frozen_&&transaction_&&editing_.active_transaction()!=transaction_)return cancel();
         RotationGizmo description{};
         const auto* instance = find_instance(state, state.viewport.selected_object);
         if (instance && state.viewport.mode == ViewMode::scene) {
@@ -76,42 +100,34 @@ public:
                         !std::ranges::equal(selection_,selection))) enabled = false;
         const auto result = tool_.update(frozen_.value_or(description), camera, viewport,
                                          unhandled, raw, enabled, arrow_step);
-        RotationChange change{.object = state.viewport.selected_object};
+        RotationProposal proposal{.change={.object=state.viewport.selected_object},
+            .revision=state.document.revision,.time=state.viewport.time,.owns_transaction=active(),.transaction=transaction_};
+        auto& change=proposal.change;
         if (!active() && (tool_.dragging() || result)) {
-            auto begun=attitude ? editing_.begin_attitude(state.viewport.selected_object,selection,pivot)
-                                : editing_.begin_rotation(state.viewport.selected_object,selection,pivot);
-            if (!begun) {
-                tool_.cancel();
-                return std::unexpected(begun.error());
-            }
             frozen_ = description;
             selection_.assign(selection.begin(),selection.end());
+            proposal.selection=selection_;proposal.pivot=pivot;proposal.begin_attitude=attitude;
             change.began = true;
         }
         auto value = result ? result : tool_.preview_rotation();
-        if (active() && value) {
-            if (auto moved = free_rotation ? editing_.rotate_by(tool_.rotation_delta()) :
-                attitude ? editing_.attitude(tool_.local_turns()) : editing_.rotate(*value); moved) change.changed = *moved;
-            else return std::unexpected(moved.error());
+        if (frozen_ && value) {
+            if(free_rotation)proposal.delta=tool_.rotation_delta();
+            else if(attitude)proposal.attitude=tool_.local_turns();
+            else proposal.absolute=*value;
         }
-        if (active() && !tool_.dragging()) {
-            change.object = editing_.active_object();
+        if (frozen_ && !tool_.dragging()) {
+            change.object = static_cast<vng::u32>(frozen_->stamp.object);
             change.finished = true;
             change.cancelled = !result.has_value();
-            const auto finished = result ? editing_.commit() : editing_.cancel();
-            if (!finished) return std::unexpected(finished.error());
-            if (result) change.committed = *finished;
-            else change.changed = change.changed || *finished;
-            frozen_.reset();
-            selection_.clear();
         }
-        return change;
+        return proposal;
     }
 
 private:
     RotationTool tool_;
-    EditingSession& editing_;
+    const EditingSession& editing_;
     std::optional<RotationGizmo> frozen_;
+    std::optional<vng::u64> transaction_;
     std::vector<vng::u32> selection_;
     std::vector<InstanceCenter> centers_;
     std::vector<vng::u32> center_selection_;
@@ -120,4 +136,49 @@ private:
     vng::u32 center_object_{};
     vng::Vec3 center_{};
 };
+
+[[nodiscard]] inline vng::content::Result<RotationChange> execute(
+    EditingSession& editing, RotationInteraction& tool,
+    vng::content::Result<RotationProposal> proposal) {
+    using namespace vng;
+    if(!proposal){auto result=content::Result<RotationChange>{std::unexpected(proposal.error())};tool.accept_result(result);return result;}
+    const auto& edit=*proposal;
+    auto change=edit.change;
+    bool owns=edit.owns_transaction&&edit.transaction&&editing.active_transaction()==edit.transaction&&
+        editing.active(EditGesture::rotation)&&editing.active_object()==change.object;
+    const auto fail=[&](content::Diagnostic error)->content::Result<RotationChange> {
+        if(owns){auto restored=editing.cancel();if(!restored)error=restored.error();}
+        auto result=content::Result<RotationChange>{std::unexpected(std::move(error))};tool.accept_result(result);return result;
+    };
+    const auto invalid=[&](std::string message) {
+        content::Diagnostic error{};
+        error.message=std::move(message);
+        return fail(std::move(error));
+    };
+    if(edit.owns_transaction&&!owns)return invalid("Rotation proposal no longer owns its edit transaction");
+    if(!change.cancelled&&(change.began||owns)&&
+        (editing.state().document.revision!=edit.revision||editing.state().viewport.selected_object!=change.object||
+         editing.state().viewport.time!=edit.time||editing.state().viewport.mode!=ViewMode::scene))
+        return invalid("Rotation proposal belongs to a stale target or revision");
+    if(change.began) {
+        auto begun=edit.begin_attitude?editing.begin_attitude(change.object,edit.selection,edit.pivot)
+            :editing.begin_rotation(change.object,edit.selection,edit.pivot);
+        if(!begun)return fail(begun.error());
+        owns=true;
+    }
+    if(owns) {
+        if(change.cancelled) {
+            auto restored=editing.cancel();if(!restored)return fail(restored.error());change.changed=*restored;
+        } else {
+            content::Result<bool> changed{false};
+            if(edit.delta)changed=editing.rotate_by(*edit.delta);
+            else if(edit.attitude)changed=editing.attitude(*edit.attitude);
+            else if(edit.absolute)changed=editing.rotate(*edit.absolute);
+            if(!changed)return fail(changed.error());
+            change.changed=*changed;
+            if(change.finished){auto committed=editing.commit();if(!committed)return fail(committed.error());change.committed=*committed;}
+        }
+    }
+    tool.accept_result(change);return change;
+}
 } // namespace editor_example

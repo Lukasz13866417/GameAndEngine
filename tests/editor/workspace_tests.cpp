@@ -1,5 +1,5 @@
 #include "../../examples/editor/workspace.hpp"
-#include "../../examples/editor/camera_navigation.hpp"
+#include "../../examples/editor/viewport_interaction.hpp"
 #include <vng/ui/inspection.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -16,11 +16,11 @@ struct Fixture {
         State result{.document={.mesh=std::move(*mesh)}}; result.viewport.mode=ViewMode::mesh;
         return result;
     }
-    EditingSession session{state()};
     ui::Screen screen{ui::dark_theme(font())};
-    EditingWorkspace workspace{session,screen.column().width(300).height(400),screen.column(),screen.column(),
+    EditingWorkspace workspace{state(),screen.column().width(300).height(400),screen.column(),screen.column(),
         {screen.column(),screen.column(),screen.column(),screen.column(),screen.column()},
         {screen.column().visible(false),screen.column().visible(false),screen.column().visible(false),screen.column().visible(false),screen.column().visible(false)},screen.column().visible(false)};
+    EditingWorkspace& session{workspace}; // Parent actions, never a mutable domain escape.
     input::Frame frame{.logical_size={1000,800},.framebuffer={1000,800}};
     MeshEditingReply send(MeshInput input={}, bool allowed=true) {
         return dispatch(workspace,workspace_situation(session.state().viewport),WorkspaceContext{input,allowed}).mesh;
@@ -43,6 +43,64 @@ template<class T> concept PublicWorkspaceHandler = requires(T& workspace, Inspec
 static_assert(!PublicWorkspaceHandler<EditingWorkspace>);
 static_assert(!std::is_copy_constructible_v<MeshEditing>);
 static_assert(!std::is_copy_constructible_v<EditingWorkspace>);
+static_assert(!std::is_copy_assignable_v<EditingWorkspace>);
+static_assert(!std::is_move_constructible_v<EditingWorkspace>);
+static_assert(!std::is_move_assignable_v<EditingWorkspace>);
+static_assert(std::same_as<decltype(std::declval<EditingWorkspace&>().session()),const EditingSession&>);
+static_assert(std::same_as<decltype(std::declval<EditingWorkspace&>().selected_instances()),const editor::Selection<u32>&>);
+
+// Const construction is the actual mutation boundary: UI/controller children
+// must compile without receiving a mutable authoring authority at all.
+static_assert(std::is_constructible_v<MeshEditing,const EditingSession&,ui::Container,ui::Container>);
+static_assert(std::is_constructible_v<EditingViewport,const EditingSession&,ui::Container,ui::Container,ui::Container,ui::Container>);
+static_assert(std::is_constructible_v<TimelineEditing,const EditingSession&,TimelineHosts>);
+static_assert(std::is_constructible_v<MeshOperationTool,const EditingSession&>);
+static_assert(std::is_constructible_v<BlueprintMeshPanel,ui::Container,const EditingSession&>);
+static_assert(std::is_constructible_v<ViewportInteraction,const EditingSession&,ui::Container,ui::Container,ui::Container,ui::Container>);
+static_assert(std::is_constructible_v<InstanceTransformInteraction,const EditingSession&>);
+static_assert(std::is_constructible_v<MeshTransform,const EditingSession&>);
+static_assert(std::is_constructible_v<RotationInteraction,const EditingSession&>);
+template<class T> concept MutableSessionEscape = requires(T& owner) { owner.session().undo(); };
+static_assert(!MutableSessionEscape<EditingWorkspace>);
+template<class T> concept MutableDocumentEscape = requires(T& owner) { owner.state().document.revision=2; };
+static_assert(!MutableDocumentEscape<EditingWorkspace>);
+template<class T> concept MutableSelectionEscape = requires(T& owner) { owner.selected_instances().clear(); };
+static_assert(!MutableSelectionEscape<EditingWorkspace>);
+template<class T> concept ExternalOperationAcknowledgement = requires(T& child,MeshEditProposal proposal,content::Result<bool> result) {
+    child.accept_operation(proposal,result);
+};
+static_assert(!ExternalOperationAcknowledgement<MeshEditing>);
+static_assert(!ExternalOperationAcknowledgement<EditingViewport>);
+
+// Only the actual owning parent may call these child handlers. In particular,
+// dispatch must not remain a back door around the narrower ownership boundary.
+template<class Component, class Situation, class Context>
+constexpr bool private_to_owner =
+    !requires(Component& child, const Situation& situation, const Context& context) {
+        child.handle(situation, context);
+    } && !requires(Component& child, const Situation& situation, const Context& context) {
+        dispatch(child, situation, context);
+    };
+static_assert(private_to_owner<EditingViewport, InspectMesh, ViewportEditingContext>);
+static_assert(private_to_owner<MeshEditing, InspectMesh, MeshEditingContext>);
+static_assert(private_to_owner<MeshMenu, MeshMenu::Vertices, MeshMenuContext>);
+static_assert(private_to_owner<MeshMenu, MeshMenu::Edges, MeshMenuContext>);
+static_assert(private_to_owner<MeshMenu, MeshMenu::Faces, MeshMenuContext>);
+static_assert(private_to_owner<MeshMenu, MeshMenu::Inactive, MeshMenuContext>);
+static_assert(private_to_owner<MeshNavigationControls, MeshNavigationControls::MeshView, MeshNavigationControls::Context>);
+static_assert(private_to_owner<ToolPanel, ToolPanel::Show, ToolPanel::Context>);
+static_assert(private_to_owner<SceneLists, SceneLists::Browsing, SceneListsContext>);
+static_assert(private_to_owner<TimelineEditing, TimelineEditing::Available, TimelineContext>);
+static_assert(private_to_owner<TimelineEditing, TimelineEditing::Unavailable, TimelineContext>);
+static_assert(private_to_owner<CameraNavigation, CameraNavigation::Orbiting, NavigationFrame>);
+static_assert(private_to_owner<CameraNavigation, CameraNavigation::Walking, NavigationFrame>);
+static_assert(private_to_owner<CameraNavigation, CameraNavigation::Unavailable, NavigationFrame>);
+
+EditingWorkspace timeline_workspace(State state, ui::Screen& screen, TimelineHosts hosts) {
+    const auto hidden=[&] { return screen.column().visible(false); };
+    return EditingWorkspace{std::move(state),hidden(),hidden(),hidden(),
+        {hidden(),hidden(),hidden(),hidden(),hidden()},hosts,hidden()};
+}
 }
 TEST_CASE("Workspace dispatch owns mesh operations and emits precise results", "[editor][workspace]") {
     Fixture f;
@@ -72,6 +130,133 @@ TEST_CASE("Mode and selection shortcuts take effect within the input batch", "[e
     const std::array reveal{input::Event{.kind=input::EventKind::key_down,.key=input::Key::h,.modifiers={.alt=true}}};
     CHECK(f.send({.shortcuts=reveal}).visibility_changed);
     CHECK(f.workspace.mesh_components().visibility().hidden_faces.empty());
+}
+TEST_CASE("Workspace owns its model before UI attachment and rejects reattachment", "[editor][workspace]") {
+    EditingWorkspace workspace{Fixture::state()};
+    CHECK(workspace.state().document.revision==1);
+    CHECK_FALSE(workspace.can_undo());
+    CHECK(workspace.debug_string().find("authoring authority and child coordination")!=std::string::npos);
+    ui::Screen screen{ui::dark_theme(Fixture::font())};
+    const auto attach=[&] {
+        workspace.initialize(screen.column(),screen.column(),screen.column(),
+            {screen.column(),screen.column(),screen.column(),screen.column(),screen.column()},
+            {screen.column(),screen.column(),screen.column(),screen.column(),screen.column()},screen.column());
+    };
+    REQUIRE_NOTHROW(attach());
+    CHECK_THROWS_AS(attach(),std::logic_error);
+}
+TEST_CASE("Workspace selection validates IDs and owns range order without authoring", "[editor][workspace][selection]") {
+    auto state=Fixture::state();
+    REQUIRE_FALSE(state.document.instances.empty());
+    const auto prototype=state.document.instances.front();
+    state.document.instances.clear();
+    for(u32 id:{3U,7U,11U,15U}) {
+        auto instance=prototype; instance.id=id;
+        state.document.instances.push_back(std::move(instance));
+    }
+    state.viewport.selected_object=3;
+    state.viewport.selected_vertex=2;
+    EditingWorkspace workspace{std::move(state)};
+    REQUIRE(workspace.selected_instances().active()==3);
+    CHECK(workspace.state().viewport.selected_vertex==2); // Observing a bookmark does not edit it.
+    const auto revision=workspace.state().document.revision;
+    const auto changed=workspace.select_instance(11,editor::SelectionMode::range);
+    CHECK(changed.changed); CHECK(changed.active_changed);
+    CHECK(changed.previous_active==3); CHECK(changed.active==11);
+    CHECK(workspace.selected_instances().size()==3);
+    CHECK(workspace.selected_instances().contains(7));
+    CHECK(workspace.state().viewport.selected_object==11);
+    CHECK(workspace.state().viewport.selected_vertex==0);
+    CHECK_FALSE(workspace.select_instance(999).changed);
+    REQUIRE(workspace.selected_instances().active()==11);
+    workspace.select_instance(7,editor::SelectionMode::toggle);
+    CHECK_FALSE(workspace.selected_instances().contains(7));
+    const std::array<u32,4> ids{15,15,999,7};
+    workspace.select_instances(ids);
+    REQUIRE(workspace.selected_instances().size()==2);
+    REQUIRE(workspace.selected_instances().active()==7);
+    CHECK_FALSE(workspace.selected_instances().contains(999));
+    CHECK(workspace.state().document.revision==revision);
+    CHECK_FALSE(workspace.can_undo());
+    CHECK_FALSE(workspace.dirty());
+    CHECK(workspace.debug_string().find("workspace.selection")!=std::string::npos);
+}
+TEST_CASE("Workspace selection restores box origins and reconciles domain bookmarks", "[editor][workspace][selection]") {
+    auto state=Fixture::state();
+    const auto prototype=state.document.instances.front();
+    state.document.instances.clear();
+    for(u32 id:{3U,7U,11U}) {
+        auto instance=prototype;instance.id=id;
+        state.document.instances.push_back(std::move(instance));
+    }
+    state.viewport.selected_object=3;
+    EditingWorkspace workspace{std::move(state)};
+    const auto origin=workspace.selected_instances();
+    const std::array<u32,2> hits{7,11};
+    workspace.select_instances(hits,editor::SelectionMode::add);
+    REQUIRE(workspace.selected_instances().size()==3);
+    REQUIRE(workspace.restore_selection(origin).active_changed);
+    CHECK(workspace.selected_instances()==origin);
+    CHECK(workspace.state().viewport.selected_object==3);
+    workspace.select_instances(hits,editor::SelectionMode::add);
+    workspace.viewport().selected_object=7; // A domain history/load bookmark.
+    workspace.viewport().selected_vertex=2;
+    workspace.reconcile_selection();
+    CHECK(workspace.selected_instances().size()==1);
+    REQUIRE(workspace.selected_instances().active()==7);
+    CHECK(workspace.state().viewport.selected_vertex==2);
+    workspace.select_instances(hits,editor::SelectionMode::add);
+    REQUIRE(workspace.selected_instances().size()==2);
+    workspace.viewport().selected_vertex=1;
+    workspace.reset_selection(); // New document with overlapping instance IDs.
+    REQUIRE(workspace.selected_instances().size()==1);
+    CHECK(workspace.selected_instances().active()==11);
+    CHECK(workspace.state().viewport.selected_vertex==1);
+    CHECK(workspace.clear_selection().active_changed);
+    CHECK(workspace.state().viewport.selected_object==0);
+    CHECK(workspace.selected_instances().size()==0);
+    CHECK_FALSE(workspace.clear_selection().changed);
+}
+TEST_CASE("Parent executes topology edits before the next selection shortcut", "[editor][workspace]") {
+    Fixture f;
+    const std::array keys{
+        input::Event{.kind=input::EventKind::key_down,.key=input::Key::a},
+        input::Event{.kind=input::EventKind::key_down,.key=input::Key::h}};
+    auto reply=f.send({.mode=MeshSelectMode::face,.select_all=false,.operation=MeshAction::subdivide,.shortcuts=keys});
+    REQUIRE(reply.authored);
+    REQUIRE(reply.visibility_changed);
+    REQUIRE(editable_mesh(f.workspace.state())->document().faces.size()==8);
+    CHECK(f.workspace.mesh_components().visibility().hidden_faces.size()==8);
+    CHECK_FALSE(reply.proposal); // A proposal cannot leak out as an unexecuted edit.
+}
+TEST_CASE("Operation options record intent and the parent executes it once", "[editor][workspace] [tool-options]") {
+    Fixture f;
+    auto reply=f.send({.mode=MeshSelectMode::edge,.select_all=false,.operation=MeshAction::subdivide});
+    REQUIRE(reply.authored); REQUIRE(reply.operation_options);
+    const auto revision=f.workspace.state().document.revision;
+    const auto first_size=editable_mesh(f.workspace.state())->size();
+    editor::Inspector options{{1,1,1}};
+    reply.operation_options->describe_options(options);
+    REQUIRE(options.dispatch({{1,1,1},"operation",editor::Phase::apply,{{"levels",u32{2}}}}));
+    CHECK(f.workspace.state().document.revision==revision);
+    CHECK(editable_mesh(f.workspace.state())->size()==first_size);
+    REQUIRE(f.send().authored);
+    CHECK(editable_mesh(f.workspace.state())->size()>first_size);
+    const auto adjusted=f.workspace.state().document.revision;
+    CHECK_FALSE(f.send().authored);
+    CHECK(f.workspace.state().document.revision==adjusted);
+
+    editor::Inspector current{{1,2,adjusted}};
+    reply.operation_options->describe_options(current);
+    REQUIRE(current.dispatch({{1,2,adjusted},"operation",editor::Phase::apply,{{"levels",u32{99}}}}));
+    const auto rejected=f.send();
+    CHECK_FALSE(rejected.authored); CHECK_FALSE(rejected.message.empty());
+    CHECK(f.workspace.state().document.revision==adjusted);
+    REQUIRE(current.dispatch({current.schema().stamp,"undo",editor::Phase::activate,{}}));
+    CHECK(f.workspace.state().document.revision==adjusted);
+    REQUIRE(f.send().authored);
+    CHECK_FALSE(f.workspace.can_undo());
+    CHECK_FALSE(has_mesh_draft(f.workspace.state(),BlueprintId::mesh));
 }
 TEST_CASE("Repeated no-op input does not erase an earlier visibility change", "[editor][workspace]") {
     Fixture f;
@@ -116,6 +301,41 @@ TEST_CASE("Mesh menu click executes once and diagnostics do not change state", "
     CHECK(f.workspace.debug_string()==report);
     CHECK(f.session.state().document.revision==revision);
 }
+TEST_CASE("Mesh selection owner sends concrete menu contexts for every mode", "[editor][workspace]") {
+    Fixture f;
+    struct Case { MeshSelectMode mode; std::size_t selected; std::string_view situation; bool fill; };
+    const std::array cases{
+        Case{MeshSelectMode::vertex,0,"Vertices",false},
+        Case{MeshSelectMode::vertex,1,"Vertices",false},
+        Case{MeshSelectMode::vertex,2,"Vertices",true},
+        Case{MeshSelectMode::edge,0,"Edges",false},
+        Case{MeshSelectMode::edge,1,"Edges",true},
+        Case{MeshSelectMode::face,0,"Faces",false},
+        Case{MeshSelectMode::face,1,"Faces",true},
+        Case{MeshSelectMode::surface,0,"Inactive",false},
+        Case{MeshSelectMode::whole,0,"Inactive",false}};
+    const std::array<u32,2> elements{0,1};
+    const auto revision=f.session.state().document.revision;
+    for(const auto& c:cases) {
+        CAPTURE(c.situation,c.selected);
+        const std::array selection{MeshSelectionInput{std::span{elements}.first(c.selected)}};
+        auto reply=f.send({.mode=c.mode,.selection=selection,
+            .open_menu=MeshMenuPlacement{{0,0},{1000,800},ui::Rect{0,0,1000,800}},.poll_menu=true});
+        CHECK_FALSE(reply.authored);
+        const auto report=f.workspace.mesh_components().debug_report().children.at(0);
+        CHECK(report.situation==c.situation);
+        CHECK(report.string().find("selected elements: "+std::to_string(c.selected))!=std::string::npos);
+        if(c.situation=="Inactive") CHECK_FALSE(f.workspace.mesh_components().menu_open());
+        else {
+            REQUIRE(f.workspace.mesh_components().menu_open());
+            f.draw();
+            CHECK(f.widget("Make edge / face (F)").enabled==c.fill);
+            CHECK(f.widget("Subdivide").enabled==(c.selected!=0));
+        }
+    }
+    CHECK(f.session.state().document.revision==revision);
+    CHECK_FALSE(f.session.can_undo());
+}
 TEST_CASE("Leaving component inspection closes menus but does not author anything", "[editor][workspace]") {
     Fixture f;
     f.send({.open_menu=MeshMenuPlacement{{0,0},{1000,800},{}}});
@@ -147,6 +367,34 @@ TEST_CASE("Viewport presentation never synchronizes instance catalogs", "[editor
     CHECK(f.workspace.debug_report().children.at(0).string()==view);
     CHECK(f.session.state().document.revision==1);
 }
+TEST_CASE("Workspace publishes selection to list and timeline children without document refresh", "[editor][workspace][selection][performance]") {
+    Fixture f;
+    const auto blueprints=blueprint_catalog(f.workspace.state());
+    dispatch(f.workspace,workspace_situation(f.workspace.state().viewport),WorkspaceContext{
+        .lists=SceneListsContext{.catalog=SceneListCatalog{scene_instances(f.workspace.state()),blueprints,f.workspace.selected_instances()}},
+        .timeline=TimelineContext{.input={.synchronize=true}}});
+    const auto before=f.workspace.debug_report().children.at(1);
+    const auto timeline_before=f.workspace.timeline_view().statistics();
+    const auto id=f.workspace.state().document.instances.front().id;
+    f.workspace.clear_selection();
+    f.workspace.select_instance(id);
+    const auto after=f.workspace.debug_report().children.at(1);
+    for(std::size_t i=0;i<before.children.size();++i) {
+        CHECK(after.children[i].owned[1].value==before.children[i].owned[1].value); // Catalog syncs.
+        CHECK(after.children[i].owned[2].value==before.children[i].owned[2].value); // Rows created.
+    }
+    const auto report=f.workspace.debug_string();
+    CHECK(report.find("selected object IDs: 1")!=std::string::npos);
+    CHECK(report.find("pending object focus: none")!=std::string::npos); // No keyframe selected.
+    CHECK(f.workspace.timeline_view().statistics().document_refreshes==timeline_before.document_refreshes);
+    CHECK(f.workspace.timeline_view().statistics().value_refreshes==timeline_before.value_refreshes);
+    CHECK(f.workspace.state().document.revision==1);
+    CHECK_FALSE(f.workspace.can_undo());
+    f.draw();
+    const auto widgets=f.screen.inspect(); REQUIRE(widgets);
+    const auto expected="> #"+std::to_string(id)+" "+f.workspace.state().document.instances.front().name;
+    CHECK(std::ranges::any_of(widgets->widgets,[&](const auto& w){return w.text==expected;}));
+}
 
 TEST_CASE("Timeline selection is owned locally and availability survives narrow updates", "[editor][workspace][timeline]") {
     Fixture f;
@@ -172,43 +420,53 @@ TEST_CASE("Timeline selection is owned locally and availability survives narrow 
     CHECK(f.session.state().document.revision==revision);
 }
 
-TEST_CASE("Navigation dispatch preserves walk arming across popout focus and releases blocked keys", "[editor][workspace][navigation]") {
-    CameraNavigation navigation;
-    navigation.walking(true);
+TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losing focus state", "[editor][workspace][navigation]") {
+    Fixture f;
+    ViewportInteraction interaction{f.session.session(),f.screen.column(),f.screen.column(),f.screen.column(),f.screen.column()};
+    const auto& navigation=interaction.camera_navigation();
     input::Frame raw{.logical_size={800,600},.framebuffer={800,600},.focused=true};
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}};
     NavigationFrame frame{.pose={0,0,8,{},1},.mode=ViewMode::scene,
         .viewport={0,0,800,600},.raw=raw,.unhandled=raw.events,.seconds=.016,
         .drag_speeds={},.walk_speeds={}};
-    auto reply=dispatch(navigation,CameraNavigation::Walking{},frame);
+    auto reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame,.walk_active=true});
     CHECK(reply.changed);
     CHECK(reply.pose.target.z<0.F);
     CHECK(navigation.walking().moving());
     frame.pose=reply.pose;
     raw.events.clear(); frame.unhandled={}; raw.focused=false; frame.controls_have_focus=true;
-    reply=dispatch(navigation,CameraNavigation::Walking{},frame);
+    reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame});
     CHECK_FALSE(reply.changed);
     CHECK(navigation.walking().active());
     CHECK_FALSE(navigation.walking().moving());
     raw.focused=true; frame.controls_have_focus=false;
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}}; frame.unhandled=raw.events;
-    reply=dispatch(navigation,CameraNavigation::Unavailable{},frame);
+    reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame,.enabled=false});
     CHECK_FALSE(reply.changed); CHECK_FALSE(navigation.walking().moving());
     CHECK(reply.pose==frame.pose);
     const auto report=navigation.debug_string();
     CHECK(report.find("Unavailable")!=std::string::npos);
     CHECK(navigation.debug_string()==report);
+    raw.events.clear(); frame.unhandled={};
+    reply=dispatch(interaction,ViewportInteraction::Navigate{},NavigationContext{.frame=frame,.walk_active=false});
+    CHECK(navigation.debug_report().situation=="Orbiting");
+    CHECK_FALSE(navigation.walking().active());
+    CHECK_FALSE(reply.changed);
 }
 
 TEST_CASE("Timeline owner applies a clicked keyframe insertion exactly once", "[editor][workspace][timeline]") {
-    EditingSession session{Fixture::state()}; session.viewport().mode=ViewMode::scene; session.viewport().time=3;
+    auto state=Fixture::state(); state.viewport.mode=ViewMode::scene; state.viewport.time=3;
     ui::Screen screen{ui::dark_theme(Fixture::font())};
-    TimelineEditing timeline{session,{screen.column().position({0,850}).width(1760).height(160),
+    auto workspace=timeline_workspace(std::move(state),screen,{screen.column().position({0,850}).width(1760).height(160),
         screen.column().position({0,0}).width(300).height(800),
         screen.column().position({310,0}).width(760).height(800),
-        screen.row().position({1100,0}).width(440).height(36),screen.column()}};
+        screen.row().position({1100,0}).width(440).height(36),screen.column()});
+    auto& session=workspace;
+    const auto send=[&](TimelineContext context) {
+        return dispatch(workspace,workspace_situation(session.state().viewport),WorkspaceContext{.timeline=context}).timeline;
+    };
     input::Frame raw{.logical_size={1800,1100},.framebuffer={1800,1100}};
-    dispatch(timeline,TimelineEditing::Available{},TimelineContext{.input={.synchronize=true}});
+    send({.input={.synchronize=true}});
     REQUIRE(screen.update(raw,.016F));
     REQUIRE(screen.draw_list());
     auto widgets=screen.inspect(); REQUIRE(widgets);
@@ -219,13 +477,13 @@ TEST_CASE("Timeline owner applies a clicked keyframe insertion exactly once", "[
     raw.events={{.kind=input::EventKind::pointer_down,.position=at},{.kind=input::EventKind::pointer_up,.position=at}};
     auto ui=screen.update(raw,.016F); REQUIRE(ui);
     const auto before=session.state().document.revision;
-    const auto reply=dispatch(timeline,TimelineEditing::Available{},TimelineContext{
+    const auto reply=send({
         .input={.poll=true,.unhandled=ui->events,.raw=raw.events}});
     CHECK(reply.interacted); CHECK(reply.authored); CHECK(reply.select_inspector);
-    REQUIRE(timeline.view().selected_keyframe()==3.F);
+    REQUIRE(workspace.timeline_view().selected_keyframe()==3.F);
     CHECK(session.can_edit_scene_pose()); CHECK(session.state().document.revision==before+1);
     raw.events.clear(); REQUIRE(screen.update(raw,.016F));
-    CHECK_FALSE(dispatch(timeline,TimelineEditing::Available{},TimelineContext{.input={.poll=true}}).authored);
+    CHECK_FALSE(send({.input={.poll=true}}).authored);
     CHECK(session.state().document.revision==before+1);
     REQUIRE(session.undo());
     CHECK_FALSE(session.can_undo());
@@ -239,25 +497,31 @@ TEST_CASE("Hidden timeline inspector reveals only the latest requested object wh
         auto instance=prototype; instance.id=id; instance.name="Fleet ship "+std::to_string(id);
         state.document.instances.push_back(std::move(instance));
     }
-    EditingSession session{std::move(state)};
-    REQUIRE(session.add_keyframe(1.F));
     ui::Screen screen{ui::dark_theme(Fixture::font())};
     auto inspector=screen.column().position({310,0}).width(760).height(600).visible(false);
-    TimelineEditing timeline{session,{screen.column().position({0,650}).width(1760).height(160),
+    auto workspace=timeline_workspace(std::move(state),screen,{screen.column().position({0,650}).width(1760).height(160),
         screen.column().position({0,0}).width(300).height(600),inspector,
-        screen.row().position({1100,0}).width(440).height(36),screen.column()}};
+        screen.row().position({1100,0}).width(440).height(36),screen.column()});
+    auto& session=workspace;
+    REQUIRE(session.add_keyframe(1.F));
+    const auto send=[&](TimelineContext context) {
+        return dispatch(workspace,workspace_situation(session.state().viewport),WorkspaceContext{.timeline=context}).timeline;
+    };
     input::Frame raw{.logical_size={1800,900},.framebuffer={1800,900}};
     const std::array selected{1.F};
-    dispatch(timeline,TimelineEditing::Available{},TimelineContext{.input={
+    send({.input={
         .synchronize=true,.select=std::span<const f32>{selected},.inspector_visible=false}});
     REQUIRE(screen.update(raw,.016F));
     const auto revision=session.state().document.revision;
-    dispatch(timeline,TimelineEditing::Available{},TimelineContext{.input={.focus=3}});
-    dispatch(timeline,TimelineEditing::Available{},TimelineContext{.input={.focus=30}});
+    const auto timeline_before=workspace.timeline_view().statistics();
+    workspace.select_instance(3);
+    workspace.select_instance(30);
+    CHECK(workspace.timeline_view().statistics().document_refreshes==timeline_before.document_refreshes);
+    CHECK(workspace.timeline_view().statistics().value_refreshes==timeline_before.value_refreshes);
     REQUIRE(screen.update(raw,.016F));
-    CHECK(timeline.debug_string().find("pending object focus: 30")!=std::string::npos);
+    CHECK(workspace.debug_string().find("pending object focus: 30")!=std::string::npos);
     inspector.visible(true);
-    dispatch(timeline,TimelineEditing::Available{},TimelineContext{.input={.inspector_visible=true}});
+    send({.input={.inspector_visible=true}});
     REQUIRE(screen.update(raw,.016F));
     auto widgets=screen.inspect(); REQUIRE(widgets);
     CHECK(std::ranges::any_of(widgets->widgets,[](const auto& w) {
@@ -266,7 +530,7 @@ TEST_CASE("Hidden timeline inspector reveals only the latest requested object wh
     CHECK(std::ranges::any_of(widgets->widgets,[](const auto& w) {
         return w.visible && w.focused && w.label=="Key";
     }));
-    CHECK(timeline.debug_string().find("pending object focus: none")!=std::string::npos);
+    CHECK(workspace.debug_string().find("pending object focus: none")!=std::string::npos);
     CHECK(session.state().document.revision==revision);
 }
 

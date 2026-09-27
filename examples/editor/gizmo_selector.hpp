@@ -1,5 +1,6 @@
 #pragma once
 #include "blueprint_gizmos.hpp"
+#include "component_debug.hpp"
 #include <vng/ui/ui.hpp>
 #include <algorithm>
 
@@ -26,7 +27,7 @@ public:
     void value(GizmoMode mode) {
         if(dropdown_)dropdown_->value(std::ranges::find(common_,mode)!=common_.end() ? mode : GizmoMode::move);
     }
-    void enabled(bool value) { host_.enabled(value); }
+    void enabled(bool value) { enabled_=value;host_.enabled(value); }
     bool cycle(int direction) {
         if (common_.empty() || direction == 0) return false;
         const auto previous = value();
@@ -37,9 +38,24 @@ public:
     }
     [[nodiscard]] std::optional<GizmoMode> changedValue() const { return dropdown_ ? dropdown_->changedValue() : std::nullopt; }
     [[nodiscard]] std::span<const GizmoMode> common() const { return common_; }
+    [[nodiscard]] DebugReport debug_report() const {
+        std::string choices;
+        for(auto mode:common_) {
+            if(!choices.empty())choices+=", ";
+            choices+=gizmo_choice_label(mode);
+        }
+        return {.name="gizmo_selector",.role="selection-compatible manipulation choices",
+            .situation=common_.empty()?"No choices":"Available",
+            .received={{"enabled",debug_bool(enabled_)}},
+            .owned={{"visible",debug_bool(!common_.empty())},
+                {"selected",common_.empty()?"none":gizmo_choice_label(value())},
+                {"available choices",std::move(choices)}}};
+    }
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
     vng::ui::Container host_;
     std::optional<vng::ui::Dropdown<GizmoMode>> dropdown_;
     std::vector<GizmoMode> common_;
+    bool enabled_{true};
 };
 } // namespace editor_example

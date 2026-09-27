@@ -15,10 +15,13 @@ void SceneLists::catalog(const SceneListCatalog& view) {
         if(instance_flyout_.opened()) floating_instances_.sync(view.instances,view.blueprints);
         if(blueprint_flyout_.opened()) floating_blueprints_.sync(view.blueprints);
     }
-    instances_.selection(view.selection); regions_.selection(view.selection); floating_instances_.selection(view.selection);
-    if(view.reveal) {
-        instances_.reveal(*view.reveal); regions_.reveal(*view.reveal);
-        if(instance_flyout_.opened()) floating_instances_.reveal(*view.reveal);
+    selection(view.selection,view.reveal);
+}
+void SceneLists::selection(const vng::editor::Selection<vng::u32>& selected,std::optional<vng::u32> reveal) {
+    instances_.selection(selected); regions_.selection(selected); floating_instances_.selection(selected);
+    if(reveal) {
+        instances_.reveal(*reveal); regions_.reveal(*reveal);
+        if(instance_flyout_.opened()) floating_instances_.reveal(*reveal);
     }
 }
 void SceneLists::layout(const SceneListPresentation& view) {

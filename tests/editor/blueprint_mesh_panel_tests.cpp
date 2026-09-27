@@ -25,6 +25,15 @@ struct Fixture {
     ui::Screen screen{ui::dark_theme(font())};
     BlueprintMeshPanel panel{screen.column().width(600),editing};
     input::Frame frame{.logical_size={800,1000},.framebuffer={800,1000}};
+    void accept_edits() {
+        while(auto edit=panel.take_edit()) {
+            auto result=apply_blueprint_mesh_edit(editing,*edit);
+            panel.accept_edit(*edit,result);
+        }
+    }
+    content::Result<bool> edit_part(const SurfacePartAction& action) {
+        auto result=panel.edit_part(action);accept_edits();return result;
+    }
     void option(std::string key,editor::Phase phase=editor::Phase::activate,std::vector<editor::NamedValue> values={}) {
         editor::Inspector options{1,1,1};panel.describe_options(options);
         const auto result=options.dispatch({options.schema().stamp,std::move(key),phase,std::move(values)});
@@ -33,8 +42,8 @@ struct Fixture {
     }
     void pump(std::initializer_list<input::Event> events={}) {
         frame.events=events;for(const auto& e:events)frame.pointer=e.position;
-        panel.sync();panel.enabled(true);REQUIRE(screen.update(frame,.016F));
-        (void)panel.poll(true);REQUIRE(screen.draw_list());
+        accept_edits();panel.sync();panel.enabled(true);REQUIRE(screen.update(frame,.016F));
+        (void)panel.poll(true);accept_edits();REQUIRE(screen.draw_list());
     }
     ui::WidgetSnapshot widget(std::string_view name) {
         const auto snapshot=screen.inspect();REQUIRE(snapshot);
@@ -114,15 +123,15 @@ TEST_CASE("Earth addon scale menu stages values and processors use normal part t
     const auto processor=editable_mesh(f.editing.state())->document();
     REQUIRE(f.panel.cycle_gizmo(1));f.pump();CHECK(f.panel.title()=="Scale part (S)");
     REQUIRE(f.panel.gizmo()->scale);CHECK(f.panel.gizmo()->scale->value==1);
-    REQUIRE(f.panel.edit_part({.began=true}));
-    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.scale_value=1.8F}));f.finish();f.pump();
+    REQUIRE(f.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.changed=true,.finished=true,.scale_value=1.8F}));f.finish();f.pump();
     CHECK(earth::infrastructure_parts(editable_mesh(f.editing.state())->document())->front().scale==1.8F);
     const auto scaled_settings=earth::infrastructure_settings(editable_mesh(f.editing.state())->document());REQUIRE(scaled_settings);
     CHECK(*scaled_settings==*earth::infrastructure_settings(processor));
     REQUIRE(f.editing.undo());f.pump();CHECK(editable_mesh(f.editing.state())->document()==processor);
-    REQUIRE(f.panel.edit_part({.began=true}));
-    REQUIRE(f.panel.edit_part({.changed=true,.scale_value=2.F}));
-    REQUIRE(f.panel.edit_part({.cancelled=true}));f.finish();f.pump();
+    REQUIRE(f.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.changed=true,.scale_value=2.F}));
+    REQUIRE(f.edit_part({.cancelled=true}));f.finish();f.pump();
     CHECK(editable_mesh(f.editing.state())->document()==processor);
     f.option("addon_part_scale",editor::Phase::apply,{{"scale",1.4F}});
     CHECK(earth::infrastructure_parts(editable_mesh(f.editing.state())->document())->front().scale==1.4F);
@@ -175,9 +184,9 @@ TEST_CASE("Infrastructure placement and endpoint tools are blueprint-local undoa
     CHECK(f.editing.state().document.instances.size()==instance_count);
     CHECK(f.editing.state().document.mesh.document()==published);
     const auto before_move=editable_mesh(f.editing.state())->document();
-    REQUIRE(f.panel.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.began=true}));
     const auto radius=f.panel.gizmo()->radius;const auto factor=radius/std::sqrt(1.13F);
-    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position={.3F*factor,.2F*factor,factor}}));f.finish();f.pump();
+    REQUIRE(f.edit_part({.changed=true,.finished=true,.position={.3F*factor,.2F*factor,factor}}));f.finish();f.pump();
     CHECK(editable_mesh(f.editing.state())->document()!=before_move);
     REQUIRE(f.editing.undo());f.pump();CHECK(editable_mesh(f.editing.state())->document()==before_move);
     f.click("Place skyway");REQUIRE(f.panel.place_part({.52F,.45F},*snapshot));f.finish();f.pump();
@@ -202,10 +211,10 @@ TEST_CASE("Infrastructure placement and endpoint tools are blueprint-local undoa
     CHECK(f.widget("Gizmo").text=="Tunnel endpoints");CHECK(f.panel.gizmo_handles().size()==2);
     REQUIRE(f.panel.select_handle(1));REQUIRE(f.panel.gizmo());CHECK(f.panel.gizmo()->label=="Endpoint B");
     CHECK_FALSE(f.panel.gizmo()->can_rotate);
-    REQUIRE(f.panel.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.began=true}));
     CHECK_FALSE(f.panel.cycle_gizmo(1)); // cannot switch the owner of an active gesture
     CHECK(f.panel.gizmo()->label=="Endpoint B");
-    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position={.35F,.1F,1}}));f.finish();f.pump();
+    REQUIRE(f.edit_part({.changed=true,.finished=true,.position={.35F,.1F,1}}));f.finish();f.pump();
     parts=earth::infrastructure_parts(editable_mesh(f.editing.state())->document());REQUIRE(parts);
     CHECK(parts->back().location==tunnel.location);CHECK(parts->back().end!=tunnel.end);
     REQUIRE(f.editing.undo());f.pump();CHECK(editable_mesh(f.editing.state())->document()==before_endpoint);
@@ -232,17 +241,17 @@ TEST_CASE("Scaffold gizmos move delete add and set up uniform supports without s
     CHECK_FALSE(f.panel.gizmo()->can_rotate);CHECK_FALSE(f.panel.gizmo()->radial_range);
     const auto path=f.panel.gizmo()->path;
     const auto before=editable_mesh(f.editing.state())->document();
-    REQUIRE(f.panel.edit_part({.began=true}));
-    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position=path->sample(.63F)}));f.finish();f.pump();
+    REQUIRE(f.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.changed=true,.finished=true,.position=path->sample(.63F)}));f.finish();f.pump();
     const auto manual=editable_mesh(f.editing.state())->document();
     const auto positions=earth::infrastructure_parts(manual)->front().scaffold_positions;REQUIRE(positions);REQUIRE(positions->size()==2);
     CHECK((*positions)[0]==0);CHECK((*positions)[1]==Catch::Approx(.63F));
     CHECK(f.editing.state().document.mesh.document()!=manual);CHECK(f.panel.selected_handle()==1);
     REQUIRE(f.editing.undo());f.pump();CHECK(editable_mesh(f.editing.state())->document()==before);
     REQUIRE(f.editing.redo());f.pump();CHECK(editable_mesh(f.editing.state())->document()==manual);
-    REQUIRE(f.panel.edit_part({.began=true}));
-    REQUIRE(f.panel.edit_part({.changed=true,.position=f.panel.gizmo()->path->sample(.4F)}));
-    REQUIRE(f.panel.edit_part({.cancelled=true}));f.finish();f.pump();CHECK(editable_mesh(f.editing.state())->document()==manual);
+    REQUIRE(f.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.changed=true,.position=f.panel.gizmo()->path->sample(.4F)}));
+    REQUIRE(f.edit_part({.cancelled=true}));f.finish();f.pump();CHECK(editable_mesh(f.editing.state())->document()==manual);
     REQUIRE(f.panel.select_gizmo(4));CHECK(f.panel.title()=="Scale part (S)"); // No uniform setup with interiors.
     REQUIRE(f.panel.select_gizmo(2));REQUIRE(f.panel.select_handle(1));
     REQUIRE(f.panel.erase_handle());f.finish();f.pump();CHECK(f.panel.gizmo_handles().size()==1);
@@ -250,14 +259,14 @@ TEST_CASE("Scaffold gizmos move delete add and set up uniform supports without s
     REQUIRE(f.panel.select_handle(1));f.option("erase_gizmo_handle");
     REQUIRE(f.panel.select_gizmo(3));f.pump();CHECK(f.panel.title()=="Add scaffold");
     const auto add_before=editable_mesh(f.editing.state())->document();
-    REQUIRE(f.panel.edit_part({.began=true}));CHECK(f.panel.busy());
-    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position=path->sample(.45F)}));f.pump();
+    REQUIRE(f.edit_part({.began=true}));CHECK(f.panel.busy());
+    REQUIRE(f.edit_part({.changed=true,.finished=true,.position=path->sample(.45F)}));f.pump();
     CHECK(editable_mesh(f.editing.state())->document()==add_before);
     CHECK(path->parameter(f.panel.gizmo()->position)==Catch::Approx(.45F));
     const auto cursor=f.panel.gizmo()->position;
-    REQUIRE(f.panel.edit_part({.began=true}));
-    REQUIRE(f.panel.edit_part({.changed=true,.position=path->sample(.7F)}));
-    REQUIRE(f.panel.edit_part({.cancelled=true}));f.pump();
+    REQUIRE(f.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.changed=true,.position=path->sample(.7F)}));
+    REQUIRE(f.edit_part({.cancelled=true}));f.pump();
     CHECK(f.panel.gizmo()->position==cursor);
     f.option("apply_scaffold_setup");
     auto added=earth::infrastructure_parts(editable_mesh(f.editing.state())->document())->front();
@@ -268,8 +277,8 @@ TEST_CASE("Scaffold gizmos move delete add and set up uniform supports without s
     const auto uniform_before=editable_mesh(f.editing.state())->document();
     for(const auto& [index,t]:std::array{std::pair{0U,.18F},std::pair{1U,.88F},std::pair{2U,.4F}}) {
         if(index!=f.panel.selected_handle())REQUIRE(f.panel.select_handle(index));
-        REQUIRE(f.panel.edit_part({.began=true}));
-        REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position=path->sample(t)}));f.pump();
+        REQUIRE(f.edit_part({.began=true}));
+        REQUIRE(f.edit_part({.changed=true,.finished=true,.position=path->sample(t)}));f.pump();
         CHECK(path->parameter(f.panel.gizmo()->position)==Catch::Approx(t));
         CHECK(editable_mesh(f.editing.state())->document()==uniform_before);
     }
@@ -391,8 +400,8 @@ TEST_CASE("Structure height and support controls are undoable blueprint-owned ed
     const auto original=editable_mesh(f.editing.state())->document();
     auto gizmo=f.panel.gizmo();REQUIRE(gizmo);REQUIRE(gizmo->radial_range);
     CHECK(f.widget("Width / footprint").enabled);
-    REQUIRE(f.panel.edit_part({.began=true}));
-    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position={0,0,gizmo->radius+.12F}}));f.finish();f.pump();
+    REQUIRE(f.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.changed=true,.finished=true,.position={0,0,gizmo->radius+.12F}}));f.finish();f.pump();
     CHECK(earth::infrastructure_parts(editable_mesh(f.editing.state())->document())->front().altitude==Catch::Approx(.12F));
     CHECK(f.panel.gizmo()->radius==Catch::Approx(gizmo->radius+.12F));
     REQUIRE(f.editing.undo());f.pump();CHECK(editable_mesh(f.editing.state())->document()==original);
@@ -702,11 +711,11 @@ TEST_CASE("Cloud handle jobs coalesce and cancel without stale completion or ext
     const auto initial=editable_mesh(f.editing.state())->document();
     const auto revision=f.editing.state().document.revision;
     const auto radius=f.panel.gizmo()->radius;
-    REQUIRE(f.panel.edit_part({.began=true}));
-    REQUIRE(f.panel.edit_part({.changed=true,.position={radius,0,0}}));
+    REQUIRE(f.edit_part({.began=true}));
+    REQUIRE(f.edit_part({.changed=true,.position={radius,0,0}}));
     CHECK(f.panel.pending(revision));
-    REQUIRE(f.panel.edit_part({.changed=true,.position={0,radius,0}}));
-    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position={0,0,radius}}));
+    REQUIRE(f.edit_part({.changed=true,.position={0,radius,0}}));
+    REQUIRE(f.edit_part({.changed=true,.finished=true,.position={0,0,radius}}));
     f.finish();
     auto clouds=example::earth::cloud_formations(editable_mesh(f.editing.state())->document());REQUIRE(clouds);
     CHECK(std::abs(clouds->at(14).location.x)<1e-4F);
@@ -717,11 +726,73 @@ TEST_CASE("Cloud handle jobs coalesce and cancel without stale completion or ext
     CHECK(editable_mesh(f.editing.state())->document()==initial);
     REQUIRE(f.editing.redo());f.pump();
     const auto before_cancel=editable_mesh(f.editing.state())->document();
-    REQUIRE(f.panel.edit_part({.began=true,.changed=true,.position={radius,0,0}}));
-    REQUIRE(f.panel.edit_part({.cancelled=true}));
+    REQUIRE(f.edit_part({.began=true,.changed=true,.position={radius,0,0}}));
+    REQUIRE(f.edit_part({.cancelled=true}));
     f.finish();
     CHECK(editable_mesh(f.editing.state())->document()==before_cancel);
     CHECK_FALSE(f.editing.busy());
+}
+
+TEST_CASE("Blueprint jobs are owned proposals until the parent accepts their target and revision",
+          "[editor][ui][blueprint-proposal]") {
+    Fixture f;f.pump();f.click("Rebuild clouds");f.finish();f.pump();
+    REQUIRE(f.panel.select_part(cloud_part(15)));
+    REQUIRE(f.panel.gizmo());
+    const auto revision=f.editing.state().document.revision;
+    REQUIRE(f.panel.edit_part({.began=true}));
+    CHECK_FALSE(f.editing.busy()); // Observing the child alone cannot begin a transaction.
+    auto begin=f.panel.take_edit();REQUIRE(begin);
+    CHECK(begin->kind==BlueprintMeshEdit::Kind::begin);
+    auto begun=apply_blueprint_mesh_edit(f.editing,*begin);REQUIRE(begun);
+    f.panel.accept_edit(*begin,begun);
+    CHECK(f.editing.active(EditGesture::mesh_draft));
+    REQUIRE(f.panel.edit_part({.changed=true,.finished=true,.position={0,f.panel.gizmo()->radius,0}}));
+    std::optional<BlueprintMeshEdit> ready;
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(10);
+    while(!ready && std::chrono::steady_clock::now()<deadline) {
+        (void)f.panel.poll(false);ready=f.panel.take_edit();
+        if(!ready)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(ready);REQUIRE(ready->kind==BlueprintMeshEdit::Kind::preview);
+    CHECK(f.editing.state().document.revision==revision);
+    CHECK_FALSE(f.panel.status().contains("draft updated"));
+    SECTION("matching parent applies preview and finishes a single gesture") {
+        auto result=apply_blueprint_mesh_edit(f.editing,*ready);REQUIRE(result);REQUIRE(*result);
+        f.panel.accept_edit(*ready,result);f.accept_edits();
+        CHECK_FALSE(f.editing.busy());CHECK(f.editing.state().document.revision>revision);
+        CHECK(f.editing.can_undo());
+    }
+    SECTION("target changes reject a completed job without publishing it") {
+        f.editing.viewport().mode=ViewMode::scene;
+        auto result=apply_blueprint_mesh_edit(f.editing,*ready);CHECK_FALSE(result);
+        f.panel.accept_edit(*ready,result);f.accept_edits();
+        CHECK(f.editing.state().document.revision==revision);CHECK_FALSE(f.editing.busy());
+    }
+    SECTION("newer authoring rejects a completed job without cancelling its unrelated transaction") {
+        REQUIRE(f.editing.cancel());
+        REQUIRE(f.editing.begin_mesh_transform(BlueprintId::mesh));
+        auto matrix=Mat4::identity();matrix[0][0]=1.2F;
+        REQUIRE(f.editing.mesh_transform(matrix));
+        const auto new_revision=f.editing.state().document.revision;
+        auto result=apply_blueprint_mesh_edit(f.editing,*ready);CHECK_FALSE(result);
+        f.panel.accept_edit(*ready,result);f.accept_edits();
+        CHECK(f.editing.state().document.revision==new_revision);
+        CHECK(f.editing.active(EditGesture::mesh_transform));REQUIRE(f.editing.cancel());
+    }
+    SECTION("old terminal and preview cannot claim a new gesture on the same blueprint") {
+        const auto old_transaction=f.editing.active_transaction();
+        REQUIRE(old_transaction);REQUIRE(f.editing.cancel());
+        REQUIRE(f.editing.begin_mesh_draft_edit(BlueprintId::mesh));
+        CHECK(f.editing.state().document.revision==revision);
+        REQUIRE(f.editing.active_transaction()!=old_transaction);
+        auto result=apply_blueprint_mesh_edit(f.editing,*ready);CHECK_FALSE(result);
+        f.panel.accept_edit(*ready,result);f.accept_edits();
+        CHECK(f.editing.active(EditGesture::mesh_draft));
+        BlueprintMeshEdit old_cancel{BlueprintMeshEdit::Kind::cancel,BlueprintId::mesh,revision,{},old_transaction};
+        auto cancelled=apply_blueprint_mesh_edit(f.editing,old_cancel);
+        CHECK_FALSE(cancelled);CHECK(f.editing.active(EditGesture::mesh_draft));
+        REQUIRE(f.editing.cancel());
+    }
 }
 
 TEST_CASE("Blueprint part picking follows visible triangles and synchronizes the list without edits", "[editor][ui][part-picking]") {

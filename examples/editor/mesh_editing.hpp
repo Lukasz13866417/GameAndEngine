@@ -6,7 +6,7 @@
 namespace editor_example {
 // Routed input, not component state or a new set of situations. Spans are
 // consumed synchronously and never retained. Multiple selection operations in
-// one dispatch are ordered (e.g. restore box origin, then add the picked set).
+// one call are ordered (e.g. restore box origin, then add the picked set).
 struct MeshSelectionInput {
     std::span<const vng::u32> elements{};
     vng::editor::SelectionMode mode{vng::editor::SelectionMode::replace};
@@ -31,29 +31,42 @@ struct MeshEditingContext {
     MeshInput input{};
     bool accept_input{true};
 };
+// Owned proposal: the workspace may execute it before delivering the next
+// input event. No borrowed selection survives a topology change.
+struct MeshEditProposal {
+    BlueprintId blueprint{};
+    MeshOperation operation{};
+    std::vector<vng::u32> vertices;
+    std::vector<vng::gfx::Edge> edges;
+};
 struct MeshEditingReply {
     bool authored{}, visibility_changed{}, selection_changed{}, mode_changed{}, gizmo_changed{}, clear_part_selection{}, camera_changed{};
     ToolOptions* operation_options{}; // Narrow declaration capability, not a child component.
     std::string message{};
+    std::optional<MeshEditProposal> proposal{};
+    std::optional<MeshOperationAdjustment> adjustment{};
 };
 
 class MeshEditing final {
 public:
-    MeshEditing(EditingSession& editing, vng::ui::Container controls, vng::ui::Container popup)
+    MeshEditing(const EditingSession& editing, vng::ui::Container controls, vng::ui::Container popup)
         : editing_(editing), components_(controls, popup), operation_(editing) {}
     // Borrowed read-only geometry/selection evidence for overlays and picking.
-    // Mutation is possible only through dispatch, never through this view.
+    // Mutation is routed by the owning viewport, never through this view.
     [[nodiscard]] const MeshTools& components() const { return components_; }
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend struct Dispatcher;
+    friend class EditingViewport;
     MeshEditingReply handle(const InspectMesh&, const MeshEditingContext&);
     MeshEditingReply handle(const InspectScene&, const MeshEditingContext&);
     MeshEditingReply handle(const InspectEffect&, const MeshEditingContext&);
     MeshEditingReply suspend(const MeshEditingContext&);
     void operation(MeshAction, MeshEditingReply&);
-    EditingSession& editing_;
+    MeshEditingReply accept_operation(const MeshEditProposal&, const vng::content::Result<bool>&);
+    MeshEditingReply accept_adjustment(const MeshOperationAdjustment&, const vng::content::Result<bool>&);
+    [[nodiscard]] std::optional<MeshOperationAdjustment> take_adjustment() { return operation_.take_adjustment(); }
+    const EditingSession& editing_;
     MeshTools components_;
     MeshOperationTool operation_;
     std::string_view situation_{"Not dispatched"};

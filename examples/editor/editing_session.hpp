@@ -7,6 +7,7 @@
 #include "transform_pivot.hpp"
 #include "scale_limits.hpp"
 #include "component_debug.hpp"
+#include "instance_movement.hpp"
 #include <deque>
 
 namespace editor_example {
@@ -47,6 +48,17 @@ public:
     [[nodiscard]] bool busy() const noexcept;
     [[nodiscard]] bool active(EditGesture kind) const noexcept;
     [[nodiscard]] vng::u32 active_object() const noexcept;
+    [[nodiscard]] std::optional<BlueprintId> active_blueprint() const noexcept {
+        if (gesture_ && (gesture_->kind==EditGesture::mesh_draft ||
+            gesture_->kind==EditGesture::mesh_transform || gesture_->kind==EditGesture::vertices))
+            return gesture_->blueprint;
+        return {};
+    }
+    // Identity of a capture, not a document revision. A newly begun gesture is
+    // distinct even when it targets the same blueprint and has made no edits.
+    [[nodiscard]] std::optional<vng::u64> active_transaction() const noexcept {
+        return gesture_ ? std::optional{gesture_serial_} : std::nullopt;
+    }
     [[nodiscard]] std::optional<EditNotice> take_changes();
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
@@ -78,6 +90,8 @@ public:
     [[nodiscard]] vng::content::Result<bool> region_points(std::span<const RegionPointEdit>);
     // Movement is absolute for the primary object, delta-from-start for vertices.
     [[nodiscard]] vng::content::Result<bool> move(vng::Vec3);
+    // Typed gizmo proposal: cannot accidentally move a different active target.
+    [[nodiscard]] vng::content::Result<bool> apply(const InstanceMovement::Edit&);
     [[nodiscard]] vng::content::Result<bool> rotate(vng::Vec3);
     // World-space delta from gesture start; respects shared/individual/custom pivots.
     [[nodiscard]] vng::content::Result<bool> rotate_by(vng::Vec3);
@@ -178,6 +192,7 @@ private:
     EditClipboard clipboard_;
     std::deque<Checkpoint> undo_, redo_;
     std::optional<Gesture> gesture_;
+    vng::u64 gesture_serial_{};
     std::optional<Remote> remote_;
     std::optional<EditNotice> notice_;
     struct MeshAdjustment {

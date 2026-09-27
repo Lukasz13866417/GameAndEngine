@@ -457,14 +457,18 @@ can be consumed by either renderer; GL resources never cross contexts. Closing
 this window docks the viewport. Independent Play remains a separate worker-owned
 window and does not replace this presentation child.
 
-`ViewportInteraction` is the application's single owner of navigation, boundary,
-world-bounds, translation, rotation, scale, and selection-box tools. Its explicit
-`EditingSession&` is the only document/history dependency. Tools do not query or
-cancel their siblings.
+`EditingWorkspace` owns the authoring session and logical selection.
+Its `EditingViewport` owns `ViewportInteraction`, the single owner of navigation,
+boundary, world-bounds, translation, rotation, scale and selection-box tools.
+Tools observe an explicit `const EditingSession&` and propose changes; workspace
+execution applies and acknowledges them. Tools do not query or cancel siblings.
 
-At each UI tick, `begin_frame()` clears consumption from the previous input
-batch. `update(tool, callback)` supplies whether that tool may interact: an
-existing capture wins over other authoring tools, otherwise the viewport visits
+At each UI tick, `begin_frame()` establishes the held-control budget.
+`ViewportInputSteps` then delivers individual occurrences in chronological order
+and one final elapsed-time tick. `begin_step()` clears only consumption, not
+capture. The parent checks `accepts(tool)`, calls the tool, applies its proposal,
+and observes handling with `observe(tool, allowed)`. An existing capture wins
+over other authoring tools; otherwise the viewport visits
 navigation, instance keyboard transforms, blueprint boundary tools, bounds,
 transform handles, then selection.
 Camera navigation may borrow pointer input while an authoring tool retains its
@@ -472,8 +476,10 @@ transaction. `GizmoInput`, owned by `ViewportInteraction`, strips camera and
 options-panel motion and accumulates a sensitivity-scaled virtual pointer.
 It also tracks held arrows, discards OS repeat events, and emits one normalized
 arrow per held direction per tick. The explicit `arrow_step` argument carries
-elapsed time × sensitivity into clock-free math tools; the backend input event
-type remains unchanged. Focus loss, UI ownership, navigation and gesture end
+elapsed time × sensitivity into clock-free math tools. Parent-assigned event
+identities survive coordinate conversion and distinguish otherwise identical
+occurrences; matching a consumed press by only position/kind is not sufficient.
+Focus loss, UI ownership, navigation and gesture end
 clear held input, and a bounded time step prevents jumps after stalls.
 Its tool-options description adds the shared mouse/arrow sensitivity to the active
 tool's own controls. On camera changes the math tools rebase their screen-space
@@ -494,19 +500,22 @@ private view; `bake_mesh_camera` submits the placement through one existing
 `EditingSession` transaction. Rotation and optical scale are opt-in components;
 camera translation is never authored into mesh data. Neither the controls nor
 the math own GPU objects, file persistence, or scene publishing.
-A press and release within one tick remains consumed, so it cannot accidentally
-select an object underneath a gizmo. Input ownership is separate from gizmo
+A press and release each remain consumed by their handling tool, so they cannot
+accidentally select an object underneath a gizmo. Later unrelated occurrences in
+the same batch still descend through the tree. Input ownership is separate from gizmo
 visibility: a possible selection rectangle can hold LMB while move/rotation/scale
 geometry remains visible. Non-owning transform tools receive empty input, never
 the selection press; the owning tool continues receiving raw releases even over
-UI panels. Invalid context still cancels its capture. `finish()` ends the owning authoring
-transaction; `cancel()` rolls it back and clears all child captures. App-level
+UI panels. Invalid context still cancels its capture. Workspace `finish()` ends
+the owning transaction; workspace `cancel()` rolls it back and tells the tools to
+reset capture. A transaction identity prevents stale replies from ending a newer
+gesture on the same target. App-level
 checks now describe context eligibility (paused scene, current preview, modal
 state), not combinations of sibling tools that must be idle.
 
 `TransformGesture` owns the shared G/R/S input and camera-relative math, not
 document data or history. `InstanceTransformInteraction` translates its deltas
-into one `EditingSession` move/rotation/scale transaction. `ComponentTransform`
+into typed proposals for one workspace-owned move/rotation/scale transaction. `ComponentTransform`
 applies the same gesture to selected mesh or region points, through their existing
 editing adapters. Each captures a baseline once and previews from that baseline;
 mouse moves never need a worker round trip. World-space rotation deltas are

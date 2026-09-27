@@ -1,6 +1,6 @@
 #pragma once
 #include "cage_tool.hpp"
-#include "editing_session.hpp"
+#include "region_edit.hpp"
 #include "blueprint_gizmos.hpp"
 #include <vng/ui/ui.hpp>
 #include <utility>
@@ -10,20 +10,24 @@ namespace editor_example {
 // interaction state. Region::scene_cage() supplies its manipulation contract.
 class RegionEditor {
 public:
+    struct Selection {vng::u32 object{};vng::input::Modifiers modifiers{};};
     void scale_limits(const ScaleLimits& limits) { tool_.scale_limits(limits); }
     RegionEditor(vng::ui::Container controls, vng::ui::Container creation,
                  vng::ui::Container inspector, vng::ui::Container popup);
     void open_menu(vng::Vec2 at, vng::Vec2 screen, std::optional<vng::ui::Rect> viewport = {});
-    void poll_menu(EditingSession&,std::span<const vng::input::Event>);
+    void poll_menu(const EditingSession&,std::span<const vng::input::Event>);
+    [[nodiscard]] std::optional<RegionEdit> take_edit();
+    void accept_edit(const RegionEdit&,const vng::content::Result<RegionEditResult>&,const State&);
     bool menu_open() const {return menu_open_;}
     bool boundaries_visible() const { return show_.value(); }
     void selection(vng::u32 object, GizmoMode mode);
     bool component_editing() const {return selected()&&region_component_mode(gizmo_);}
     bool free_rotation_selected() const {return component_editing() && transform_.value()==GizmoMode::free_rotate && !tool_.elements().empty();}
-    std::optional<vng::u32> take_selection(){return std::exchange(selection_,{});}
+    std::optional<Selection> take_selection(){return std::exchange(selection_,{});}
     std::optional<GizmoMode> take_mode(){return std::exchange(requested_mode_,{});}
-    void update(EditingSession&, const vng::gfx::CameraSnapshot&, vng::ui::Rect,
-        std::span<const vng::input::Event>,std::span<const vng::input::Event>,bool visible,bool editable,float arrow_step=1.F);
+    void update(const EditingSession&, const vng::gfx::CameraSnapshot&, vng::ui::Rect,
+        std::span<const vng::input::Event>,std::span<const vng::input::Event>,bool visible,bool editable,
+        float arrow_step=1.F,bool poll_controls=true);
     // The worker depth-tests boundaries; local interaction handles stay immediate.
     void append(vng::ui::DrawList& list,const vng::text::Font& font) const {tool_.append(list,font,false);}
     bool selected() const {return visible_&&show_.value()&&tool_.selected()!=0;}
@@ -32,7 +36,7 @@ public:
     void cancel() { close_menu(); tool_.hide(); }
     void changed(const DocumentChanges& changes) { pending_.merge(changes); }
     void deselect() {close_menu();tool_.select(0,0);}
-    vng::content::Result<bool> erase(EditingSession&);
+    vng::content::Result<bool> erase(const EditingSession&);
     std::optional<std::string> take_message(){return std::exchange(message_,{});}
     const CageTool& tool() const {return tool_;}
     ToolOptions* tool_options() {return tool_.tool_options();}
@@ -60,12 +64,14 @@ private:
     bool visible_{};
     GizmoMode gizmo_{GizmoMode::move};
     std::optional<GizmoMode> requested_mode_;
-    std::optional<vng::u32> selection_;
+    std::optional<Selection> selection_;
     bool menu_open_{},editable_{};
     std::optional<std::string> message_;
+    std::deque<RegionEdit> edits_;
+    std::optional<vng::u64> gesture_transaction_{};
     void sync_inspector(const Regions&);
     void sync(const State&);
     void close_menu();
-    void geometry(EditingSession&,RegionAction);
+    void geometry(const EditingSession&,RegionAction);
 };
 } // namespace editor_example

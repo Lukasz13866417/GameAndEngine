@@ -1,7 +1,6 @@
 #pragma once
 #include "tool_options.hpp"
 #include "inspector_panel.hpp"
-#include "component_dispatch.hpp"
 #include "component_debug.hpp"
 #include <optional>
 #include <string>
@@ -36,7 +35,7 @@ public:
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
-    friend struct Dispatcher;
+    friend class EditingViewport;
     void handle(const Current&,const Context& c) {
         if(c.close) close();
         if(c.validate) validate();
@@ -45,7 +44,7 @@ private:
     }
     void handle(const Show& s,const Context& c) {
         show(s.options,s.new_operation);
-        dispatch(*this,Current{},c);
+        handle(Current{},c);
     }
     vng::ui::Container host_,body_;
     vng::ui::Label heading_;

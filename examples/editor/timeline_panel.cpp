@@ -1,4 +1,5 @@
 #include "timeline_panel.hpp"
+#include <vng/input/routing.hpp>
 #include "selection_input.hpp"
 #include "keyframe_range_menu.hpp"
 #include <algorithm>
@@ -698,12 +699,7 @@ std::optional<TimelineAction> TimelinePanel::poll(std::span<const input::Event> 
         if (button.clicked())
             return p.seek(time, true,click_modifiers(raw,button.bounds()));
     const auto bounds = p.canvas.bounds();
-    const auto available = [&](const input::Event& event) {
-        return std::ranges::any_of(unhandled, [&](const auto& value) {
-            return value.kind == event.kind && value.position == event.position &&
-                   value.button == event.button;
-        });
-    };
+    const input::AvailableEvents available{unhandled};
     std::optional<TimelineAction> action;
     for (const auto& event : raw) {
         if (event.kind == input::EventKind::focus_lost ||
@@ -728,7 +724,7 @@ std::optional<TimelineAction> TimelinePanel::poll(std::span<const input::Event> 
             continue;
         }
         if (event.kind != input::EventKind::pointer_down || event.button != 0 ||
-            !bounds.contains(event.position) || !available(event) || bounds.width <= 0)
+            !bounds.contains(event.position) || !available.contains(event) || bounds.width <= 0)
             continue;
         p.handled = true;
         std::optional<f32> hit;

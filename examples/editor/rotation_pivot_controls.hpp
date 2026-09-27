@@ -1,6 +1,8 @@
 #pragma once
 #include "transform_pivot.hpp"
-#include "translation_tool.hpp"
+#include "move_gizmo.hpp"
+#include "rotation_origin_movement.hpp"
+#include "component_debug.hpp"
 #include <vng/ui/ui.hpp>
 
 namespace editor_example {
@@ -14,9 +16,11 @@ public:
         move_=host_.checkbox("Move rotation origin");
         reset_=host_.button("Reset origin to center");
     }
-    void update(vng::Vec3 center,bool visible,bool busy) {
+    void update(vng::Vec3 center,bool visible,bool busy,bool poll_controls=true) {
+        visible_=visible;enabled_=!busy;
         host_.visible(visible);host_.enabled(!busy);
         if(!visible)move_.value(false);
+        if(!poll_controls)return;
         if(auto value=modes_.changedValue()) {
             pivot_.mode=*value;
             if(*value==PivotMode::custom&&!initialized_){pivot_.point=center;initialized_=true;}
@@ -27,19 +31,29 @@ public:
     }
     TransformPivot value() const {return pivot_;}
     bool moving() const {return pivot_.mode==PivotMode::custom&&move_.value();}
-    void update_tool(TranslationTool& tool,const vng::gfx::CameraSnapshot& camera,vng::ui::Rect viewport,
+    void update_tool(MoveGizmo<RotationOriginMovement>& tool,const vng::gfx::CameraSnapshot& camera,vng::ui::Rect viewport,
         std::span<const vng::input::Event> input,std::span<const vng::input::Event> raw,bool enabled,float arrow_step=1.F) {
         const bool was=tool.dragging();
         if(!was)start_=pivot_.point;
-        vng::editor::Schema schema;schema.stamp={1,1,1};
-        schema.controls.push_back({"origin","Rotation origin",vng::editor::Kind::translation_gizmo,
-            {{"position","Position",start_,{},{}}},true,{},{}});
-        auto result=tool.update(schema,camera,viewport,input,raw,enabled&&moving(),true,arrow_step);
-        if(auto p=tool.preview_position())pivot_.point=*p;
-        if(result)pivot_.point=std::get<vng::Vec3>(result->values.front().value);
-        else if(was&&!tool.dragging())pivot_.point=start_;
+        const TransformPivot target{PivotMode::custom,start_};
+        const MoveGizmoContext context{{1,1,1},camera,viewport,input,raw,true,true,arrow_step};
+        const auto result=enabled&&moving()?tool.update(target,context):tool.cancel();
+        if(result.edit)pivot_.point=result.edit->point;
+        if(result.cancelled)pivot_.point=start_;
     }
     void cancel() {pivot_.point=start_;}
+    [[nodiscard]] DebugReport debug_report() const {
+        const auto point=[](vng::Vec3 value) {
+            return std::to_string(value.x)+", "+std::to_string(value.y)+", "+std::to_string(value.z);
+        };
+        return {.name="rotation_origin",.role="private rotation pivot choice and movable custom point",
+            .situation=pivot_.mode==PivotMode::selection?"Selection center":
+                pivot_.mode==PivotMode::individual?"Individual centers":"Custom point",
+            .received={{"visible",debug_bool(visible_)},{"enabled",debug_bool(enabled_)}},
+            .owned={{"custom point",point(pivot_.point)},{"initialized",debug_bool(initialized_)},
+                {"move origin enabled",debug_bool(moving())},{"gesture start",point(start_)}}};
+    }
+    [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
     vng::ui::Container host_;
     vng::ui::Dropdown<PivotMode> modes_;
@@ -48,5 +62,6 @@ private:
     TransformPivot pivot_{};
     vng::Vec3 start_{};
     bool initialized_{};
+    bool visible_{},enabled_{true};
 };
 }

@@ -58,7 +58,7 @@ public:
     bool cycle(int direction);
 private:
     MeshMenu menu_;
-    [[nodiscard]] MeshMenu::Situation menu_situation() const;
+    [[nodiscard]] std::optional<MeshAction> handle_menu(const MeshMenuContext&);
     vng::ui::Dropdown<MeshSelectMode> modes_;
     vng::ui::Dropdown<GizmoMode> transform_;
     vng::ui::Dropdown<GizmoMode> whole_transform_;

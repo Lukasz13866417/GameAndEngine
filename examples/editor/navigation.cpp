@@ -1,4 +1,5 @@
 #include "navigation.hpp"
+#include <vng/input/routing.hpp>
 #include "../support/mesh_frame.hpp"
 
 #include <algorithm>
@@ -208,14 +209,7 @@ bool NavigationTool::update(CameraPose& pose, ViewMode view, bool& smooth_zoom, 
         cancel();
     }
     const auto before = pose;
-    const auto available = [&](const input::Event& event) {
-        return std::ranges::any_of(unhandled, [&](const auto& candidate) {
-            return candidate.kind == event.kind && candidate.button == event.button &&
-                   candidate.position == event.position && candidate.scroll == event.scroll &&
-                   candidate.modifiers.shift == event.modifiers.shift &&
-                   candidate.modifiers.control == event.modifiers.control;
-        });
-    };
+    const input::AvailableEvents available{unhandled};
     for (const auto& event : raw.empty() ? unhandled : raw) {
         if (event.kind == input::EventKind::focus_lost ||
             (event.kind == input::EventKind::key_down && event.key == input::Key::escape)) {
@@ -234,7 +228,7 @@ bool NavigationTool::update(CameraPose& pose, ViewMode view, bool& smooth_zoom, 
             }
             continue;
         }
-        if (!contains(origin, size, event.position) || !available(event))
+        if (!contains(origin, size, event.position) || !available.contains(event))
             continue;
         if (event.kind == input::EventKind::pointer_down && event.button == 2) {
             if(!orbit_enabled_ && !event.modifiers.shift && !event.modifiers.control && !event.modifiers.alt) continue;

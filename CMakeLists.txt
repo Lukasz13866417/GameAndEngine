@@ -134,6 +134,10 @@ if(VNG_BUILD_EDITOR)
             examples/editor/mesh_editing.cpp
             examples/editor/scene_lists.cpp
             examples/editor/timeline_editing.cpp
+            examples/editor/workspace_proposals.cpp
+            examples/editor/workspace_interaction.cpp
+            examples/editor/workspace_picking.cpp
+            examples/editor/workspace_viewport.cpp
             examples/editor/file_dialog.cpp examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp
             examples/editor/save_dialog.cpp
             examples/editor/translation_tool.cpp examples/editor/rotation_tool.cpp examples/editor/scale_tool.cpp
@@ -357,7 +361,11 @@ if(VNG_BUILD_TESTS)
                     tests/editor/preview_fps_tests.cpp tests/editor/mesh_tools_tests.cpp tests/editor/instance_list_tests.cpp
                     tests/editor/tool_panel_tests.cpp tests/editor/region_ui_tests.cpp tests/editor/component_transform_tests.cpp
                     tests/editor/component_dispatch_tests.cpp
+                    tests/editor/input_routing_tests.cpp
+                    tests/editor/viewport_input_tests.cpp
+                    tests/editor/movement_binding_tests.cpp
                     tests/editor/workspace_tests.cpp
+                    tests/editor/workspace_picking_tests.cpp
                     tests/editor/instance_transform_tests.cpp)
                 target_link_libraries(vng_editor_ui_tests PRIVATE vng_editor_ui Catch2::Catch2WithMain)
                 target_compile_definitions(vng_editor_ui_tests PRIVATE VNG_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/fonts/DejaVuSans.ttf")
