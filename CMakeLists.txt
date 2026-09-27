@@ -876,6 +876,14 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
             examples/scenes/fleet_inspection.cpp examples/support/spaceflight_scene.cpp)
         target_link_libraries(vng_scene_demo_support PUBLIC vng_editor_runtime vng_example_support)
         vng_target_defaults(vng_scene_demo_support)
+        # Offline review of any saved scene: render frames at chosen times,
+        # and list, measure and locate what is in it.
+        add_executable(vng_scene_frames EXCLUDE_FROM_ALL examples/tools/scene_frames.cpp)
+        target_link_libraries(vng_scene_frames PRIVATE vng_editor_runtime vng_glfw_opengl)
+        vng_target_defaults(vng_scene_frames)
+        add_executable(vng_scene_probe EXCLUDE_FROM_ALL examples/tools/scene_probe.cpp)
+        target_link_libraries(vng_scene_probe PRIVATE vng_editor_project)
+        vng_target_defaults(vng_scene_probe)
         add_executable(vng_earth_demo examples/earth.cpp)
         target_link_libraries(vng_earth_demo PRIVATE vng_scene_demo_support)
         target_compile_definitions(vng_earth_demo PRIVATE
