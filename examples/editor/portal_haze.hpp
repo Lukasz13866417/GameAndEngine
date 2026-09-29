@@ -1,5 +1,6 @@
 #pragma once
 #include "../support/earth_tunnel_sizes.hpp"
+#include "tunnel_haze.hpp"
 #include <vng/gfx/geometry.hpp>
 #include <vng/opengl/gpu_mesh.hpp>
 #include <vng/render/program.hpp>
@@ -30,8 +31,7 @@ public:
         auto fragment=shader::fragment<shader::FragmentInputs<>,shader::FragmentOutputs<shader::Color<0>>>(
             "portal_haze_fragment",[](auto& s,dsl::Float distance){
                 const auto path=dsl::max(distance-1.F,0.F);
-                const auto haze_distance=path*path/(18.F*18.F);
-                const auto alpha=1.F-dsl::exp(-haze_distance*haze_distance);
+                const auto alpha=1.F-dsl::exp(-tunnel_haze::depth(path*path));
                 return s.output(dsl::field<shader::Color<0>>(dsl::vec4(s.constant(Vec3{4.2F,4.05F,3.7F})*alpha,alpha)));
             });
         if(!vertex)return std::unexpected(resources::to_diagnostic(vertex.error()));
