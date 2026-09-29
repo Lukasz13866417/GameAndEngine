@@ -254,7 +254,7 @@
   const targets = new Map(guide.filter(n => n.component).map(n => [n.component.target, n.id]));
   const modules = node("modules-root", "Engine & application modules", "CMake targets", "Group",
     "A module catalog; links are dependencies, not ownership.",
-    "Branches organize real build targets by responsibility. They do not imply C++ object ownership or that dependencies form a tree. Select a target to follow its exact direct dependencies and reverse users, with PUBLIC / PRIVATE / INTERFACE scopes.", "CMakeLists.txt", { children: catalog.children.map(group => ({
+    "Branches group every library in CMakeLists.txt, and the editor's two executables, by responsibility. They do not imply C++ object ownership or that dependencies form a tree. Select a target for its direct dependencies and the targets that link it, with PUBLIC / PRIVATE / INTERFACE scopes. Tests compare both lists with CMakeLists.txt; Used by leaves out test executables. Some targets are only built with certain CMake options.", "CMakeLists.txt", { children: catalog.children.map(group => ({
       id: `modules-${group.id}`, title: group.title, symbol: "Module family", role: "Group", edge: "group",
       summary: group.summary, detail: group.description.join(" "), sources: ["CMakeLists.txt"],
       children: group.children.map(component => ({
@@ -272,6 +272,6 @@
   window.VNG_ARCHITECTURE = [
     { id: "editor", title: "Editor", subtitle: "UI-process ownership", root: editor, expanded: ["editor-host", "workspace"], guide: "../editor_components.md" },
     { id: "worker", title: "Preview worker", subtitle: "Worker-process ownership", root: worker, expanded: ["worker-host", "worker"], guide: "../editor_boundaries.md" },
-    { id: "modules", title: "Engine modules", subtitle: "Grouped modules · not ownership", root: modules, expanded: ["modules-root"], guide: "codebase.html" }
+    { id: "modules", title: "Engine modules", subtitle: "Grouped modules · not ownership", root: modules, expanded: ["modules-root"], guide: "codebase.html", programs: catalog.programs }
   ];
 })();

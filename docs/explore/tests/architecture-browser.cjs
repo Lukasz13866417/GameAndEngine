@@ -72,6 +72,17 @@ module.exports = async function architectureBrowser(page, url, output) {
   await page.waitForURL(/#modules\/code-glsl$/);
   assert.ok((await headings(page)).includes("Used by"));
   assert.equal(await page.locator("#details .source-link").first().getAttribute("target"), "_blank");
+  // Used by: mapped users as links, executables without a card as text.
+  const modules = maps.get("modules"), project = "vng_editor_project";
+  await page.goto(url("architecture.html") + "#modules/code-editor-project");
+  const usedBy = await page.evaluate(() => {
+    const part = [...document.querySelectorAll("#details section")].find(item => item.querySelector("h3")?.textContent === "Used by");
+    return { links: [...part.querySelectorAll("button")].map(item => item.textContent), text: part.textContent };
+  });
+  const users = [...modules.tree.nodes.values()].filter(node => node.component?.dependencies.some(dep => dep.target === project));
+  assert.deepEqual(usedBy.links.map(label => label.replace(/→$/, "").split(" · ").at(-1)).sort(), users.map(node => node.symbol).sort());
+  const programs = modules.scope.programs.filter(program => program.links.includes(project));
+  assert.ok(programs.length && programs.every(program => usedBy.text.includes(program.target)));
 
   await page.locator("#map-search").fill("<img src=x>");
   assert.match(await text(page.locator("#search-results")), /No matches/);

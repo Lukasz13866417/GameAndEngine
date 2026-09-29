@@ -179,9 +179,16 @@
       (node.references || []).map(ref => jumpLink(ref.label, ref.scope, ref.id)));
     if (refs) detail.append(refs);
     if (node.component) {
-      const reverse = [...state.tree.nodes.values()].filter(candidate =>
-        candidate.component?.dependencies.some(dep => dep.target === node.component.target));
-      const users = section("Used by", reverse.map(candidate => jumpLink(candidate.symbol, "modules", candidate.id)));
+      // Mapped targets link to their nodes; other executables are listed as text.
+      const target = node.component.target;
+      const linked = [...state.tree.nodes.values()].flatMap(candidate => (candidate.component?.dependencies || [])
+        .filter(dep => dep.target === target).map(dep => jumpLink(`${dep.visibility} · ${candidate.symbol}`, "modules", candidate.id)));
+      const programs = (state.scope.programs || []).filter(program => program.links.includes(target)).map(program => {
+        const row = element("p", "program", `PRIVATE · ${program.target}`);
+        row.append(element("span", "", "executable"));
+        return row;
+      });
+      const users = section("Used by", [...linked, ...programs]);
       if (users) detail.append(users);
       const external = section("External libraries", node.component.external.map(dep => element("p", "detail-text", `${dep.visibility} · ${dep.name}`)));
       if (external) detail.append(external);
@@ -200,7 +207,7 @@
     const guide = element("a", "source-link", "Read the detailed guide ↗");
     guide.href = node.guide || state.scope.guide;
     detail.append(guide, element("p", "map-note", state.scope.id === "modules"
-      ? "Dashed branches group build targets. Dependencies are the separate links above, not the tree edges. This catalog is checked against CMake."
+      ? "Dashed branches group build targets; dependencies are the separate lists above, not tree edges. Tests compare Direct dependencies and Used by with CMakeLists.txt. Used by leaves out test executables."
       : "Solid branches mean lifetime ownership; dashed branches are explicitly named groups. This is a curated source map, not live component status or a complete member listing."));
     const breadcrumbs = $("breadcrumbs");
     breadcrumbs.replaceChildren();

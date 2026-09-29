@@ -271,6 +271,35 @@ auto stopped = gizmo.cancel();`),
     section("Choose a reading path rather than reading everything", "For an edit, follow tool → EditingSession → DocumentChanges/Patch → PreviewDeliveryLogic → worker. For pixels, follow worker → Runtime → BlueprintMeshRenderer/effect → Commands → OpenGL. For a button, follow panel → Screen update → polled result → session operation. These paths explain how the target dependency map becomes an actual interaction.", "examples/editor/app.hpp")
   ]);
 
+  describe("vng_spaceflight_support", [
+    section("Example conventions, not an engine schema", "spaceflight_scene reads camera, flight, sun, star and bloom settings from the demo's scene document. Optional cubic Bezier handles turn the straight flyby into a curve, which is how vng_solar_flyby_demo reuses spaceflight.cpp with solar_flyby.vscene. The shared command-line options and capture settings are parsed here too.", "examples/support/spaceflight_scene.hpp"),
+    section("Concrete renderers for one shot", "ShipRenderer is a concrete opengl::Renderer<ShipDraw> for the ship's position, normal, color and emission record. SpaceBackground draws a static dust band and star sprites for the fixed camera from one cached mesh; it is not a general skybox. spaceflight_inspection exports diagnostic sweeps next to screenshots.", "examples/support/spaceship_renderer.hpp")
+  ]);
+  describe("vng_scene_demo_support", [
+    section("Play what was saved", "run_scene_demo loads a .vscene with SceneFile, switches to the scene's own camera and renders its timeline with the editor Runtime in a GLFW window. Space pauses, R restarts and Esc closes; the end pose holds instead of looping. The Earth, fleet, belt, tunnel and solar-system demos differ only in the SceneDemo record they pass.", "examples/scenes/scene_demo.hpp"),
+    section("Captures change the run, not the file", "--time fixes the sampled time, --once and --frames bound the run, and --screenshot or --analyze capture one frame at the demo's capture time unless told otherwise. --no-bloom removes bloom from the loaded copy only. fleet_inspection.cpp exports evidence for the instances a demo names. The runner compiles spaceflight_scene.cpp itself for the shared option parser.", "examples/scenes/fleet_inspection.hpp")
+  ]);
+  describe("vng_earth_scene", [
+    section("Authoring steps, not load-time migrations", "author_tunnel_network, redesign_infrastructure and expand_global_infrastructure each take a vmesh document and return a new one. author_tunnel_network keeps all non-infrastructure geometry, identities and route endpoints, and returns an already converted document unchanged. redesign_infrastructure is a deliberate reset that keeps cities and natural geometry but replaces the other addons. expand_global_infrastructure adds corridors once and keeps existing parts and hand edits.", "examples/scenes/earth_scene.hpp"),
+    section("The tool writes files; everything else loads them", "vng_make_earth runs these steps and saves the results. Nothing in the editor, the worker or the demos calls them while loading, so opening a saved scene never rewrites its geometry. The library links only vng_editor_project, so it depends on neither OpenGL nor the editor UI.", "examples/tools/make_earth.cpp")
+  ]);
+  describe("vng_fleet_scene", [
+    section("A generator that returns a document", "author_scene(asset_directory) builds editor State from the asset meshes: the Kestrel (instance 1), the sun (2), a sixteen-ship formation (3–18) and the scene camera (19), keyed across the 34-second shot. The identities are constants in fleet_scene.hpp, so tests and the belt scene refer to them by name.", "examples/scenes/fleet_scene.hpp"),
+    section("The saved file is the contract", "vng_make_fleet_scene saves the document with SceneFile. The demo and the editor load it like any other scene; no motion callbacks are retained or replayed, so an edit made in the editor is what the demo plays. Regenerating the file with --replace discards those edits.", "examples/tools/make_fleet_scene.cpp")
+  ]);
+  describe("vng_asteroid_scene", [
+    section("Rocks are shared blueprints", "rock_mesh(variant) generates original rock geometry offline, and the saved scene embeds three rock blueprints that 600 instances share, each with its own transform and tumble. is_rock recognizes them by blueprint. Glimpses of the fleet come from real depth occlusion through the belt, not from visibility keys.", "examples/support/asteroid_assets.hpp"),
+    section("One continuous shot that eases to a stop", "author_scene starts from the fleet scene, removes its sun and camera, then adds the belt, a 40-ship fleet and a 52-second tracking shot that eases the Kestrel and the camera to a stop at 44 seconds. The tunnel voyage and the solar-system shot link this library for the same rock recipes.", "examples/scenes/asteroid_scene.hpp")
+  ]);
+  describe("vng_tunnel_scene", [
+    section("Two scenes from one tunnel design", "tunnel_scene.cpp authors the interior study in kilometre units. Its shell_mesh and collar_mesh are reused by the departure cinematic, whose exit frame puts the tunnel mouth at the origin. tunnel_departure.cpp follows the courier out of the Earth tunnel, and departure_voyage.cpp continues from that handoff to an orbital gateway, the Moon, the belt and the fleet. space_assets.cpp generates the voyage's original bodies and craft.", "examples/scenes/tunnel_scene.hpp"),
+    section("Many keys, one validated transaction", "The cinematics bake thousands of samples. key_property copies and revalidates the whole timeline on every call, so KeyBatch collects keys per track, can drop samples that a straight line already reproduces, and commits them in one validated step under the same rules.", "examples/scenes/key_batch.hpp")
+  ]);
+  describe("vng_solar_system_scene", [
+    section("Only the first frame is authored", "author_scene places Earth beside the camera, the fleet about 210 units along the view axis and the belt at 300, lit by a sun behind the camera. Only the starting keyframe exists; the rest of the shot is meant to be authored in the editor, so nothing here is choreographed.", "examples/scenes/solar_system_scene.hpp"),
+    section("Identities continue the fleet's numbering", "The fleet supplies instances 1–18; Earth, 24 distant wing ships and 600 rocks follow, and the camera is the last instance. vng_solar_system_demo names Earth and the flagship by these constants for its evidence captures and plays the saved scene through the shared scene-demo runner.", "examples/solar_system.cpp")
+  ]);
+
   // The lightweight identity/alias headers are useful alongside the full contract.
   byTarget.get("vng_render").links.push(
     { label: "include/vng/render/backend.hpp", href: "../../include/vng/render/backend.hpp" },

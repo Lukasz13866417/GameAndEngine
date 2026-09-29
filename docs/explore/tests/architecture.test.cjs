@@ -73,6 +73,25 @@ function declares(code, declaration) {
 }
 const owned = ["editor", "worker"].map(id => [id, trees.get(id)]);
 
+// CMake targets and direct links, read like the guide's content test reads them.
+const cmake = readFileSync(path.join(repository, "CMakeLists.txt"), "utf8").replace(/#[^\n]*/g, "");
+const cmakeTargets = new Map();
+for (const [, kind, name, rest] of cmake.matchAll(/add_(library|executable)\(\s*([\w:]+)\s+([^)]*)\)/g)) {
+  if (!name.includes("::") && !/^\s*(ALIAS|IMPORTED)\b/.test(rest)) cmakeTargets.set(name, kind);
+}
+const cmakeLinks = new Map();
+for (const [, call] of cmake.matchAll(/target_link_libraries\s*\(([^)]*)\)/g)) {
+  const [target, ...tokens] = call.trim().split(/\s+/);
+  let visibility = "PUBLIC";
+  for (const token of tokens) {
+    if (["PUBLIC", "PRIVATE", "INTERFACE"].includes(token)) visibility = token;
+    else (cmakeLinks.get(target) ?? cmakeLinks.set(target, []).get(target)).push({ target: token, visibility });
+  }
+}
+const isTest = target => /_tests$/.test(target);
+const moduleScope = scopes.find(scope => scope.id === "modules");
+const modules = () => [...trees.get("modules").nodes.values()].filter(node => node.component);
+
 test("architecture covers the editor, worker and module catalog without ambiguous IDs", () => {
   assert.deepEqual(Array.from(trees.keys()), ["editor", "worker", "modules"]);
   assert.ok([...trees.values()].reduce((count, tree) => count + tree.nodes.size, 0) >= 100);
@@ -189,6 +208,62 @@ test("module map reuses the verified CMake catalog and marks grouping honestly",
   for (const node of trees.get("modules").nodes.values()) {
     if (node.id !== "modules-root") assert.equal(node.edge, "group", node.id);
   }
+});
+
+test("every CMake library is on the module map; other executables are listed programs", () => {
+  const mapped = new Map(modules().map(node => [node.component.target, node]));
+  for (const [target, kind] of cmakeTargets) {
+    if (kind === "library") assert.ok(mapped.has(target), `${target}: add this CMake library to the catalog in codebase.js`);
+    else if (!isTest(target)) {
+      assert.notEqual(mapped.has(target), moduleScope.programs.some(program => program.target === target),
+        `${target}: give this executable a card or list it in programs, exactly once`);
+    }
+  }
+  for (const target of mapped.keys()) assert.ok(cmakeTargets.has(target), `${target}: not a CMake target`);
+  for (const program of moduleScope.programs) {
+    assert.equal(cmakeTargets.get(program.target), "executable", `${program.target}: not a CMake executable`);
+    const links = cmakeLinks.get(program.target) || [];
+    assert.deepEqual([...program.links].sort(), links.map(link => link.target).sort(), `${program.target}: links differ from CMake`);
+    assert.ok(links.every(link => link.visibility === "PRIVATE"), `${program.target}: programs link PRIVATE`);
+  }
+});
+
+test("Used by shows exactly the non-test CMake targets that link each module", () => {
+  for (const node of modules()) {
+    const target = node.component.target, shown = new Map(), actual = new Map();
+    for (const user of modules()) {
+      for (const dependency of user.component.dependencies) if (dependency.target === target) shown.set(user.component.target, dependency.visibility);
+    }
+    for (const program of moduleScope.programs) if (program.links.includes(target)) shown.set(program.target, "PRIVATE");
+    for (const [user, links] of cmakeLinks) {
+      if (isTest(user)) continue;
+      for (const link of links) if (link.target === target) (actual.get(user) ?? actual.set(user, new Set()).get(user)).add(link.visibility);
+    }
+    assert.deepEqual([...shown.keys()].sort(), [...actual.keys()].sort(), `${target}: Used by differs from CMake`);
+    // A target defined in alternative branches (vng_glsl) may declare both scopes.
+    for (const [user, visibility] of shown) assert.ok(actual.get(user).has(visibility), `${target}: ${user} does not link it ${visibility}`);
+  }
+});
+
+test("module source links are files of that module's own target", () => {
+  const layering = readFileSync(path.join(repository, "tests/layering/layering.test.cjs"), "utf8");
+  const table = name => {
+    const literal = layering.match(new RegExp(`const ${name} = (\\{[\\s\\S]*?\\});`));
+    assert.ok(literal, `layering.test.cjs no longer defines ${name}`);
+    return vm.runInNewContext(`(${literal[1]})`);
+  };
+  const moduleTargets = table("moduleTargets"), fileTargets = table("fileTargets");
+  let checked = 0;
+  for (const node of modules()) {
+    for (const source of node.sources) {
+      const directory = source.match(/^(?:include\/vng|src)\/([a-z_]+)(?:\/|$)/)?.[1];
+      if (!directory) continue;
+      const owner = fileTargets[source] ?? moduleTargets[directory];
+      assert.equal(owner, node.component.target, `${node.component.target} links ${source}, which belongs to ${owner}`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 50);
 });
 
 test("duplicate ownership or cyclic input is rejected rather than silently traversed", () => {
