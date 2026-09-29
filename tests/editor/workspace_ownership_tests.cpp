@@ -29,7 +29,7 @@ struct WorkspaceFixture {
         workspace.sync_sidebar();
         pump();
     }
-    void pump() {REQUIRE(screen.update(raw,.016));REQUIRE(popups.update(raw,.016));}
+    void pump() {REQUIRE(screen.update(raw,.016F));REQUIRE(popups.update(raw,.016F));}
     void keyframe() {
         const std::array times{0.F};
         (void)dispatch(workspace,InspectScene{},WorkspaceContext{
