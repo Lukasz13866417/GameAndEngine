@@ -375,6 +375,16 @@ TEST_CASE("A scene and its authored mesh are saved together or not at all", "[ed
     no_temporaries(temporary.path);
 }
 
+TEST_CASE("Embedded mesh text is escaped compactly and reads back unchanged", "[editor][file]") {
+    const auto state = scene();
+    const auto text = encoded(state);
+    CHECK(text.find("\\u000a") == std::string::npos);
+    CHECK(text.find("vmesh 1.0\\ninfo {") != std::string::npos);
+    const auto restored = decode(text);
+    REQUIRE(restored);
+    CHECK(restored->document.mesh.document() == state.document.mesh.document());
+}
+
 TEST_CASE("Scene paths reject symlinks directories special files and embedded null bytes",
           "[editor][file]") {
     TemporaryDirectory temporary;

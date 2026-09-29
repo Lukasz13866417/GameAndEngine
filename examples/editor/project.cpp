@@ -34,6 +34,12 @@ std::string quote_string(std::string_view s) {
         if (c == '"' || c == '\\') {
             out += '\\';
             out += static_cast<char>(c);
+        } else if (c == '\n') {
+            // Embedded .vmesh text has a newline per vertex and face: the
+            // two-byte escape keeps big scenes further inside the file limit.
+            out += "\\n";
+        } else if (c == '\t') {
+            out += "\\t";
         } else if (c < 32) {
             out += "\\u00";
             out += hex[c >> 4];
