@@ -319,7 +319,9 @@ int run(const Options& options) {
     Extent2D image_extent = default_preview_extent, desired_preview_extent = default_preview_extent;
     auto started = std::chrono::steady_clock::now(), previous = started, pending_started = started,
          mode_started = started, last_ui_present = started, next_ui_frame = started;
-    bool unresponsive{}, stop_refresh{}, ui_keyboard_capture{}, ui_shortcut_capture{};
+    // Previous-frame UI ownership: a field, popup or capture that holds the
+    // keyboard when the next input frame arrives. popup_* is the popup layer.
+    bool unresponsive{}, stop_refresh{}, ui_keyboard_capture{}, ui_shortcut_capture{}, popup_shortcut_capture{};
     const auto component_report = [&] {
         return DebugReport{.name="editor", .role="application coordination",
             .situation=playing ? "IndependentPlay" : "Authoring",
@@ -909,7 +911,20 @@ int run(const Options& options) {
                 !viewport_interaction.busy()&&!editing.busy()&&!walk.active()&&!playing&&!modal_visible(),
                 camera_ui.opened()&&!viewport_window.opened()}});
         const bool viewport_popup=mesh_tools.menu_open() || regions.menu_open() || camera_gizmo.contains(viewport_raw.pointer) || tool_panel.contains(viewport_raw.pointer) || workspace.viewport_controls_contain(viewport_raw.pointer);
-        if (viewport_popup && !viewport_window.opened()) ui_input.events.clear();
+        // A docked popup under the pointer gets first refusal for pointer input.
+        // A text field, popup or capture in the controls keeps its keystrokes:
+        // neither the popup layer nor a shortcut (Delete, Ctrl+Z) sees them.
+        // A press in the same batch may move focus, so the popup then gets all.
+        const auto pointer_event = [](const input::Event& event) {
+            using K = input::EventKind;
+            return event.kind==K::pointer_move || event.kind==K::pointer_down || event.kind==K::pointer_up || event.kind==K::scroll;
+        };
+        const bool docked_popup = viewport_popup && !viewport_window.opened();
+        const bool controls_keyboard = docked_popup && ui_shortcut_capture && !popup_shortcut_capture &&
+            std::ranges::none_of(ui_input.events, [](const input::Event& event) { return event.kind==input::EventKind::pointer_down; });
+        auto popup_events = docked_popup ? ui_input.events : std::vector<input::Event>{};
+        if (docked_popup)
+            std::erase_if(ui_input.events, [&](const input::Event& event) { return !controls_keyboard || pointer_event(event); });
         auto input = screen.update(ui_input, dt, &clipboard);
         if (!input && raw.overflow) {
             // Screen discarded the incomplete input burst and released capture.
@@ -917,6 +932,7 @@ int run(const Options& options) {
             // that compensation and resume with the next complete input frame.
             ui_keyboard_capture = false;
             ui_shortcut_capture = false;
+            popup_shortcut_capture = false;
             status.text(input.error().message);
             broadcast();
             continue;
@@ -924,17 +940,25 @@ int run(const Options& options) {
         if (!input)
             return fail(input.error().message);
         if(workspace.resize_panels(geometry))layout(raw);
-        // Panels get first refusal when docked (except an open viewport popup).
-        // Detached menus consume only their own window's input.
+        // Panels get first refusal when docked (except for pointer input over
+        // a viewport popup). Detached menus consume only their own window's input.
         if (!viewport_window.opened() && !viewport_popup) {
             viewport_ui_input=ui_input;
             viewport_ui_input.events=input->events;
+        } else if (docked_popup) {
+            if (controls_keyboard) {
+                const input::AvailableEvents unused{input->unhandled()};
+                std::erase_if(popup_events, [&](const input::Event& event) { return !pointer_event(event) && !unused.contains(event); });
+            }
+            viewport_ui_input.events = std::move(popup_events);
         }
         auto viewport_input=viewport_popups.update(viewport_ui_input,dt,&clipboard);
         if (!viewport_input) {
             if (!viewport_raw.overflow) return fail(viewport_input.error().message);
+            popup_shortcut_capture = false;
             status.text(viewport_input.error().message); broadcast(); continue;
         }
+        popup_shortcut_capture = viewport_input->capturesShortcuts;
         const auto camera_preferences_edit=workspace.poll_camera_gizmo(settings);
         if(camera_preferences_edit.changed)settings=camera_preferences_edit.value;
         if(!camera_preferences_edit.error.empty())status.text(camera_preferences_edit.error);

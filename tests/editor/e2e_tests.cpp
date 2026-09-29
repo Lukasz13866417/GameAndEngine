@@ -235,6 +235,8 @@ private:
     std::vector<std::byte> rotation_pixels_;
     Vec2 scale_pointer_{};
     f32 gizmo_scale_{};
+    u64 corner_revision_{};
+    std::size_t corner_instances_{};
     u32 pasted_instance_{};
     u64 fleet_revision_{};
     std::vector<project::SceneInstance> group_before_;
@@ -4089,6 +4091,33 @@ void Driver::workflow() {
         require(std::ranges::any_of(tree_.widgets, [](const auto& widget) {
             return widget.visible && widget.text.starts_with("Blueprint: ");
         }), "Instance list/inspector does not expose the referenced blueprint");
+        return true;
+    });
+    add("Focus an inspector field", [this](const Observation& o) {
+        const auto* scale = actionable(field("Scale", "Instance transform"));
+        if (!scale) return false;
+        click_at(center(intersection(scale->bounds, scale->clip)));
+        corner_revision_ = o.state.document.revision; corner_instances_ = o.state.document.instances.size();
+        return true;
+    });
+    add("Keys typed over the camera corner menu stay in the focused field", [this](const Observation&) {
+        const auto menu = std::ranges::find_if(tree_.widgets, [](const auto& widget) {
+            return widget.role == Role::button && widget.visible &&
+                (widget.label.starts_with("CAMERA / ") || widget.label.starts_with("Camera modes / "));
+        });
+        require(menu != tree_.widgets.end(), "Camera corner menu is not visible");
+        // Pointer input over the docked menu belongs to it; keystrokes to the field.
+        pointer(input::EventKind::pointer_move, center(menu->bounds));
+        key(input::Key::end); key(input::Key::del); key(input::Key::z, {.control = true});
+        events_.push_back({.kind = input::EventKind::text, .text = "7"});
+        return true;
+    });
+    add("Delete and Ctrl+Z edit the field, not the scene", [this](const Observation& o) {
+        require(o.state.document.instances.size() == corner_instances_, "Delete over the corner menu removed an instance");
+        require(o.state.document.revision == corner_revision_, "Ctrl+Z over the corner menu edited the document");
+        const auto* scale = find(field("Scale", "Instance transform"));
+        require(scale && scale->text.ends_with("7"), "The focused field lost keystrokes to the corner menu");
+        key(input::Key::escape); // Discard the draft.
         return true;
     });
     fill(field("Scale", "Instance transform"), "0.55");
