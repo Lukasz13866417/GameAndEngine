@@ -39,14 +39,15 @@ struct NavigationFrame {
     double seconds{};
     CameraDragSpeeds drag_speeds;
     WalkSpeeds walk_speeds;
-    bool move_forward{}, orbit_enabled{true}, keyboard_enabled{true}, controls_have_focus{};
+    // escape_claimed: this frame's Escape already belongs to a text edit, an
+    // open popup or flyout. It still releases captures, never the chosen mode.
+    bool move_forward{}, orbit_enabled{true}, keyboard_enabled{true}, escape_claimed{};
     std::optional<vng::Vec3> origin{};
     const vng::editor::EditableMesh* mesh{};
     vng::Mat4 mesh_to_world{vng::Mat4::identity()};
 };
 struct NavigationContext {
     std::optional<NavigationFrame> frame{};
-    std::optional<bool> walk_active{};
     bool cancel{};
     bool enabled{true};
 };
@@ -115,13 +116,15 @@ public:
         std::string_view target{"Editor camera"};
         bool visible{true}, enabled{true}, other_gizmo{};
     };
+    // The menu unfolds when this becomes the camera target and folds when an
+    // object gizmo takes over; its heading only toggles it in between. Hiding
+    // it also ends an explicitly chosen mode: no mode exists without its menu.
     void present(const Presentation&, const Settings&);
     CameraPreferenceEdit poll(const Settings&);
     NavigationReply update(const NavigationFrame&, bool enabled = true);
     void append(vng::ui::DrawList&) const;
     void select(CameraGizmoMode);
     void object_tools();
-    void walking(bool value) { if(value)select(CameraGizmoMode::walk); else if(walk_.active())object_tools(); }
     const CameraWalkGizmo& walking() const { return walk_; }
     void cancel_pointer();
     void cancel();
@@ -133,7 +136,7 @@ public:
     CameraGizmoMode mode() const { return mode_; }
     CameraGizmoMode operating_mode() const { return captured_.value_or(mode_); }
     bool contains(vng::Vec2 p) const { return visible_ && host_ && host_->bounds().contains(p); }
-    bool menu_open() const { return visible_ && opened_ && active(); }
+    bool expanded() const { return visible_ && opened_; }
     vng::ui::Rect bounds() const { return visible_ && host_ ? host_->bounds() : vng::ui::Rect{}; }
     [[nodiscard]] DebugReport debug_report() const;
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }

@@ -227,15 +227,25 @@ walk navigation is armed. The workspace chooses timeline availability; the viewp
 new tool options versus updating the current options.
 
 Gizmos do not need that internal-UI handler boilerplate. `CameraGizmo` exposes
-`present`, `poll` and `update`: its parent supplies a target pose, input and
-eligibility; it returns a proposed pose and preference edits. It owns five
+`present`, `poll` and `update`. Its parent, `ViewportToolsUI`, supplies the
+target pose, input and eligibility (`Navigate`) and the presentation, to which it
+adds whether one of its own object gizmos is shown. The gizmo returns a proposed
+pose and preference edits. `EditingWorkspaceUI` never holds the gizmo: it passes
+facts it owns (target label, camera-action overlay, settings) through that
+parent's narrow API — `present_camera`, `poll_camera`, `select_camera`,
+`resume_object_tools`, `object_tools_suspended` and a const `camera_gizmo()`
+observation. It owns five
 `CameraPointerGizmo` children and one `CameraWalkGizmo`. Children own their
 capture/motion helpers and mode-local widgets; they do not find or message other
-components. The parent routes a captured occurrence to its owner, or chooses a
+components. The gizmo routes a captured occurrence to its owner, or chooses a
 child from the active mode/shortcut. Menu input never reaches navigation.
 
 The camera gizmo is the fallback when no object gizmo is visible. Explicit mode
-selection borrows LMB from object tools until Escape; ordinary camera shortcuts
+selection borrows LMB from object tools; `ViewportToolsUI` then suspends them in
+`accepts()`, and the workspace skips object input, picking and overlays. It lasts
+until an Escape nothing else claimed, **Object tools**, an explicit selection, or
+anything hiding the menu. The host decides whether a text field, popup or flyout
+claimed this frame's Escape (`escape_claimed`). Ordinary camera shortcuts
 can temporarily borrow input during object transforms. Editor and entered scene
 cameras share the same `NavigationFrame` pose contract. Camera visits, explicit
 Save and document authority remain at their existing parent boundary.
@@ -338,8 +348,9 @@ document snapshots.
 - Viewport presentation does not refresh list catalogs or timeline rows.
   Catalog synchronization and selection-only changes are explicit separate work.
 - CameraGizmo returns a proposed pose. It does not author a simulation
-  camera or increment document revisions. Blocking input releases held keys;
-  popout focus transfer preserves armed walk mode but not held keys.
+  camera or increment document revisions. Blocking input, focus loss and any
+  Escape release held keys and drags. Of these, only an unclaimed Escape also
+  ends an explicitly chosen mode.
 - PreviewLogic keeps reliable document/visibility packets separate from
   replaceable viewport requests. It never waits for a frame or ACK. Failed
   sends preserve/reset the appropriate delivery state for retry.

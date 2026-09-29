@@ -399,8 +399,6 @@ private:
             click_at(center(bounds));
             return true;
         });
-        if(locator.role==Role::checkbox && locator.label=="Scroll moves camera")
-            add("Return to object tools after camera preference",[this](const Observation&) {key(input::Key::escape);return true;});
     }
     void fill(Locator locator, std::string value) {
         add("Fill " + locator.label, [this, locator, value = std::move(value)](const Observation&) {
@@ -415,6 +413,13 @@ private:
     }
     static bool ready(const Observation& o) {
         return o.preview_ready && o.image_revision == o.state.document.revision && !o.modal;
+    }
+    // The corner menu's heading names the camera child that owns LMB.
+    bool camera_mode(std::string_view label) const {
+        const auto heading = "CAMERA / " + std::string(label);
+        return std::ranges::any_of(tree_.widgets, [&](const auto& widget) {
+            return widget.role == Role::button && widget.visible && widget.label.starts_with(heading);
+        });
     }
     static Vec3 position(const Observation& o, u32 id) {
         const auto* instance = project::find_instance(o.state, id);
@@ -4617,6 +4622,11 @@ void Driver::workflow() {
         require(settings.walk==project::WalkSpeeds{15,8,6,3},"Mode-local walk settings did not persist");
         checkpoint(o,"16a-camera-walk-options");key(input::Key::escape);return true;
     });
+    add("Escape in a focused speed field leaves the field, not Walk",[this](const Observation&) {
+        require(camera_mode("Walk"),"An Escape claimed by a Walk speed field left Walk");
+        key(input::Key::escape);return true;
+    });
+    wait("The next Escape returns LMB to the object tools",[this](const Observation&) {return !camera_mode("Walk");});
     click(button("Frame world bounds"));
     wait("World bounds frame and six handles appear beyond the old zoom limit", [this](const Observation& o) {
         if(!ready(o) || !o.bounds_gizmo || !o.bounds_gizmo->handle(1)) return false;
@@ -4702,8 +4712,9 @@ void Driver::workflow() {
         for(unsigned i=0;i<3;++i) require(o.presented->view_camera[i+3]==zoom_before_.target[i],"Walk pose did not reach worker");
         checkpoint(o,"19-camera-walk"); return true;
     });
-    fill(field("Zoom"), "2");
+    fill(field("Time"), "9"); // A draft in a controls field; Escape discards it below.
     add("Typing movement letters in a numeric field cannot move the camera", [this](const Observation&) {
+        require(camera_mode("Walk"),"Focusing a text field left Walk");
         events_.push_back({.kind=input::EventKind::key_down,.key=input::Key::w}); return true;
     });
     add("Focused fields suppress walk input", [this](const Observation& o) {
@@ -4711,7 +4722,24 @@ void Driver::workflow() {
         events_.push_back({.kind=input::EventKind::key_up,.key=input::Key::w});
         key(input::Key::escape); return true;
     });
+    add("Escape taken by the focused field keeps Walk", [this](const Observation& o) {
+        require(camera_mode("Walk"),"An Escape claimed by a text field left Walk");
+        require(o.state.viewport.editor_camera==zoom_before_,"Discarding the field draft moved the camera");
+        key(input::Key::escape); return true;
+    });
     wait("Escape exits walk mode", [this](const Observation&) { return actionable(button("Walk (WASD / Q E)"))!=nullptr; });
+    click(button("Walk (WASD / Q E)"));
+    click(button("Camera settings"));
+    add("Camera settings hides the camera menu", [this](const Observation& o) {
+        if(!find(button("Close camera settings"))) return false;
+        require(!camera_mode("Walk"),"The docked camera menu stayed over Camera settings");
+        zoom_before_=o.state.viewport.editor_camera;
+        events_.push_back({.kind=input::EventKind::key_down,.key=input::Key::w}); return true;
+    });
+    add("A hidden camera menu hands LMB and keys back to the object tools", [this](const Observation& o) {
+        require(o.state.viewport.editor_camera==zoom_before_,"Walk kept moving without its visible menu");
+        events_.push_back({.kind=input::EventKind::key_up,.key=input::Key::w}); return true;
+    });
     fill(field("Maximum viewing distance","CAMERA SETTINGS"),"60000");
     click(button("Save camera preferences"));
     wait("Flyout preferences reach worker without changing document",[this](const Observation& o) {

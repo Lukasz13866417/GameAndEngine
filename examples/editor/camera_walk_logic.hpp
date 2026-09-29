@@ -9,7 +9,8 @@
 
 namespace editor_example {
 // Private input state, not a scene component. The host decides whether typing,
-// a modal dialog, or another viewport tool owns this input batch.
+// a modal dialog, or another viewport tool owns this input batch. The owner
+// arms and disarms Walk; interrupted input only releases the held keys.
 class CameraWalkLogic {
 public:
     void active(bool value) { active_=value; stop(); }
@@ -21,13 +22,13 @@ public:
                 std::optional<std::span<const vng::input::Event>> unhandled = {}) {
         using namespace vng::input;
         const AvailableEvents available{unhandled.value_or(std::span<const Event>{input.events})};
-        if (!input.focused || input.overflow) { active(false); return false; }
-        // Escape is lifecycle cancellation, like focus loss or a key release:
-        // an already-running walk must stop even if UI consumed that key.
+        // Focus loss and Escape are lifecycle releases, like a key release:
+        // held movement stops even if UI consumed the key. Walk stays armed.
+        if (!input.focused || input.overflow) { stop(); return false; }
         for (const auto& event:input.events)
             if (event.kind==EventKind::focus_lost ||
                 (event.kind==EventKind::key_down && event.key==Key::escape)) {
-                active(false); return false;
+                stop(); return false;
             }
         if (!active_ || !enabled) { stop(); return false; }
         constexpr std::array keys{Key::w,Key::s,Key::d,Key::a,Key::e,Key::q};

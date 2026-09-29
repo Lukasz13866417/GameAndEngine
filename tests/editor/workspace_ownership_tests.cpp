@@ -184,3 +184,14 @@ TEST_CASE("Delete and copy target scene instances only in Objects mode","[editor
     CHECK(f.workspace.delete_selection().changed);
     CHECK(f.workspace.state().document.instances.size()==count-1);
 }
+TEST_CASE("Hiding the camera menu hands LMB back to the object tools","[editor][workspace-ownership]") {
+    WorkspaceFixture f;
+    f.workspace.choose_camera_gizmo(CameraGizmoMode::walk);
+    f.workspace.present_camera_gizmo({.viewport={0,0,800,600}},Settings{});
+    REQUIRE(f.workspace.interaction().object_tools_suspended());
+    // Docked Camera settings, Logs, a dialog or Play hide the corner menu. No
+    // explicit mode survives without the menu that names it and leaves it.
+    f.workspace.present_camera_gizmo({.viewport={0,0,800,600},.visible=false},Settings{});
+    CHECK_FALSE(f.workspace.interaction().object_tools_suspended());
+    CHECK_FALSE(f.workspace.interaction().camera_gizmo().walking().active());
+}

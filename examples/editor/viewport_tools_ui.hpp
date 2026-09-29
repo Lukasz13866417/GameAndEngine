@@ -167,7 +167,6 @@ private:
     friend struct Dispatcher;
     NavigationReply handle(const Navigate&,const NavigationContext& context) {
         if(context.cancel) navigation_.cancel_pointer();
-        if(context.walk_active) navigation_.walking(*context.walk_active);
         if(!context.frame) return {};
         const bool allowed=context.enabled && accepts(ViewportTool::navigation);
         auto reply=navigation_.update(*context.frame,allowed);

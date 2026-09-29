@@ -429,17 +429,19 @@ TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losi
     NavigationFrame frame{.pose={0,0,8,{},1},.mode=ViewMode::scene,
         .viewport={0,0,800,600},.raw=raw,.unhandled=raw.events,.seconds=.016,
         .drag_speeds={},.walk_speeds={}};
-    auto reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.walk_active=true});
+    interaction.select_camera(CameraGizmoMode::walk);
+    CHECK(interaction.object_tools_suspended());
+    auto reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame});
     CHECK(reply.changed);
     CHECK(reply.pose.target.z<0.F);
     CHECK(navigation.walking().moving());
     frame.pose=reply.pose;
-    raw.events.clear(); frame.unhandled={}; raw.focused=false; frame.controls_have_focus=true;
+    raw.events.clear(); frame.unhandled={}; raw.focused=false;
     reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame});
     CHECK_FALSE(reply.changed);
     CHECK(navigation.walking().active());
     CHECK_FALSE(navigation.walking().moving());
-    raw.focused=true; frame.controls_have_focus=false;
+    raw.focused=true;
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}}; frame.unhandled=raw.events;
     reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.enabled=false});
     CHECK_FALSE(reply.changed); CHECK_FALSE(navigation.walking().moving());
@@ -448,9 +450,11 @@ TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losi
     CHECK(report.find("Unavailable")!=std::string::npos);
     CHECK(navigation.debug_string()==report);
     raw.events.clear(); frame.unhandled={};
-    reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.walk_active=false});
+    interaction.resume_object_tools();
+    reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame});
     CHECK(navigation.debug_report().situation=="Orbit");
     CHECK_FALSE(navigation.walking().active());
+    CHECK_FALSE(interaction.object_tools_suspended());
     CHECK_FALSE(reply.changed);
 }
 

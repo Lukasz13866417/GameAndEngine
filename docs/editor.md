@@ -267,19 +267,25 @@ metadata and **Logs → Interaction timing** measurements/export.
   adjusts near/far clipping with orbit distance. These limits do not restrict
   forward travel or optical zoom; the separate **Zoom** field accepts 0.05–1000.
   The **Camera modes** menu in the viewport's bottom-right corner is a compact,
-  scrollable parent gizmo. It becomes the visible camera target when no object
-  gizmo is active. Pick **Orbit**, **Look**, **Pan**, **Forward / back**, **Optical
+  scrollable parent gizmo. It becomes the visible camera target, and unfolds,
+  when no object gizmo is active; it folds when an object gizmo takes over.
+  Its heading only folds or unfolds it. Pick **Orbit**, **Look**, **Pan**, **Forward / back**, **Optical
   zoom** or **Walk** to explicitly operate the camera with LMB drag. Look turns
   in place; Orbit rotates around the current reference point. **Ctrl+Left/Right**
   cycles camera children when this gizmo is active (either Control key).
   **Object tools / selection (Esc)** releases LMB back to editing, without
-  clearing the object selection. Normal navigation shortcuts remain available
+  clearing the object selection; so does selecting an instance or anything that
+  hides the corner menu (a docked **Camera settings** flyout, **Logs**, a dialog
+  or Play). Escape first ends what claimed it: a focused text field, an open
+  dropdown, flyout or menu. Only an Escape that nothing else claimed leaves the
+  chosen camera mode. Normal navigation shortcuts remain available
   during object edits without changing the chosen object gizmo.
   **Walk** enables keyboard navigation: **W/S** forward/back along the
   camera's direction (including pitch), **A/D** sideways relative to the camera,
   **E/Q** world up/down. **Shift** increases speed; **middle-drag** looks around
   in place. **Object tools / selection** or **Escape** exits. Typing in a field, opening a
-  dialog, or losing focus releases held movement keys. Speeds are scene units
+  dialog, or losing focus releases held movement keys and camera drags without
+  leaving the chosen mode. Speeds are scene units
   per second, not per frame. Its local options show separate forward, sideways,
   vertical speeds and a Shift multiplier **only while Walk is selected**.
   Other camera children show their own sensitivity instead. Sliders change it

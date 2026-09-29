@@ -911,6 +911,10 @@ int run(const Options& options) {
                 !viewport_interaction.busy()&&!editing.busy()&&!walk.active()&&!playing&&!modal_visible(),
                 camera_ui.opened()&&!viewport_window.opened()}});
         const bool viewport_popup=mesh_tools.menu_open() || regions.menu_open() || camera_gizmo.contains(viewport_raw.pointer) || tool_panel.contains(viewport_raw.pointer) || workspace.viewport_controls_contain(viewport_raw.pointer);
+        // Escape first closes an open flyout or menu, or ends UI editing. Only
+        // an unclaimed Escape leaves an explicitly chosen camera mode.
+        const bool escape_claimed = popup_shortcut_capture || (!viewport_window.opened() &&
+            (ui_shortcut_capture || camera_ui.opened() || workspace.list_flyout_open() || timeline.menu_open()));
         // A docked popup under the pointer gets first refusal for pointer input.
         // A text field, popup or capture in the controls keeps its keystrokes:
         // neither the popup layer nor a shortcut (Delete, Ctrl+Z) sees them.
@@ -1323,9 +1327,9 @@ int run(const Options& options) {
             .presented={image_camera,image_extent,image.bounds(),session->active_generation(),image_revision,
                 minimum_overlay_revision,image_time_current,delivery.ready(session->active_generation(),state.document.revision),
                 current_schema!=schemas.end()?&current_schema->second:nullptr},
-            .navigation={settings.camera_drag,settings.walk,settings.scroll_moves_camera,
-                viewport_enabled&&!inspecting()&&!camera_cancelled&&!camera_numeric_active,
-                viewport_window.opened()&&raw.focused,camera_numeric_active},
+            .navigation={.drag_speeds=settings.camera_drag,.walk_speeds=settings.walk,.move_forward=settings.scroll_moves_camera,
+                .enabled=viewport_enabled&&!inspecting()&&!camera_cancelled&&!camera_numeric_active,
+                .escape_claimed=escape_claimed,.numeric_active=camera_numeric_active},
             .tools={viewport_enabled&&!modal_visible(),viewport_ready&&!modal_visible(),workspace.interaction_mode()==InteractionMode::vertices,
                 diagnostic.value(),session->busy(),toolbar_blocks_viewport,
                 view_state.mode==ViewMode::scene&&(!modal_visible()||regions.menu_open())&&!logs_visible&&!playing&&!diagnostic.value(),

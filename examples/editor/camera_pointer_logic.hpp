@@ -17,7 +17,6 @@ public:
     // the legacy modifier-selected MMB gesture by leaving this unset.
     void gesture(DragMode mode, bool primary_button) { gesture_=mode; primary_button_=primary_button; }
     void scroll_mode(ScrollMode mode) { if (mode != scroll_mode_) cancel(); scroll_mode_ = mode; }
-    void look_in_place(bool enabled) { look_in_place_ = enabled; }
     void speeds(CameraDragSpeeds speeds) { speeds_ = speeds; }
     void orbit_enabled(bool enabled) { orbit_enabled_=enabled; }
     // Optional displayed object center for MMB orbit, pan and dolly.
@@ -42,7 +41,7 @@ public:
     [[nodiscard]] DebugReport debug_report() const {
         return {.name="navigation", .role="camera pointer navigation",
             .situation=dragging_ ? (mode_==DragMode::orbit ? "Orbit" : mode_==DragMode::look ? "Look" : mode_==DragMode::pan ? "Pan" : mode_==DragMode::zoom ? "Zoom" : "Dolly") : "Idle",
-            .received={{"orbit enabled",debug_bool(orbit_enabled_)}, {"look in place",debug_bool(look_in_place_)},
+            .received={{"orbit enabled",debug_bool(orbit_enabled_)},
                 {"mesh surface reference supplied",debug_bool(surface_!=nullptr)}},
             .owned={{"pointer captured",debug_bool(dragging_)}, {"pointer handled",debug_bool(handled_)},
                 {"cancelled",debug_bool(cancelled_)}, {"scroll",scroll_mode_==ScrollMode::zoom ? "optical zoom" : "move forward"},
@@ -63,7 +62,6 @@ private:
     ScrollMode scroll_mode_{ScrollMode::move_forward};
     CameraDragSpeeds speeds_{};
     bool dragging_{}, handled_{}, cancelled_{};
-    bool look_in_place_{};
     bool orbit_enabled_{true};
     std::optional<vng::Vec3> drag_origin_,captured_origin_;
     const vng::editor::EditableMesh* surface_{};

@@ -2,6 +2,7 @@
 #include <vng/ui/inspection.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <cmath>
 
 namespace {
 using namespace vng;
@@ -140,17 +141,53 @@ TEST_CASE("Camera wheel and zoom child have separate configurable sensitivities"
     fast.send({{.kind=EventKind::scroll,.position={100,100},.scroll={0,.1F}}});
     CHECK(normal.frame.pose.target==previous);CHECK(fast.frame.pose.zoom>normal.frame.pose.zoom);
 }
-TEST_CASE("Walking pauses for typing and popout controls focus without losing its mode", "[editor][camera_gizmo]") {
+TEST_CASE("Walking pauses for typing and focus loss without losing its mode", "[editor][camera_gizmo]") {
     Motion m;m.gizmo.select(CameraGizmoMode::walk);
     REQUIRE(m.send({{.kind=EventKind::key_down,.key=Key::w}}).changed);
     m.frame.keyboard_enabled=false;CHECK_FALSE(m.send().changed);CHECK(m.gizmo.walking().active());
     m.frame.keyboard_enabled=true;CHECK_FALSE(m.send().changed); // No stuck held key.
-    m.raw.focused=false;m.frame.controls_have_focus=true;
-    CHECK_FALSE(m.send({{.kind=EventKind::focus_lost}}).changed);CHECK(m.gizmo.walking().active());
-    m.raw.focused=true;m.frame.controls_have_focus=false;
     REQUIRE(m.send({{.kind=EventKind::key_down,.key=Key::w}}).changed);
+    m.raw.focused=false;
+    CHECK_FALSE(m.send({{.kind=EventKind::focus_lost}}).changed);
+    CHECK(m.gizmo.walking().active());CHECK(m.gizmo.exclusive());
+    m.raw.focused=true;CHECK_FALSE(m.send().changed); // Focus returns without the released key.
+    REQUIRE(m.send({{.kind=EventKind::key_down,.key=Key::w}}).changed);
+    // A field or flyout that claimed Escape ends held movement, not Walk.
+    m.frame.escape_claimed=true;
+    CHECK_FALSE(m.send({{.kind=EventKind::key_down,.key=Key::escape}},false).changed);
+    CHECK(m.gizmo.walking().active());CHECK_FALSE(m.send().changed);
+    // An unclaimed Escape leaves Walk, even when UI used it just to drop button focus.
+    m.frame.escape_claimed=false;
     CHECK_FALSE(m.send({{.kind=EventKind::key_down,.key=Key::escape}},false).changed);
     CHECK_FALSE(m.gizmo.walking().active());CHECK_FALSE(m.gizmo.exclusive());
+}
+TEST_CASE("A chosen camera child survives focus loss and claimed Escape but releases its drag", "[editor][camera_gizmo]") {
+    Motion m;m.gizmo.select(CameraGizmoMode::pan);
+    m.send({{.kind=EventKind::pointer_down,.position={100,100}}});REQUIRE(m.gizmo.dragging());
+    m.raw.focused=false;
+    auto reply=m.send({{.kind=EventKind::focus_lost}});
+    CHECK(reply.cancelled);CHECK_FALSE(m.gizmo.dragging());
+    CHECK(m.gizmo.exclusive());CHECK(m.gizmo.mode()==CameraGizmoMode::pan);
+    m.raw.focused=true;
+    m.send({{.kind=EventKind::pointer_down,.position={100,100}}});REQUIRE(m.gizmo.dragging());
+    m.frame.escape_claimed=true;
+    reply=m.send({{.kind=EventKind::key_down,.key=Key::escape}},false);
+    CHECK(reply.cancelled);CHECK_FALSE(m.gizmo.dragging());CHECK(m.gizmo.exclusive());
+    m.frame.escape_claimed=false;
+    // A blocked viewport (dialog, toolbar menu) does not receive the mode change.
+    m.send({{.kind=EventKind::key_down,.key=Key::escape}},true,false);CHECK(m.gizmo.exclusive());
+    m.send({{.kind=EventKind::key_down,.key=Key::escape}},false);CHECK_FALSE(m.gizmo.exclusive());
+    CHECK(m.gizmo.mode()==CameraGizmoMode::orbit);
+}
+TEST_CASE("Version 8 settings keep their Ctrl-drag optical zoom speed", "[editor][camera_gizmo][settings]") {
+    auto v8=decode_settings("vng-editor-settings 8\n60 60 0 10 100\n0.01 10000\n256\n4096\n1\n10000 10 10 10 4\n100\n1 3 0.3 0\n");
+    REQUIRE(v8);REQUIRE_FALSE(v8->scroll_moves_camera);
+    Motion m;m.frame.drag_speeds=v8->camera_drag;m.frame.move_forward=v8->scroll_moves_camera;
+    const auto before=m.frame.pose.zoom;
+    m.drag(2,{.control=true}); // 30 logical pixels down.
+    // Version 8 applied zoom *= exp(-dy * .01 * its Ctrl-drag multiplier).
+    CHECK(m.frame.pose.zoom==Catch::Approx(before*std::exp(-30*.01F*3)));
+    CHECK(m.frame.pose.target==Vec3{});
 }
 TEST_CASE("Camera corner menu is bounded scrollable and retains widgets across mode changes", "[editor][ui][camera_gizmo]") {
     Menu m;m.pump();m.pump();
@@ -171,6 +208,27 @@ TEST_CASE("Camera corner menu is bounded scrollable and retains widgets across m
     const auto report=m.gizmo.debug_string();CHECK(report.find("Editor camera")!=std::string::npos);
     m.presentation.target="Entered camera: cockpit";m.pump();
     CHECK(m.gizmo.debug_string().find("Entered camera: cockpit")!=std::string::npos);
+}
+TEST_CASE("Camera menu heading unfolds the menu without choosing a camera mode", "[editor][ui][camera_gizmo]") {
+    Menu m;m.presentation.other_gizmo=true;m.pump();m.pump();
+    const auto heading=[&] {
+        auto tree=m.screen.inspect();REQUIRE(tree);
+        for(const auto& w:tree->widgets)if(w.role==ui::WidgetRole::button&&w.label.starts_with("Camera modes / "))return w;
+        FAIL("Missing camera menu heading");return ui::WidgetSnapshot{};
+    };
+    // An object gizmo is the target: the camera menu stays folded and passive.
+    CHECK(heading().label.ends_with(" +"));CHECK_FALSE(m.gizmo.expanded());
+    m.click(heading());m.pump();
+    CHECK(m.gizmo.expanded());CHECK(heading().label.ends_with(" −"));
+    CHECK_FALSE(m.gizmo.exclusive());CHECK_FALSE(m.gizmo.active());
+    // Choosing a child is the explicit choice that borrows LMB.
+    m.click(m.reveal(ui::WidgetRole::button,"Pan (Shift + MMB)"));
+    CHECK(m.gizmo.exclusive());CHECK(m.gizmo.mode()==CameraGizmoMode::pan);
+    m.click(m.reveal(ui::WidgetRole::button,"Object tools / selection (Esc)"));
+    CHECK_FALSE(m.gizmo.exclusive());CHECK(m.gizmo.expanded());
+    // Becoming the camera target again unfolds it; losing that role folds it.
+    m.presentation.other_gizmo=false;m.pump();CHECK(m.gizmo.expanded());
+    m.presentation.other_gizmo=true;m.pump();CHECK_FALSE(m.gizmo.expanded());
 }
 TEST_CASE("Walk speed sliders update immediately but persist only on release", "[editor][ui][camera_gizmo]") {
     Menu m;m.gizmo.select(CameraGizmoMode::walk);m.pump();m.pump();
