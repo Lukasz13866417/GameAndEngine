@@ -152,12 +152,15 @@ struct WorkspaceReply { MeshEditingReply mesh{}; SceneListsReply lists{}; Timeli
 enum class SelectionTarget { instances, keyframes };
 struct WorkspaceCommandResult {std::string message;bool discontinuous{}, changed{};};
 // User-facing result of a complete workspace operation, not a child edit proposal.
-struct WorkspaceFeedback {std::string message;bool authored{},camera_changed{},mode_changed{};};
+// pose_finished: a gesture ended; the host presents the worker's latest controls.
+struct WorkspaceFeedback {std::string message;bool authored{},camera_changed{},mode_changed{},pose_finished{};};
 struct InspectorReply {std::vector<vng::editor::Event> events;WorkspaceFeedback feedback;};
 // Only facts owned above the workspace. Document/tool eligibility is derived
 // below, not duplicated by the application for each individual widget.
+// gesture is the host's frame-start snapshot: a gesture starting during this
+// input frame changes availability from the next frame, as for other controls.
 struct WorkspacePanelFrame {
-    bool modal{}, mode_pending{}, playing{}, inspector_ready{};
+    bool modal{}, mode_pending{}, playing{}, inspector_ready{}, gesture{};
 };
 class EditingWorkspaceUI final {
 public:
@@ -216,7 +219,10 @@ public:
                            vng::ui::Container region_controls,vng::ui::Container bounds_controls);
     void layout_panels(EditorLayout&,vng::Vec2 screen_size);
     bool resize_panels(const EditorLayout&);
+    // Once per frame: every panel's availability. Later in the frame, only the
+    // pose controls are refreshed after selection/schema/playback changes.
     void present_panels(const WorkspacePanelFrame&);
+    void present_pose_controls(const WorkspacePanelFrame&);
     void sync_sidebar();
     void poll_tabs();
     [[nodiscard]] SidebarTab sidebar_tab() const;
@@ -426,8 +432,9 @@ private:
         change.active_changed=change.previous_active!=change.active;
         if(reset_vertex && (change.active_changed || change.changed)) view.selected_vertex=0;
         view.selected_object=change.active;
+        // Explicit selection hands LMB back to the object tools.
         if(reset_vertex && viewport_ && viewport_->interaction_)
-            viewport_->interaction_->camera_gizmo().object_tools();
+            viewport_->interaction_->resume_object_tools();
         synchronize_selection_gizmos(change.active_changed || change.changed);
         if(change.active_changed || change.changed) present_selection(reset_vertex);
         if(reset_vertex&&viewport_&&viewport_->interaction_)
@@ -583,7 +590,6 @@ private:
     bool gizmos_dirty_{};
     std::string last_blueprint_status_;
     std::string selection_message_;
-    std::optional<vng::editor::Schema> inspector_schema_;
     std::optional<EditingViewportUI> viewport_;
     std::optional<SceneLists> lists_;
     std::optional<TimelineEditingUI> timeline_;

@@ -122,8 +122,9 @@ WorkspaceCommandResult EditingWorkspaceUI::shortcut(EditShortcut shortcut) {
     } else if(shortcut==EditShortcut::copy) {
         const bool keys=keyboard_target_==SelectionTarget::keyframes;
         const auto count=keys?timeline_view().selected_keyframes().size():selected_instances().size();
+        const bool instances=viewport().mode!=ViewMode::mesh&&interaction_mode()==InteractionMode::objects;
         auto result=keys?editing_.copy_keyframes(timeline_view().selected_keyframes()):
-            editing_.copy_instances(viewport().mode!=ViewMode::mesh?selected_instances().items():std::span<const u32>{});
+            editing_.copy_instances(instances?selected_instances().items():std::span<const u32>{});
         if(!result)reply.message="Copy failed: "+result.error().message;
         else reply.message="Copied "+std::to_string(count)+(keys?(count==1?" keyframe":" keyframes"):(count==1?" instance":" instances"))+
             (keys?" / Ctrl+V preserves relative timing":" / Ctrl+V pastes in place");
@@ -165,10 +166,12 @@ WorkspaceCommandResult EditingWorkspaceUI::delete_selection() {
         const auto count=std::ranges::count_if(keys,[](f32 time){return time!=0;});
         if(!count){reply.message="Time zero is the permanent initial keyframe";return reply;}
         result=editing_.erase_keyframes(keys);removed=std::to_string(count)+" keyframe(s)";
+    } else if(interaction_mode()==InteractionMode::vertices) {
+        reply.message="Switch to Objects mode to delete an instance; vertex deletion is not supported.";return reply;
     } else if(viewport().mode!=ViewMode::mesh&&viewport().selected_object) {
         removed=std::to_string(selected_instances().size())+" instance(s) (blueprints kept)";
         result=editing_.erase_instances(selected_instances().items());
-    } else {reply.message="Switch to Objects mode to delete an instance; vertex deletion is not supported.";return reply;}
+    } else return reply; // Nothing selected: nothing to delete, nothing to explain.
     if(!result){reply.message=result.error().message;return reply;}
     if(!*result)return reply;
     if(keyboard_target_==SelectionTarget::keyframes)

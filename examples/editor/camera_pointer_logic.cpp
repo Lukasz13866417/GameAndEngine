@@ -124,7 +124,7 @@ void CameraPointerLogic::move(CameraPose& s, ViewMode view, bool& smooth_zoom, V
     const double boost=fast?4.:1.;
     if (mode_ == DragMode::orbit || mode_ == DragMode::look) {
         const auto before=s;
-        const bool look=look_in_place_ || mode_==DragMode::look;
+        const bool look=mode_==DragMode::look;
         const auto eye = look ? camera(s,view).position() : Vec3{};
         s.yaw = static_cast<f32>(std::remainder(s.yaw - dx * speeds_.rotation, 360.0));
         s.pitch =

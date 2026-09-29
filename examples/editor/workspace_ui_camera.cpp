@@ -37,7 +37,7 @@ bool EditingWorkspaceUI::end_camera_visit(bool restore) {
     auto& visit=viewport_->camera_->visit_;
     if(!visit)return false;
     if(restore)viewport().editor_camera=visit->previous;
-    visit.reset();interaction_child().camera_gizmo().object_tools();
+    visit.reset();interaction_child().resume_object_tools();
     sync_camera_controls();
     return true;
 }
@@ -48,8 +48,8 @@ std::string EditingWorkspaceUI::visit_camera(u32 id,bool editable) {
     const auto previous=visit?visit->previous:viewport().editor_camera;
     visit=CameraVisit{id,editable,previous};
     viewport().editor_camera=camera_pose(evaluate_instance(state(),*instance,viewport().time));
-    auto& gizmo=interaction_child().camera_gizmo();
-    gizmo.object_tools();if(editable)gizmo.select(CameraGizmoMode::look);
+    auto& tools=interaction_child();
+    tools.resume_object_tools();if(editable)tools.select_camera(CameraGizmoMode::look);
     sync_camera_controls();
     return editable?"Looking through "+instance->name+" / navigate freely, then Save this camera to author the view":
         "Inspecting "+instance->name+" / read-only view; Back returns to the editor view";

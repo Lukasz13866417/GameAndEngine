@@ -35,8 +35,20 @@ public:
         : regions(controls, creation, inspector, popup.column()), instances(editing), rotation(editing), mesh(editing), editing_(editing), navigation_(popup.column()) {}
 
     struct Navigate {};
-    [[nodiscard]] CameraGizmo& camera_gizmo() { return navigation_; }
+    // The camera gizmo borrows LMB from these object tools, so this viewport
+    // owns their arbitration. Its parent supplies facts, not widget handles.
     [[nodiscard]] const CameraGizmo& camera_gizmo() const { return navigation_; }
+    // An explicitly chosen camera child owns LMB; object tools are suspended.
+    [[nodiscard]] bool object_tools_suspended() const { return navigation_.exclusive(); }
+    void present_camera(CameraGizmo::Presentation presentation, const Settings& settings) {
+        presentation.other_gizmo = presentation.other_gizmo || instances.active() || translation.visible() ||
+            rotation.visible() || scale.visible() || mesh.visible() || mesh_part.visible() ||
+            regions.tool().gizmo_visible() || pivot.visible() || bounds.handle(0) || bounds.handle(1);
+        navigation_.present(presentation, settings);
+    }
+    [[nodiscard]] CameraPreferenceEdit poll_camera(const Settings& settings) { return navigation_.poll(settings); }
+    void select_camera(CameraGizmoMode mode) { navigation_.select(mode); }
+    void resume_object_tools() { navigation_.object_tools(); }
     [[nodiscard]] DebugReport debug_report() const {
         const auto name=[](ViewportTool tool) {
             constexpr std::array names{"none","navigation","boundary","bounds","instances","translation",
@@ -108,7 +120,7 @@ public:
         return owner!=ViewportTool::none && owner!=ViewportTool::navigation && owner!=ViewportTool::selection;
     }
     [[nodiscard]] bool accepts(ViewportTool tool) const {
-        if(navigation_.exclusive() && tool!=ViewportTool::navigation)return false;
+        if(object_tools_suspended() && tool!=ViewportTool::navigation)return false;
         const auto owner = active();
         if(tool==ViewportTool::navigation && transforming())return true;
         return (owner == ViewportTool::none || owner == tool) &&
@@ -155,7 +167,6 @@ private:
     friend struct Dispatcher;
     NavigationReply handle(const Navigate&,const NavigationContext& context) {
         if(context.cancel) navigation_.cancel_pointer();
-        if(context.walk_active) navigation_.walking(*context.walk_active);
         if(!context.frame) return {};
         const bool allowed=context.enabled && accepts(ViewportTool::navigation);
         auto reply=navigation_.update(*context.frame,allowed);

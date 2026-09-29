@@ -47,7 +47,10 @@ void EditingWorkspaceUI::poll_tabs() {
 }
 SidebarTab EditingWorkspaceUI::sidebar_tab() const {return panels_?panels_->sidebar_tab:SidebarTab::scene;}
 void EditingWorkspaceUI::show_tab(SidebarTab tab) {if(panels_)panels_->sidebar_tab=tab;sync_sidebar();}
-InteractionMode EditingWorkspaceUI::interaction_mode() const {return panels_->interaction->value();}
+InteractionMode EditingWorkspaceUI::interaction_mode() const {
+    if(panels_)return panels_->interaction->value();
+    return state().viewport.mode==ViewMode::mesh?InteractionMode::vertices:InteractionMode::objects;
+}
 void EditingWorkspaceUI::interaction_mode(InteractionMode mode) {panels_->interaction->value(mode);}
 std::optional<InteractionMode> EditingWorkspaceUI::changed_interaction_mode() {return panels_->interaction->changedValue();}
 void EditingWorkspaceUI::refresh_selection(bool synchronize_document) {
@@ -153,14 +156,8 @@ MeshEditingReply EditingWorkspaceUI::poll_vertex_controls(bool allowed) {
 }
 bool EditingWorkspaceUI::save_mesh_requested() {return panels_->save_mesh_draft.clicked();}
 bool EditingWorkspaceUI::publish_mesh_requested() {return panels_->publish_mesh.clicked();}
-void EditingWorkspaceUI::show_inspector(const editor::Schema& schema) {
-    inspector_schema_=schema;
-    if(panels_)panels_->inspector->show(schema);
-}
-void EditingWorkspaceUI::clear_inspector() {
-    inspector_schema_.reset();
-    if(panels_)panels_->inspector->clear();
-}
+void EditingWorkspaceUI::show_inspector(const editor::Schema& schema) {if(panels_)panels_->inspector->show(schema);}
+void EditingWorkspaceUI::clear_inspector() {if(panels_)panels_->inspector->clear();}
 void EditingWorkspaceUI::reset_inspector_scale(f32 value) {if(panels_)panels_->inspector->reset_number("transform","scale",value);}
 InspectorReply EditingWorkspaceUI::poll_inspector(bool local_scale) {
     auto& inspector=*panels_->inspector;
@@ -175,9 +172,19 @@ InspectorReply EditingWorkspaceUI::poll_inspector(bool local_scale) {
 }
 void EditingWorkspaceUI::sync_bounds() {if(bounds_panel_)bounds_panel_->sync(state().document.world_bounds);}
 void EditingWorkspaceUI::bounds_available(bool enabled) {bounds_panel_->available(viewport().mode==ViewMode::scene,enabled);}
+void EditingWorkspaceUI::present_pose_controls(const WorkspacePanelFrame& f) {
+    auto& p=*panels_;auto& tools=interaction_child();const auto& view=viewport();
+    const bool remote=editing_.awaiting_remote(),busy=editing_.busy();
+    const bool numeric_scale=editing_.active(EditGesture::scale)&&!tools.scale.dragging()&&!tools.instances.active();
+    p.properties_panel.enabled(view.mode==ViewMode::mesh?(!f.modal&&!f.mode_pending&&!busy&&!f.gesture):
+        editing_.can_edit_scene_pose()&&!f.modal&&!f.mode_pending&&!remote&&(numeric_scale||(!f.gesture&&f.inspector_ready)));
+    gizmo_selector_child().enabled(editing_.can_edit_scene_pose()&&!f.playing&&!f.mode_pending&&!f.gesture&&
+        selected_instances().size()!=0&&view.mode==ViewMode::scene&&interaction_mode()==InteractionMode::objects);
+    blueprint_panel_child().enabled(!f.modal&&!f.gesture&&!f.mode_pending&&!busy);
+}
 void EditingWorkspaceUI::present_panels(const WorkspacePanelFrame& f) {
     auto& p=*panels_;auto& tools=interaction_child();const auto& view=viewport();
-    const bool gesture=tools.busy()||timeline_view().dragging();
+    const bool gesture=f.gesture;
     const bool camera_numeric=editing_.active(EditGesture::camera)&&!tools.camera_gizmo().dragging()&&!tools.camera_gizmo().walking().moving();
     const bool remote=editing_.awaiting_remote(),busy=editing_.busy();
     const bool timeline_enabled=!f.modal&&!remote&&!f.playing&&!f.mode_pending&&!tools.busy();
@@ -187,13 +194,8 @@ void EditingWorkspaceUI::present_panels(const WorkspacePanelFrame& f) {
     const bool lists_enabled=!f.modal&&!remote&&!gesture;
     p.panels_splitter.enabled(lists_enabled);for(auto splitter:p.section_splitters)splitter.enabled(lists_enabled);
     (void)dispatch(*this,workspace_situation(view),WorkspaceContext{.lists=SceneListsContext{.enabled=lists_enabled}});
-    const bool numeric_scale=editing_.active(EditGesture::scale)&&!tools.scale.dragging()&&!tools.instances.active();
-    p.properties_panel.enabled(view.mode==ViewMode::mesh?(!f.modal&&!f.mode_pending&&!busy&&!gesture):
-        editing_.can_edit_scene_pose()&&!f.modal&&!f.mode_pending&&!remote&&(numeric_scale||(!gesture&&f.inspector_ready)));
-    gizmo_selector_child().enabled(editing_.can_edit_scene_pose()&&!f.playing&&!f.mode_pending&&!gesture&&
-        selected_instances().size()!=0&&view.mode==ViewMode::scene&&interaction_mode()==InteractionMode::objects);
     blueprint_panel_child().sync();
-    blueprint_panel_child().enabled(!f.modal&&!gesture&&!f.mode_pending&&!busy);
+    present_pose_controls(f);
     p.scene_panel.enabled(!f.modal&&!remote&&(!gesture||camera_numeric));
     sync_bounds();bounds_available(!gesture&&!f.playing&&!f.mode_pending&&view.paused);
     p.scene_list.enabled(!gesture);p.region_list.enabled(!gesture);p.blueprint_list.enabled(!gesture);

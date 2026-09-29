@@ -48,7 +48,7 @@ ViewportSelectionReply EditingWorkspaceUI::pick_viewport(const ViewportSelection
         if(auto applied=apply_pending(parts);!applied)reply.status=applied.error().message;
         else reply.blueprint_changed|=*applied;
     };
-    const bool enabled=c.tools.enabled && !tools.camera_gizmo().exclusive() && !tools.camera_gizmo().contains(c.input.raw.pointer) && c.input.raw.focused && !c.input.raw.overflow &&
+    const bool enabled=c.tools.enabled && !tools.object_tools_suspended() && !tools.camera_gizmo().contains(c.input.raw.pointer) && c.input.raw.focused && !c.input.raw.overflow &&
         image.bounds.width>0 && image.bounds.height>0 && !image.extent.empty();
     const auto events=input.route(c.input.raw.events,c.input.unhandled,image.bounds,
         context.selected_gizmo_handle,enabled&&!components.menu_open()&&tools.accepts(ViewportTool::selection));

@@ -247,6 +247,8 @@ metadata and **Logs → Interaction timing** measurements/export.
   **Ctrl + middle drag** moves the camera forward/backward by default: eye and
   pivot translate together, preserving zoom. Turn off **Scroll moves camera**
   in the camera gizmo's corner menu for optical zoom instead (1 = the original 43-degree lens).
+  The wheel uses the same sensitivity as the matching drag: **Forward / back**'s
+  multiplier when it moves the camera, **Optical zoom**'s when it zooms.
   Hold **Left Alt** for **4×** faster panning and forward/backward movement or
   optical zoom (wheel and Ctrl+middle-drag). Rotation is unaffected; Right Alt
   does not enable the boost.
@@ -265,19 +267,25 @@ metadata and **Logs → Interaction timing** measurements/export.
   adjusts near/far clipping with orbit distance. These limits do not restrict
   forward travel or optical zoom; the separate **Zoom** field accepts 0.05–1000.
   The **Camera modes** menu in the viewport's bottom-right corner is a compact,
-  scrollable parent gizmo. It becomes the visible camera target when no object
-  gizmo is active. Pick **Orbit**, **Look**, **Pan**, **Forward / back**, **Optical
+  scrollable parent gizmo. It becomes the visible camera target, and unfolds,
+  when no object gizmo is active; it folds when an object gizmo takes over.
+  Its heading only folds or unfolds it. Pick **Orbit**, **Look**, **Pan**, **Forward / back**, **Optical
   zoom** or **Walk** to explicitly operate the camera with LMB drag. Look turns
   in place; Orbit rotates around the current reference point. **Ctrl+Left/Right**
   cycles camera children when this gizmo is active (either Control key).
   **Object tools / selection (Esc)** releases LMB back to editing, without
-  clearing the object selection. Normal navigation shortcuts remain available
+  clearing the object selection; so does selecting an instance or anything that
+  hides the corner menu (a docked **Camera settings** flyout, **Logs**, a dialog
+  or Play). Escape first ends what claimed it: a focused text field, an open
+  dropdown, flyout or menu. Only an Escape that nothing else claimed leaves the
+  chosen camera mode. Normal navigation shortcuts remain available
   during object edits without changing the chosen object gizmo.
   **Walk** enables keyboard navigation: **W/S** forward/back along the
   camera's direction (including pitch), **A/D** sideways relative to the camera,
   **E/Q** world up/down. **Shift** increases speed; **middle-drag** looks around
-  in place. **Object tools / selection** or **Escape** exits. Typing in a field, opening a
-  dialog, or losing focus releases held movement keys. Speeds are scene units
+  in place. **Object tools / selection** or **Escape** exits. Typing in a field or
+  losing focus releases held movement keys and camera drags without leaving the
+  chosen mode; a dialog hides the corner menu and so also ends it. Speeds are scene units
   per second, not per frame. Its local options show separate forward, sideways,
   vertical speeds and a Shift multiplier **only while Walk is selected**.
   Other camera children show their own sensitivity instead. Sliders change it
@@ -292,7 +300,10 @@ metadata and **Logs → Interaction timing** measurements/export.
   zoom, viewing distance and orbit limits. Navigation modes and speeds belong
   to the camera gizmo instead: independent pan, forward and optical-zoom
   multipliers (default 1), and rotation in degrees per logical pixel (default
-  0.3, shared by Orbit and Look).
+  0.3, shared by Orbit and Look). Settings saved by older editors keep their
+  Ctrl + middle drag optical-zoom speed: the new optical-zoom multiplier starts
+  from their single Ctrl-drag multiplier. The wheel now follows the same
+  multiplier, so a non-default value also changes the wheel step.
   Pose controls remain live.
   Camera settings stay open while navigating the viewport; use **Close camera settings**
   (or Escape) to dismiss them. Navigation preferences have sliders plus typed fields;

@@ -40,6 +40,11 @@ struct WorkspaceFixture {
         pump();auto tree=screen.inspect();REQUIRE(tree);
         return std::ranges::any_of(tree->widgets,[&](const auto& widget){return widget.text.find(value)!=std::string::npos;});
     }
+    bool enabled(ui::WidgetRole role,std::string_view label) {
+        pump();auto tree=screen.inspect();REQUIRE(tree);
+        for(const auto& widget:tree->widgets)if(widget.role==role&&widget.label==label)return widget.enabled;
+        FAIL("Missing control: "<<label);return false;
+    }
 };
 // A mutable workspace must still expose only observations of its descendants.
 static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().interaction()),const ViewportToolsUI&>);
@@ -143,4 +148,50 @@ TEST_CASE("Workspace diagnostics include panel and camera state only under their
     CHECK(report.find("sidebar widgets")!=std::string::npos);
     CHECK(report.find("settings open")!=std::string::npos);
     f.workspace.close_camera_menu();CHECK_FALSE(f.workspace.camera_ui().opened());
+}
+TEST_CASE("Panel availability follows the host's frame-start gesture snapshot","[editor][workspace-ownership]") {
+    WorkspaceFixture f;f.keyframe();f.workspace.select_instance(1);
+    f.workspace.present_panels({.inspector_ready=true});
+    REQUIRE(f.enabled(ui::WidgetRole::dropdown,"Gizmo"));
+    // A keyboard transform begins during this input frame. Refreshing the pose
+    // controls later in the same frame keeps that frame's availability...
+    REQUIRE(f.workspace.begin_scale(1));REQUIRE(f.workspace.scale(2));
+    REQUIRE(f.workspace.interaction().busy());
+    f.workspace.present_pose_controls({.inspector_ready=true});
+    CHECK(f.enabled(ui::WidgetRole::dropdown,"Gizmo"));
+    // ...and the next frame's snapshot disables it with the rest of the sidebar.
+    f.workspace.present_panels({.inspector_ready=true,.gesture=true});
+    CHECK_FALSE(f.enabled(ui::WidgetRole::dropdown,"Gizmo"));
+    CHECK_FALSE(f.enabled(ui::WidgetRole::dropdown,"Mode"));
+    (void)f.workspace.cancel_interaction();
+    f.workspace.present_panels({.inspector_ready=true});
+    CHECK(f.enabled(ui::WidgetRole::dropdown,"Gizmo"));
+}
+TEST_CASE("Delete and copy target scene instances only in Objects mode","[editor][workspace-ownership]") {
+    WorkspaceFixture f;f.keyframe();
+    const auto count=f.workspace.state().document.instances.size();
+    f.workspace.clear_selection();
+    const auto nothing=f.workspace.delete_selection();
+    CHECK_FALSE(nothing.changed);CHECK(nothing.message.empty()); // Nothing selected, nothing to explain.
+    f.workspace.select_instance(1);
+    f.workspace.interaction_mode(InteractionMode::vertices);
+    const auto refused=f.workspace.delete_selection();
+    CHECK_FALSE(refused.changed);CHECK(refused.message.starts_with("Switch to Objects mode"));
+    CHECK(f.workspace.shortcut(EditShortcut::copy).message.starts_with("Copy failed"));
+    CHECK(f.workspace.state().document.instances.size()==count);
+    f.workspace.interaction_mode(InteractionMode::objects);
+    CHECK(f.workspace.shortcut(EditShortcut::copy).message.starts_with("Copied 1 instance"));
+    CHECK(f.workspace.delete_selection().changed);
+    CHECK(f.workspace.state().document.instances.size()==count-1);
+}
+TEST_CASE("Hiding the camera menu hands LMB back to the object tools","[editor][workspace-ownership]") {
+    WorkspaceFixture f;
+    f.workspace.choose_camera_gizmo(CameraGizmoMode::walk);
+    f.workspace.present_camera_gizmo({.viewport={0,0,800,600}},Settings{});
+    REQUIRE(f.workspace.interaction().object_tools_suspended());
+    // Docked Camera settings, Logs, a dialog or Play hide the corner menu. No
+    // explicit mode survives without the menu that names it and leaves it.
+    f.workspace.present_camera_gizmo({.viewport={0,0,800,600},.visible=false},Settings{});
+    CHECK_FALSE(f.workspace.interaction().object_tools_suspended());
+    CHECK_FALSE(f.workspace.interaction().camera_gizmo().walking().active());
 }

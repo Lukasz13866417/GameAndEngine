@@ -61,7 +61,7 @@ ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputCont
         .raw=input.raw,.unhandled=input.unhandled,.seconds=input.seconds,
         .drag_speeds=context.navigation.drag_speeds,.walk_speeds=context.navigation.walk_speeds,
         .move_forward=context.navigation.move_forward,.orbit_enabled=!(free_object||free_mesh||tools.regions.free_rotation_selected()),
-        .keyboard_enabled=input.keyboard_enabled,.controls_have_focus=context.navigation.controls_have_focus,
+        .keyboard_enabled=input.keyboard_enabled,.escape_claimed=context.navigation.escape_claimed,
         .origin=mesh_origin,.mesh=mesh_origin?editable_mesh(state):nullptr,
         .mesh_to_world=mesh_origin?editor_example::mesh_transform(state):Mat4::identity()},
         .enabled=eligibility.enabled&&context.navigation.enabled&&!context.navigation.numeric_active});
@@ -72,7 +72,7 @@ ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputCont
         finish_pose(ViewportTool::navigation,reply.navigation.cancelled,"Camera");
     // Explicitly selecting a camera child borrows the viewport, not the scene
     // selection. Keep object captures and pickers from competing with its LMB.
-    if(tools.camera_gizmo().exclusive())return reply;
+    if(tools.object_tools_suspended())return reply;
     tools.gizmo_input.route(tools.transforming(),reply.navigation_was_dragging||tools.camera_gizmo().handledPointer(),
         input.tool_menu,input.raw.pointer,input.raw.events,input.unhandled,static_cast<float>(input.frame_seconds),
         eligibility.enabled&&input.raw.focused&&!walk.active()&&input.keyboard_enabled&&

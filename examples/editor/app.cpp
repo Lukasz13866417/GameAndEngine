@@ -319,7 +319,9 @@ int run(const Options& options) {
     Extent2D image_extent = default_preview_extent, desired_preview_extent = default_preview_extent;
     auto started = std::chrono::steady_clock::now(), previous = started, pending_started = started,
          mode_started = started, last_ui_present = started, next_ui_frame = started;
-    bool unresponsive{}, stop_refresh{}, ui_keyboard_capture{}, ui_shortcut_capture{};
+    // Previous-frame UI ownership: a field, popup or capture that holds the
+    // keyboard when the next input frame arrives. popup_* is the popup layer.
+    bool unresponsive{}, stop_refresh{}, ui_keyboard_capture{}, ui_shortcut_capture{}, popup_shortcut_capture{};
     const auto component_report = [&] {
         return DebugReport{.name="editor", .role="application coordination",
             .situation=playing ? "IndependentPlay" : "Authoring",
@@ -474,8 +476,16 @@ int run(const Options& options) {
             flush_view(gen);
         }
     };
+    // Worker schemas arriving during a capture are not shown (the inspector is
+    // disabled then). A gesture's terminal event shows the latest one instead.
+    const auto show_current_inspector = [&] {
+        if (const auto schema = schemas.find(session->active_generation());
+            schema != schemas.end() && schema->second.stamp.revision == state.document.revision)
+            workspace.show_inspector(schema->second);
+    };
     const auto feedback = [&](const WorkspaceFeedback& reply) {
         if(reply.camera_changed){viewport_changed();workspace.sync_camera_controls();}
+        if(reply.pose_finished)show_current_inspector();
         if(!reply.message.empty())status.text(reply.message);
     };
     auto camera_changed = [&] {
@@ -569,10 +579,10 @@ int run(const Options& options) {
             playing,mode_pending,!logs_visible,modal_visible());
     };
     const auto present_camera_gizmo = [&] {
-        workspace.present_camera_gizmo({image.bounds(),{},
-            !playing&&!mode_pending&&!logs_visible&&!modal_visible()&&image_id!=0&&
+        workspace.present_camera_gizmo({.viewport=image.bounds(),
+            .visible=!playing&&!mode_pending&&!logs_visible&&!modal_visible()&&image_id!=0&&
                 (viewport_window.opened()||(!camera_ui.opened()&&!main_bar.opened()&&!scene_bar.opened())),
-            !inspecting()&&!editing.awaiting_remote()&&!viewport_interaction.transforming(),false},settings);
+            .enabled=!inspecting()&&!editing.awaiting_remote()&&!viewport_interaction.transforming()},settings);
     };
     // The playhead may start on time zero; this is not a keyframe selection.
     timeline_input({.input={.clear_selection=true}});
@@ -810,16 +820,19 @@ int run(const Options& options) {
         show_camera.enabled(!editing.awaiting_remote() && (!viewport_gesture || camera_numeric_active));
         files.enabled(!dialog_was_open);
         log_panel.enabled(!dialog_was_open);
-        const auto update_pose_controls = [&] {
-            workspace.present_panels({dialog_was_open,mode_pending,playing,
-                delivery.ready(session->active_generation(),state.document.revision) && debug_link.value() &&
-                !unresponsive && !session->busy() && current_schema!=schemas.end() &&
-                current_schema->second.stamp.revision==state.document.revision &&
-                current_schema->second.stamp.object==view_state.selected_object &&
-                current_schema->second.stamp.context>=workspace.minimum_inspector_sequence()});
-
+        // Panels follow the gesture state at the start of this input frame; a
+        // gesture that begins below changes them from the next frame.
+        const auto panel_frame = [&] {
+            return WorkspacePanelFrame{.modal=dialog_was_open,.mode_pending=mode_pending,.playing=playing,
+                .inspector_ready=delivery.ready(session->active_generation(),state.document.revision) && debug_link.value() &&
+                    !unresponsive && !session->busy() && current_schema!=schemas.end() &&
+                    current_schema->second.stamp.revision==state.document.revision &&
+                    current_schema->second.stamp.object==view_state.selected_object &&
+                    current_schema->second.stamp.context>=workspace.minimum_inspector_sequence(),
+                .gesture=viewport_gesture};
         };
-        update_pose_controls();
+        const auto update_pose_controls = [&] { workspace.present_pose_controls(panel_frame()); };
+        workspace.present_panels(panel_frame());
         view.enabled(!editing.awaiting_remote() && !viewport_gesture);
         pause.enabled(debug_link.value() && !playing && !editing.awaiting_remote() && !viewport_gesture);
         play.enabled(!mode_pending && !editing.awaiting_remote() && !viewport_gesture && !session->busy() &&
@@ -877,7 +890,7 @@ int run(const Options& options) {
             mesh_tools.mode()!=MeshSelectMode::whole && blueprint_mesh_panel.has_gizmo();
         const int gizmo_cycle = take_gizmo_cycle(shortcut_input,
             !dialog_was_open && (viewport_keyboard || !ui_shortcut_capture) && !editing.awaiting_remote() && !viewport_gesture &&
-            !playing && !mode_pending && !logs_visible && !camera_gizmo.exclusive() &&
+            !playing && !mode_pending && !logs_visible && !viewport_interaction.object_tools_suspended() &&
             view_state.paused && ((view_state.mode == ViewMode::scene && selected_instances.size() != 0 &&
             workspace.interaction_mode() == InteractionMode::objects) || (view_state.mode==ViewMode::mesh &&
             (part_gizmo_target || mesh_tools.mode()!=MeshSelectMode::surface))));
@@ -898,7 +911,24 @@ int run(const Options& options) {
                 !viewport_interaction.busy()&&!editing.busy()&&!walk.active()&&!playing&&!modal_visible(),
                 camera_ui.opened()&&!viewport_window.opened()}});
         const bool viewport_popup=mesh_tools.menu_open() || regions.menu_open() || camera_gizmo.contains(viewport_raw.pointer) || tool_panel.contains(viewport_raw.pointer) || workspace.viewport_controls_contain(viewport_raw.pointer);
-        if (viewport_popup && !viewport_window.opened()) ui_input.events.clear();
+        // Escape first closes an open flyout or menu, or ends UI editing. Only
+        // an unclaimed Escape leaves an explicitly chosen camera mode.
+        const bool escape_claimed = popup_shortcut_capture || (!viewport_window.opened() &&
+            (ui_shortcut_capture || camera_ui.opened() || workspace.list_flyout_open() || timeline.menu_open()));
+        // A docked popup under the pointer gets first refusal for pointer input.
+        // A text field, popup or capture in the controls keeps its keystrokes:
+        // neither the popup layer nor a shortcut (Delete, Ctrl+Z) sees them.
+        // A press in the same batch may move focus, so the popup then gets all.
+        const auto pointer_event = [](const input::Event& event) {
+            using K = input::EventKind;
+            return event.kind==K::pointer_move || event.kind==K::pointer_down || event.kind==K::pointer_up || event.kind==K::scroll;
+        };
+        const bool docked_popup = viewport_popup && !viewport_window.opened();
+        const bool controls_keyboard = docked_popup && ui_shortcut_capture && !popup_shortcut_capture &&
+            std::ranges::none_of(ui_input.events, [](const input::Event& event) { return event.kind==input::EventKind::pointer_down; });
+        auto popup_events = docked_popup ? ui_input.events : std::vector<input::Event>{};
+        if (docked_popup)
+            std::erase_if(ui_input.events, [&](const input::Event& event) { return !controls_keyboard || pointer_event(event); });
         auto input = screen.update(ui_input, dt, &clipboard);
         if (!input && raw.overflow) {
             // Screen discarded the incomplete input burst and released capture.
@@ -906,6 +936,7 @@ int run(const Options& options) {
             // that compensation and resume with the next complete input frame.
             ui_keyboard_capture = false;
             ui_shortcut_capture = false;
+            popup_shortcut_capture = false;
             status.text(input.error().message);
             broadcast();
             continue;
@@ -913,17 +944,25 @@ int run(const Options& options) {
         if (!input)
             return fail(input.error().message);
         if(workspace.resize_panels(geometry))layout(raw);
-        // Panels get first refusal when docked (except an open viewport popup).
-        // Detached menus consume only their own window's input.
+        // Panels get first refusal when docked (except for pointer input over
+        // a viewport popup). Detached menus consume only their own window's input.
         if (!viewport_window.opened() && !viewport_popup) {
             viewport_ui_input=ui_input;
             viewport_ui_input.events=input->events;
+        } else if (docked_popup) {
+            if (controls_keyboard) {
+                const input::AvailableEvents unused{input->unhandled()};
+                std::erase_if(popup_events, [&](const input::Event& event) { return !pointer_event(event) && !unused.contains(event); });
+            }
+            viewport_ui_input.events = std::move(popup_events);
         }
         auto viewport_input=viewport_popups.update(viewport_ui_input,dt,&clipboard);
         if (!viewport_input) {
             if (!viewport_raw.overflow) return fail(viewport_input.error().message);
+            popup_shortcut_capture = false;
             status.text(viewport_input.error().message); broadcast(); continue;
         }
+        popup_shortcut_capture = viewport_input->capturesShortcuts;
         const auto camera_preferences_edit=workspace.poll_camera_gizmo(settings);
         if(camera_preferences_edit.changed)settings=camera_preferences_edit.value;
         if(!camera_preferences_edit.error.empty())status.text(camera_preferences_edit.error);
@@ -1288,9 +1327,9 @@ int run(const Options& options) {
             .presented={image_camera,image_extent,image.bounds(),session->active_generation(),image_revision,
                 minimum_overlay_revision,image_time_current,delivery.ready(session->active_generation(),state.document.revision),
                 current_schema!=schemas.end()?&current_schema->second:nullptr},
-            .navigation={settings.camera_drag,settings.walk,settings.scroll_moves_camera,
-                viewport_enabled&&!inspecting()&&!camera_cancelled&&!camera_numeric_active,
-                viewport_window.opened()&&raw.focused,camera_numeric_active},
+            .navigation={.drag_speeds=settings.camera_drag,.walk_speeds=settings.walk,.move_forward=settings.scroll_moves_camera,
+                .enabled=viewport_enabled&&!inspecting()&&!camera_cancelled&&!camera_numeric_active,
+                .escape_claimed=escape_claimed,.numeric_active=camera_numeric_active},
             .tools={viewport_enabled&&!modal_visible(),viewport_ready&&!modal_visible(),workspace.interaction_mode()==InteractionMode::vertices,
                 diagnostic.value(),session->busy(),toolbar_blocks_viewport,
                 view_state.mode==ViewMode::scene&&(!modal_visible()||regions.menu_open())&&!logs_visible&&!playing&&!diagnostic.value(),
@@ -1298,6 +1337,7 @@ int run(const Options& options) {
         auto routed=workspace.interact_viewport(viewport_context);
         if(routed.navigation.changed) camera_changed();
         if(routed.navigation.cancelled) feedback(workspace.finish_interaction(ViewportTool::navigation,true));
+        if(routed.pose_finished) show_current_inspector();
         if(routed.view_changed) viewport_changed();
         if(routed.selection) commit_selection(routed.selection->active_changed);
         mesh_reply(routed.mesh);
@@ -1493,7 +1533,7 @@ int run(const Options& options) {
             mesh_tools.component_mode() &&
             !playing && !mode_pending && !logs_visible && !diagnostic.value() &&
             image_time_current && matches_view(presented_info,state) && image_revision >= minimum_overlay_revision;
-        if (viewport_uncovered && !camera_gizmo.exclusive() && (!modal_visible() || regions.menu_open())) {
+        if (viewport_uncovered && (!modal_visible() || regions.menu_open())) {
             // Compose annotation geometry immediately above its viewport image,
             // below inspector widgets and popups, including its own RMB menu.
             ui::DrawList annotations;
@@ -1506,7 +1546,7 @@ int run(const Options& options) {
                 viewport_list->commands.insert(std::next(viewport_draw),std::make_move_iterator(annotations.commands.begin()),
                     std::make_move_iterator(annotations.commands.end()));
         }
-        if (viewport_uncovered && !camera_gizmo.exclusive() && !modal_visible()) {
+        if (viewport_uncovered && !modal_visible()) {
             workspace.append_tool_overlays(*viewport_list,*font,image_camera,image_extent,image.bounds(),viewport_enabled,
                 image_revision,std::chrono::duration<double>(now.time_since_epoch()).count());
         }
@@ -1547,7 +1587,7 @@ int run(const Options& options) {
                 .preview_ready = preview_ready, .dirty = editing.dirty(),
                 .gizmo_visible = (instance_transform.active() ? instance_transform.visible() :
                     (translation.visible() || rotation.visible() || scaling.visible() || viewport_interaction.mesh_part.visible())) &&
-                    !camera_gizmo.exclusive() && viewport_uncovered && !modal_visible(),
+                    !viewport_interaction.object_tools_suspended() && viewport_uncovered && !modal_visible(),
                 .dragging = instance_transform.active() || translation.dragging() || rotation.dragging() || editing.active(EditGesture::scale) || regions.dragging() ||
                     viewport_interaction.mesh.active() || viewport_interaction.pivot.dragging() || viewport_interaction.mesh_part.dragging(),
                 .inspector_ready = delivery.ready(active, state.document.revision) && schema != schemas.end() &&

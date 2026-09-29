@@ -116,8 +116,12 @@ TEST_CASE("Camera drag preferences persist and older settings opt into camera mo
     auto decoded=decode_settings(encode_settings(s)); REQUIRE(decoded); CHECK(*decoded==s);
     auto legacy=decode_settings("vng-editor-settings 7\n60 60 0 10 100\n0.01 10000\n256\n4096\n1\n10000 10 10 10 4\n100\n");
     REQUIRE(legacy); CHECK(legacy->scroll_moves_camera); CHECK(legacy->camera_drag==CameraDragSpeeds{});
+    // Version 8's single Ctrl+drag multiplier also drove optical zoom; that
+    // speed carries over to the new optical-zoom multiplier.
     auto previous=decode_settings("vng-editor-settings 8\n60 60 0 10 100\n0.01 10000\n256\n4096\n1\n10000 10 10 10 4\n100\n2 3 0.6 1\n");
-    REQUIRE(previous); CHECK(previous->camera_drag==CameraDragSpeeds{2,3,.6F,1});
+    REQUIRE(previous); CHECK(previous->camera_drag==CameraDragSpeeds{2,3,.6F,3});
+    auto upgraded=decode_settings(encode_settings(*previous));
+    REQUIRE(upgraded); CHECK(*upgraded==*previous);
     for (auto bad : {0.F,-1.F,101.F,std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}) {
         s.camera_drag={bad,1,.3F}; CHECK_FALSE(validate_settings(s));
         s.camera_drag={1,bad,.3F}; CHECK_FALSE(validate_settings(s));

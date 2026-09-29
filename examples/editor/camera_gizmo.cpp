@@ -74,7 +74,6 @@ void CameraWalkGizmo::poll(CameraPreferenceEdit& reply) {
     for(std::size_t i=0;i<values.size();++i)read_control(speeds_[i],*values[i],reply);
 }
 bool CameraWalkGizmo::update(CameraPose& pose,const NavigationFrame& frame,bool enabled) {
-    if(frame.controls_have_focus&&!frame.raw.focused){motion_.stop();return false;}
     return motion_.update(pose,frame.seconds,frame.raw,frame.walk_speeds,enabled&&frame.keyboard_enabled,frame.unhandled);
 }
 DebugReport CameraWalkGizmo::debug_report() const {
@@ -97,12 +96,17 @@ void CameraGizmo::attach(ui::Container host) {
     walk_.attach(*body_);
 }
 void CameraGizmo::present(const Presentation& p,const Settings& settings) {
-    fallback_=!p.other_gizmo;
+    const bool fallback=!p.other_gizmo;
+    if(fallback!=fallback_&&!selected_)opened_=fallback;
+    fallback_=fallback;
     enabled_=p.enabled;
     visible_=p.visible;
     target_=p.target;
+    // A chosen child lives in this menu: whatever hides it (Camera settings,
+    // Logs, a dialog, Play) hands LMB back rather than leaving a hidden mode.
+    if(!visible_&&selected_)object_tools();
     if(!host_)return;
-    const bool expanded=opened_&&(active()||selected_);
+    const bool expanded=opened_;
     host_->visible(visible_);
     heading_.text(std::string(active()?"CAMERA / ":"Camera modes / ")+std::string(camera_gizmo_description(operating_mode()).label)+(expanded?" −":" +"));
     body_->visible(expanded).enabled(enabled_);
@@ -122,10 +126,8 @@ void CameraGizmo::present(const Presentation& p,const Settings& settings) {
 CameraPreferenceEdit CameraGizmo::poll(const Settings& settings) {
     CameraPreferenceEdit reply{.value=settings,.error={}};
     if(!host_||!visible_)return reply;
-    if(heading_.clicked()) {
-        if(!active()&&enabled_){selected_=true;opened_=true;}
-        else opened_=!opened_;
-    }
+    // Unfolding the menu is not a mode choice; only a child borrows LMB.
+    if(heading_.clicked())opened_=!opened_;
     if(!enabled_)return reply;
     // Poll old controls before changing modes, so releasing a speed slider or
     // committing text does not disappear merely because another mode was picked.
@@ -165,12 +167,13 @@ NavigationReply CameraGizmo::update(const NavigationFrame& frame,bool enabled) {
             select(static_cast<CameraGizmoMode>((static_cast<int>(mode_)+count+(event.key==input::Key::right?1:-1))%count));
             handled_=true;continue;
         }
-        if(event.kind==input::EventKind::focus_lost && frame.controls_have_focus) {
-            cancel_pointer();walk_.stop();continue;
-        }
-        if(event.kind==input::EventKind::focus_lost || (event.kind==input::EventKind::key_down&&event.key==input::Key::escape)) {
-            handled_|=dragging()||selected_;
-            object_tools();
+        // Focus loss and Escape end captures and held keys, even if UI used
+        // the key. Leaving the chosen mode is a command: only an Escape that
+        // no field, popup or flyout claimed, in an enabled viewport, does it.
+        const bool escape=event.kind==input::EventKind::key_down&&event.key==input::Key::escape;
+        if(escape||event.kind==input::EventKind::focus_lost) {
+            handled_|=dragging();cancel_pointer();walk_.stop();
+            if(escape&&selected_&&pointer_enabled&&!frame.escape_claimed){handled_=true;object_tools();}
             continue;
         }
         std::optional<CameraGizmoMode> next=captured_;
@@ -200,9 +203,7 @@ NavigationReply CameraGizmo::update(const NavigationFrame& frame,bool enabled) {
         handled_|=child.handled();cancelled_|=child.cancelled();
         if(!child.dragging())captured_.reset();
     }
-    const bool was_walking=walk_.active();
     if(walk_.update(reply.pose,frame,enabled)) {reply.changed=true;reply.smooth_zoom=false;handled_=true;}
-    if(was_walking&&!walk_.active()){selected_=false;mode_=CameraGizmoMode::orbit;}
     reply.cancelled=cancelled_;
     return reply;
 }
