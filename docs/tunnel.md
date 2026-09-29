@@ -153,10 +153,13 @@ courier is in frame through every act. The demo plays the camera through
 uses its own **Settings → Maximum viewing distance** instead; raise it to at
 least 1,200,000 to see the sun, Earth and Moon from the other locations.
 
-**Budgets.** The generated scene is about 56 MB and round-trips within
-the editor's 64 MiB document limit, and uses about 11,500 of the timeline's
+**Budgets.** The generated scene is about 46 MB on disk and decodes to about
+56 MiB of the editor's 64 MiB document limit. It uses 10,131 of the timeline's
 16,384 keys: collinear camera and courier keys (static shots, holds, straight
-runs) are simplified away, which pays for dense keys on fast moves.
+runs) are simplified away, which pays for dense keys on fast moves. Measure
+with `./build/vng_scene_probe examples/assets/tunnel_departure.vscene --size`.
+`vng_tunnel_scene_tests` requires the scene to decode within 63.5 MiB, so
+growth fails there rather than when the editor opens it.
 
 ## One tunnel, viewed from either side
 
@@ -172,6 +175,11 @@ and staggered service plates make the shape readable from inside. Indexed route
 samples keep this detail compact; no extra scene instances or draw calls are
 introduced. Six kilometres is the nominal face-to-face lining height, with
 shallow structural collar lips projecting inward by 1.5% of the half-height.
+Collars sit on route samples, where the lining is exactly the octagon; between
+samples a straight bay cuts inside a curved route. A dispersal terminal begins
+as the bore itself, the same lining and skin, and only then opens into its broad
+flattened mouth; joiner rims clasp an attached tunnel's skin. Nothing but the
+collar lips projects into the passage.
 
 The cinematic uses **Local** from `earth_tunnel_sizes.hpp`, the same 6 km class
 available on the Earth blueprint (6371 km reference radius). Regional routes
@@ -197,18 +205,23 @@ The ordinary instanced mesh renderer draws the complete tunnel. Depth testing
 chooses the visible surface, including views through the mouth where exterior
 and interior are visible simultaneously. No whole-ticket inside/outside routing
 or duplicate renderer resources are needed. Indexed rings share route samples
-to keep geometry compact. Dense Earth presets with real tunnel linings use a
-bounded 196,608-vertex blueprint budget (32-bit indices), rather than reducing
-their existing route tessellation. Import, subdivision, selection and vertex
-patches share the corresponding editor limit. The close-up collars are spaced 6 km apart.
+to keep geometry compact. The Earth blueprint has a 180,224-vertex budget
+(32-bit indices), about 25,000 above the connected Earth. It is set by what a
+full Earth must still do, not by the editor's 196,608-vertex limit per mesh:
+load as a mesh (32 MiB of text), save in a scene that also holds an unapplied
+draft of it (64 MiB), and fit the departure. `vng_tunnel_scene_tests` grows the
+Earth to the budget and checks all three. Import, subdivision, selection and
+vertex patches use the editor's per-mesh limit. The close-up collars are spaced
+6 km apart.
 
 Scene regeneration embeds the authored `earth_future.vmesh` unchanged, including
 its class choices and hand edits. Previously saved Earth meshes keep their baked
 geometry until explicitly rebuilt or retuned; there is no hidden rebuild when
 authoring the cinematic, during playback or during camera movement.
 
-To refresh just the tunnel recipes (retaining placement, terrain/cloud edits,
-cities and other addons), explicitly run:
+To regenerate just the tunnels and the parts built from the same recipes
+(freestanding terminals and joiners), keeping their placement, the terrain and
+cloud edits, cities and other addons, explicitly run:
 
 ```sh
 ./build/vng_make_earth examples/assets examples/assets --refresh-tunnels --replace
@@ -216,17 +229,24 @@ cities and other addons), explicitly run:
 ./build/vng_make_tunnel_departure examples/assets examples/assets/tunnel_departure.vscene --replace
 ```
 
-The last two commands regenerate the authored demos, so do not use them on a
-scene whose manually edited timeline you want to keep.
+`--refresh-tunnels` rebuilds those parts from their recipes, so per-vertex hand
+edits to a tunnel, terminal or joiner are discarded. The last two commands
+regenerate the authored demos, so do not use them on a scene whose manually
+edited timeline you want to keep.
 
 The cyan/amber lamps use the existing emission stream and HDR bloom. Local wall
 illumination is baked into vertex colors; a `render/lighting = tunnel` mesh
 material adds per-pixel, camera-relative distance haze in kilometre units, with
-bright near-white spill extending onto the walls. A gentler near-field haze
-keeps nearby panels visible, while the distant passage still fades to white.
-The departure walls and mouth veil use the same distance falloff. This
-is a stylized lighting approximation, not dynamic volumetric scattering or
-shadow-casting local lights. Other scene materials are unchanged.
+bright near-white spill extending onto the walls. Its optical depth is
+(d / 18 km)^4 (`examples/editor/tunnel_haze.hpp`): below 0.2 within 12 km, so
+nearby panels, seams and craft stay readable; 1 at 18 km; and 16 at 36 km, so the
+far passage turns white sooner than the original (d / 18 km)^2 did. The `tunnel`
+material transmits 1 / (1 + depth); the departure's walls, craft and mouth veil
+transmit e^-depth. Setting `tunnel_haze::original_far_field` keeps this near
+field and returns to (d / 18 km)^2 beyond 18 km; in the departure's frames the
+two differ by at most 4 of 255 levels, because the veil is already white
+there. This is a stylized lighting approximation, not dynamic volumetric
+scattering or shadow-casting local lights. Other scene materials are unchanged.
 The departure variant uses `tunnel_departure`, whose exit is at Z=0 with the
 tube along +Z. A depth-tested veil across the mouth renders **after** opaque
 geometry, hiding distant Earth/addons as well as stars. Nearby walls and craft
@@ -234,7 +254,9 @@ occlude it. Its opacity approaches white exponentially with distance, then
 fades continuously during the approach; it never writes depth and is disabled
 for exterior views. Shorter interior camera focus and
 analytic ship headings also avoid the old large-coordinate rounding shake.
-Earth retains its own illustrated material.
+The departure's Earth, whose tunnel the courier flies through, uses
+`tunnel_departure_night`: its illustrated night lighting, plus this haze only
+while the camera is inside the tube, so the voyage's views of Earth are unaffected.
 
 ```sh
 cmake --build build --target vng_tunnel_demo vng_make_tunnel_departure vng_tunnel_scene_tests
