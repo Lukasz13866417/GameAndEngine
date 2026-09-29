@@ -115,6 +115,46 @@ module.exports = async function architectureBrowser(page, url, output) {
     else assert.ok(canvas.x + canvas.width <= inspector.x);
     await page.screenshot({ path: path.join(output, `architecture-${width}.png`) });
   }
+
+  // Short viewports: phones in landscape and laptops at 200% zoom. The canvas,
+  // its controls, the inspector title and the selected card stay on screen and
+  // uncovered, side by side, without scrolling the page.
+  for (const [width, height] of [[683, 384], [640, 360], [568, 320], [844, 390]]) {
+    await page.setViewportSize({ width, height });
+    await page.goto(url("architecture.html") + `#editor/${walk}`);
+    await page.reload();
+    await page.waitForFunction(() => document.getElementById("plane").style.transform !== ""); // First frame.
+    const layout = await page.evaluate(() => {
+      const onScreen = box => box.left >= 0 && box.top >= 0 && box.right <= innerWidth && box.bottom <= innerHeight;
+      const reachable = element => {
+        const box = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        return onScreen(box) && !!hit && element.contains(hit);
+      };
+      const controls = [...document.querySelectorAll(".map-actions button, #details-toggle, #map-search, #scopes button")];
+      const map = document.getElementById("map").getBoundingClientRect();
+      const inspector = document.getElementById("inspector").getBoundingClientRect();
+      return {
+        blocked: controls.filter(element => !reachable(element)).map(element => element.id || element.textContent),
+        overlap: map.left < inspector.right && inspector.left < map.right && map.top < inspector.bottom && inspector.top < map.bottom,
+        fits: document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight <= innerHeight,
+        title: reachable(document.querySelector("#details h2")),
+        card: reachable(document.querySelector(".node[aria-selected='true'] h2"))
+      };
+    });
+    const size = `${width}×${height}`;
+    assert.deepEqual(layout.blocked, [], `${size}: controls covered or off screen`);
+    assert.equal(layout.overlap, false, `${size}: canvas overlaps the inspector`);
+    assert.equal(layout.fits, true, `${size}: page scrolls or clips`);
+    assert.equal(layout.title, true, `${size}: inspector title hidden`);
+    assert.equal(layout.card, true, `${size}: selected card hidden`);
+    await page.screenshot({ path: path.join(output, `architecture-${width}x${height}.png`) });
+  }
+  // An unknown bookmark keeps the current selection and says so; loading one
+  // falls back to the map's root.
   await page.goto(url("architecture.html") + "#editor/not-a-component");
+  await page.waitForFunction(() => /Unknown map bookmark/.test(document.getElementById("announcement").textContent));
+  assert.equal(await selected().getAttribute("data-id"), walk);
+  await page.reload();
   assert.equal(await selected().getAttribute("data-id"), editor.scope.root.id);
 };

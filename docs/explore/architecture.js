@@ -208,6 +208,7 @@
       if (i) breadcrumbs.append(element("span", "", "/"));
       breadcrumbs.append(button(state.tree.nodes.get(id).title, () => select(state.scope.id, id, { center: true })));
     }
+    breadcrumbs.scrollLeft = breadcrumbs.scrollWidth; // One-line path on short screens ends at the selection.
     $("scope-subtitle").textContent = state.scope.subtitle;
     for (const tab of $("scopes").children) tab.setAttribute("aria-pressed", tab.dataset.scope === state.scope.id);
   }
