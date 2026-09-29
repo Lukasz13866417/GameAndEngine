@@ -2,6 +2,7 @@
 
 #include "../file_mesh_types.hpp"
 #include "mesh_draw.hpp"
+#include "tunnel_haze.hpp"
 #include "../support/earth_tunnel_sizes.hpp"
 #include <vng/content/vmesh_schema.hpp>
 #include <vng/render_opengl/program_runtime.hpp>
@@ -113,11 +114,9 @@ inline auto shade(Stage& s, vng::dsl::Expr<Lighting> lights, LightingStyle style
         // a visible far portal. This is an art-directed single-scatter proxy,
         // not a volumetric light/shadow simulation.
         const auto delta=lights.get(Eye{})-world;
-        const auto distance2=vng::dsl::dot(delta,delta);
-        const auto haze_distance=distance2/(18.F*18.F);
         // Leave nearby panel seams / plane changes readable. Deeper in the
-        // bore the white scattered light still rapidly fills the whole view.
-        auto optical_depth=haze_distance*haze_distance;
+        // bore the white scattered light fills the whole view.
+        auto optical_depth=tunnel_haze::depth(vng::dsl::dot(delta,delta));
         if(style==LightingStyle::tunnel) {
             // The slow study bends in X/Z. Its interior haze must not turn
             // the same shell white when viewed from an exterior editor camera.

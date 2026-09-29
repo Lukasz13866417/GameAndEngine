@@ -6,8 +6,19 @@
 #include "support/earth_structures.hpp"
 #include "support/earth_placement.hpp"
 #include "support/mesh_frame.hpp"
+#include <vng/content/document.hpp>
+#include <vng/editor/limits.hpp>
+#include <vng/editor/mesh.hpp>
+#include <vng/spatial/triangle_bvh.hpp>
+#include <stdlib.h>
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <numbers>
 
 TEST_CASE("Tunnel bore and collars are regular octagons with readable planar lining", "[example][tunnel]") {
     using namespace vng;
@@ -67,6 +78,71 @@ TEST_CASE("Tunnel bore and collars are regular octagons with readable planar lin
     }
     // Detail remains indexed and linear in route samples, not a box per panel.
     CHECK(shell.vertices.size()<=50*path.size()+80);
+}
+
+namespace {
+// Casts rays across a cross-section from a point on the tunnel axis and
+// requires the first surface in every direction to be no closer than the
+// regular octagonal bore with the given apothem: nothing reaches into the
+// passage, not even between vertices.
+void require_clear_bore(const example::earth::detail::StructureMesh& mesh, const example::earth::SkywaySample& at,
+                        vng::f32 apothem) {
+    using namespace vng;
+    std::vector<Vec3> positions;std::vector<spatial::TriangleBvh::Triangle> triangles;
+    for(const auto& v:mesh.vertices)positions.push_back(v.position);
+    for(const auto& f:mesh.faces)triangles.push_back(f.vertices);
+    const spatial::TriangleBvh bvh{positions,triangles};
+    for(unsigned k=0;k<32;++k) {
+        const auto angle=f32(k)*std::numbers::pi_v<f32>/16;
+        const auto c=std::cos(angle),s=std::sin(angle);
+        const auto extent=apothem/std::max({std::abs(c),std::abs(s),(std::abs(c)+std::abs(s))/std::numbers::sqrt2_v<f32>});
+        const Vec3 d{at.side.x*c+at.up.x*s,at.side.y*c+at.up.y*s,at.side.z*c+at.up.z*s};
+        const auto hit=bvh.intersect({{at.position.x,at.position.y,at.position.z},{d.x,d.y,d.z}});
+        INFO("direction "<<k<<" at "<<at.position.z);
+        if(hit)CHECK(hit->distance>=extent*(1-2e-4));
+    }
+}
+}
+
+TEST_CASE("Dispersal terminals and joiner rims continue the octagonal bore without a ledge", "[example][tunnel]") {
+    using namespace vng;
+    namespace e=example::earth;
+    using namespace e::placement;
+    const auto size=3.F/e::detail::tunnel_inner_height;
+    e::detail::TerminalPath path;
+    for(std::size_t i=0;i<path.size();++i)path[i]={{0,0,f32(i)*.01F*size},{0,0,1},{1,0,0},{0,1,0}};
+    const auto terminal=e::detail::dispersal_terminal(path,size,1);
+    // The throat is the narrowest point, and it is the tunnel's own lining.
+    for(f32 z=0;z<=f32(path.size()-1)*.01F*size;z+=.0025F*size) {
+        auto at=path.front();at.position.z=z+.0001F;
+        require_clear_bore(terminal,at,3);
+    }
+    f32 throat=1e9F;
+    for(const auto& v:terminal.vertices)if(std::abs(v.position.z)<1e-4F)
+        throat=std::min(throat,std::max({std::abs(v.position.x),std::abs(v.position.y),
+            (std::abs(v.position.x)+std::abs(v.position.y))/std::numbers::sqrt2_v<f32>}));
+    CHECK(std::abs(throat-3)<3e-4F);
+    // A tunnel attached to a joiner has the joiner's size and ends at the socket.
+    const auto joiner=e::detail::tunnel_joiner(1,1,1);
+    for(const auto& socket:e::detail::joiner_sockets(1,1))for(f32 offset:{-.0019F,0.F,.0019F}) {
+        auto at=socket;at.position=add(socket.position,mul(socket.tangent,offset));
+        require_clear_bore(joiner,at,e::detail::tunnel_inner_height);
+    }
+}
+
+TEST_CASE("Collars sit on route samples, where the lip meets the octagonal lining", "[example][tunnel]") {
+    namespace e=example::earth;
+    CHECK(e::detail::collar_sections(24)==std::array<std::size_t,7>{0,4,8,12,16,20,24});
+    CHECK(e::detail::collar_sections(192)==std::array<std::size_t,7>{0,32,64,96,128,160,192});
+    for(std::size_t segments:{8U,32U,40U,64U,256U}) {
+        const auto sections=e::detail::collar_sections(segments);
+        CHECK(sections.front()==0);
+        CHECK(sections.back()==segments);
+        for(std::size_t i=1;i<sections.size();++i) {
+            CHECK(sections[i]>sections[i-1]);
+            CHECK(std::abs(double(sections[i])-double(i*segments)/6)<=.5);
+        }
+    }
 }
 
 TEST_CASE("One shared tunnel has a dark outside, lit lining and open ends", "[example][tunnel]") {
@@ -327,6 +403,77 @@ TEST_CASE("Express departure has a continuous close camera and clears the low te
     const auto restored=p::decode(*encoded);REQUIRE(restored);
     CHECK(p::active_camera(*restored,40)->id==d::camera_id);
     CHECK(p::evaluate_camera(*restored,40)==p::evaluate_camera(*scene,40));
+}
+
+TEST_CASE("The departure keeps a margin under the editor's 64 MiB decoded limit", "[example][tunnel][departure]") {
+    // It embeds the whole connected Earth plus the voyage's assets. Growth has
+    // to fail here, not when the editor opens the committed demo: the scene
+    // must decode within 63.5 MiB, half a MiB under the reader's limit.
+    using namespace vng;
+    constexpr std::size_t margin_limit=63*1024*1024+512*1024;
+    const auto within_margin=[&](std::string_view text) {
+        return content::parse_document(text,{.limits={.max_source_bytes=vng::editor::max_document_bytes,
+            .max_decoded_bytes=margin_limit,.max_string_bytes=vng::editor::mesh_limits().max_source_bytes}}).has_value();
+    };
+    const auto scene=example::tunnel::departure::author_scene(VNG_TUNNEL_ASSETS);REQUIRE(scene);
+    const auto authored=editor_example::encode_scene(*scene);REQUIRE(authored);
+    CHECK(within_margin(*authored));
+    std::ifstream file(std::filesystem::path(VNG_TUNNEL_ASSETS)/"tunnel_departure.vscene",std::ios::binary);
+    REQUIRE(file);
+    const std::string committed{std::istreambuf_iterator<char>{file},std::istreambuf_iterator<char>{}};
+    CHECK(within_margin(committed));
+}
+
+TEST_CASE("A full-budget Earth still loads, saves beside its draft and fits the departure",
+          "[example][earth][limits][departure]") {
+    using namespace vng;
+    namespace e=example::earth;
+    namespace p=editor_example;
+    const std::filesystem::path assets=VNG_TUNNEL_ASSETS;
+    auto earth=editor::EditableMesh::load(assets/"earth_future.vmesh");REQUIRE(earth);
+    // Grow the committed Earth to its budget by repeating its first vertices
+    // (terrain: the most faces, so the most text, per vertex) and the faces
+    // among them.
+    auto grown=earth->document();
+    const auto base=grown.vertex_count;
+    REQUIRE(base<e::max_earth_vertices);
+    const auto extra=e::max_earth_vertices-base;
+    for(auto& field:grown.vertex_fields)std::visit([&](auto& values) {
+        const auto prefix=std::vector(values.begin(),values.begin()+std::ptrdiff_t(extra*field.type.components));
+        values.insert(values.end(),prefix.begin(),prefix.end());
+    },field.values);
+    const auto faces=grown.faces.size();
+    for(std::size_t i=0;i<faces;++i) {
+        const auto v=grown.faces[i].vertices;
+        if(v[0]<extra&&v[1]<extra&&v[2]<extra)
+            grown.faces.emplace_back(u32(v[0]+base),u32(v[1]+base),u32(v[2]+base));
+    }
+    grown.vertex_count=e::max_earth_vertices;
+    // It still loads as an editor mesh (32 MiB of .vmesh text).
+    const auto text=content::vmesh::write_vmesh(grown,{.limits=editor::mesh_limits()});REQUIRE(text);
+    auto full=editor::EditableMesh::create(grown);REQUIRE(full);
+    // Its scene can hold it twice while a blueprint edit is unapplied.
+    auto cube=editor::EditableMesh::load(assets/"colored_cube.vmesh");REQUIRE(cube);
+    p::State scene{.document={.mesh=std::move(*cube)}};
+    scene.document.mesh_assets.push_back({static_cast<p::BlueprintId>(3),"EARTH / full budget",*full,{}});
+    scene.document.next_blueprint_id=4;
+    scene.document.mesh_drafts.emplace(static_cast<p::BlueprintId>(3),*full);
+    CHECK(p::encode_scene(scene));
+    // The departure regenerated from it still saves and reopens.
+    std::array<char,64> name{};
+    std::strcpy(name.data(),"/tmp/vng-full-earth-XXXXXX");
+    REQUIRE(::mkdtemp(name.data()));
+    const std::filesystem::path folder=name.data();
+    struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code ignored;std::filesystem::remove_all(path,ignored);}} cleanup{folder};
+    for(const auto* asset:{"colored_cube.vmesh","spaceship.vmesh","fleet_carrier.vmesh","fleet_frigate.vmesh","fleet_escort.vmesh"})
+        std::filesystem::create_symlink(assets/asset,folder/asset);
+    {
+        std::ofstream out(folder/"earth_future.vmesh",std::ios::binary);
+        out<<*text;
+        REQUIRE(out);
+    }
+    const auto departure=example::tunnel::departure::author_scene(folder);REQUIRE(departure);
+    CHECK(p::encode_scene(*departure));
 }
 
 TEST_CASE("The voyage flies nose first, keeps its courier in frame and never shakes", "[example][tunnel][departure]") {

@@ -1,5 +1,7 @@
 #include "scene_file.hpp"
+#include <vng/content/vmesh.hpp>
 #include <vng/editor/limits.hpp>
+#include <vng/editor/mesh.hpp>
 
 #include <array>
 #include <cerrno>
@@ -110,11 +112,9 @@ content::Result<Temporary> temporary(const Target& target) {
     return invalid(target.path, "Cannot reserve a unique scene temporary file");
 }
 
-content::Result<void> write_atomic(Target& target, std::string_view bytes, bool replace_existing) {
-    auto existing = permissions(target);
-    if (!existing) return std::unexpected(existing.error());
-    if (*existing && !replace_existing)
-        return invalid(target.path, "Scene destination already exists; confirm replacement before Save As");
+// A complete, synced and closed copy of `bytes` beside its destination. It
+// is unlinked when dropped unless published.
+content::Result<Temporary> stage(const Target& target, std::string_view bytes, std::optional<mode_t> mode) {
     auto temp = temporary(target);
     if (!temp) return std::unexpected(temp.error());
     std::size_t offset{};
@@ -124,12 +124,15 @@ content::Result<void> write_atomic(Target& target, std::string_view bytes, bool 
         if (count <= 0) return system_error(target.path, "Cannot write scene temporary file", count ? errno : EIO);
         offset += static_cast<std::size_t>(count);
     }
-    if (*existing && ::fchmod(temp->file.value, **existing) != 0)
+    if (mode && ::fchmod(temp->file.value, *mode) != 0)
         return system_error(target.path, "Cannot preserve scene file permissions");
     if (::fsync(temp->file.value) != 0) return system_error(target.path, "Cannot sync scene temporary file");
     const int fd = std::exchange(temp->file.value, -1);
     if (::close(fd) != 0) return system_error(target.path, "Cannot close scene temporary file");
+    return temp;
+}
 
+content::Result<void> publish(const Target& target, Temporary& temp, bool replace_existing) {
     // Recheck type immediately before publication. rename never follows the
     // target entry even if another process races in a symlink after this check.
     auto checked = permissions(target);
@@ -137,16 +140,34 @@ content::Result<void> write_atomic(Target& target, std::string_view bytes, bool 
     if (*checked && !replace_existing)
         return invalid(target.path, "Scene destination appeared during Save As; it was not replaced");
     const auto renamed = replace_existing
-        ? ::renameat(target.directory.value, temp->name.c_str(), target.directory.value, target.filename.c_str())
-        : ::syscall(SYS_renameat2, target.directory.value, temp->name.c_str(),
+        ? ::renameat(target.directory.value, temp.name.c_str(), target.directory.value, target.filename.c_str())
+        : ::syscall(SYS_renameat2, target.directory.value, temp.name.c_str(),
                     target.directory.value, target.filename.c_str(), RENAME_NOREPLACE);
     if (renamed != 0) return system_error(target.path, "Cannot atomically publish scene file");
-    temp->unpublished = false;
+    temp.unpublished = false;
     // Contents were synced before publication. Treat rename as the commit
     // point; directory sync is best effort because reporting a pre-commit
     // failure here would falsely imply that the original remained untouched.
     (void)::fsync(target.directory.value);
     return {};
+}
+
+// The existing file's mode bits, or none for a new file. Refuses to replace
+// unless asked, before anything is written.
+content::Result<std::optional<mode_t>> destination_mode(const Target& target, bool replace_existing) {
+    auto existing = permissions(target);
+    if (!existing) return std::unexpected(existing.error());
+    if (*existing && !replace_existing)
+        return invalid(target.path, "Scene destination already exists; confirm replacement before Save As");
+    return existing;
+}
+
+content::Result<void> write_atomic(Target& target, std::string_view bytes, bool replace_existing) {
+    auto mode = destination_mode(target, replace_existing);
+    if (!mode) return std::unexpected(mode.error());
+    auto temp = stage(target, bytes, *mode);
+    if (!temp) return std::unexpected(temp.error());
+    return publish(target, *temp, replace_existing);
 }
 
 content::Result<State> read(const Target& target) {
@@ -204,4 +225,39 @@ vng::content::Result<void> SceneFile::save_as(const std::filesystem::path& desti
     path_ = std::move(resolved->path);
     return {};
 }
+vng::content::Result<void> SceneFile::save_as_with_mesh(const std::filesystem::path& scene_path, const State& state,
+                                                       const std::filesystem::path& mesh_path,
+                                                       const vng::content::vmesh::Document& mesh,
+                                                       bool replace_existing) {
+    // Everything that depends on content fails before a byte is written. The
+    // mesh must also load back as an editor mesh (EditableMesh::load limits).
+    auto text = content::vmesh::write_vmesh(mesh, {.limits = vng::editor::mesh_limits()});
+    if (!text) return invalid(mesh_path, "Mesh exceeds the editor's limits: " + text.error().message, text.error().code);
+    auto baked = bake_mesh_placements(state);
+    if (!baked) return std::unexpected(baked.error());
+    auto bytes = encode_scene(*baked);
+    if (!bytes) return std::unexpected(bytes.error());
+    auto scene_target = target(scene_path);
+    if (!scene_target) return std::unexpected(scene_target.error());
+    auto mesh_target = target(mesh_path);
+    if (!mesh_target) return std::unexpected(mesh_target.error());
+    if (scene_target->path == mesh_target->path)
+        return invalid(mesh_target->path, "A scene and its mesh must be different files");
+    auto scene_mode = destination_mode(*scene_target, replace_existing);
+    if (!scene_mode) return std::unexpected(scene_mode.error());
+    auto mesh_mode = destination_mode(*mesh_target, replace_existing);
+    if (!mesh_mode) return std::unexpected(mesh_mode.error());
+    auto staged_mesh = stage(*mesh_target, *text, *mesh_mode);
+    if (!staged_mesh) return std::unexpected(staged_mesh.error());
+    auto staged_scene = stage(*scene_target, *bytes, *scene_mode);
+    if (!staged_scene) return std::unexpected(staged_scene.error());
+    // The scene is the commit point: until it is published, the staged mesh
+    // is discarded on any failure and both originals remain.
+    if (auto published = publish(*scene_target, *staged_scene, replace_existing); !published) return published;
+    path_ = scene_target->path;
+    if (auto published = publish(*mesh_target, *staged_mesh, replace_existing); !published)
+        return invalid(mesh_target->path, "The scene was saved, but its mesh was not: " + published.error().message);
+    return {};
+}
+
 } // namespace editor_example
