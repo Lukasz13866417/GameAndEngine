@@ -167,3 +167,20 @@ TEST_CASE("Panel availability follows the host's frame-start gesture snapshot","
     f.workspace.present_panels({.inspector_ready=true});
     CHECK(f.enabled(ui::WidgetRole::dropdown,"Gizmo"));
 }
+TEST_CASE("Delete and copy target scene instances only in Objects mode","[editor][workspace-ownership]") {
+    WorkspaceFixture f;f.keyframe();
+    const auto count=f.workspace.state().document.instances.size();
+    f.workspace.clear_selection();
+    const auto nothing=f.workspace.delete_selection();
+    CHECK_FALSE(nothing.changed);CHECK(nothing.message.empty()); // Nothing selected, nothing to explain.
+    f.workspace.select_instance(1);
+    f.workspace.interaction_mode(InteractionMode::vertices);
+    const auto refused=f.workspace.delete_selection();
+    CHECK_FALSE(refused.changed);CHECK(refused.message.starts_with("Switch to Objects mode"));
+    CHECK(f.workspace.shortcut(EditShortcut::copy).message.starts_with("Copy failed"));
+    CHECK(f.workspace.state().document.instances.size()==count);
+    f.workspace.interaction_mode(InteractionMode::objects);
+    CHECK(f.workspace.shortcut(EditShortcut::copy).message.starts_with("Copied 1 instance"));
+    CHECK(f.workspace.delete_selection().changed);
+    CHECK(f.workspace.state().document.instances.size()==count-1);
+}

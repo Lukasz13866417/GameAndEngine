@@ -47,7 +47,10 @@ void EditingWorkspaceUI::poll_tabs() {
 }
 SidebarTab EditingWorkspaceUI::sidebar_tab() const {return panels_?panels_->sidebar_tab:SidebarTab::scene;}
 void EditingWorkspaceUI::show_tab(SidebarTab tab) {if(panels_)panels_->sidebar_tab=tab;sync_sidebar();}
-InteractionMode EditingWorkspaceUI::interaction_mode() const {return panels_->interaction->value();}
+InteractionMode EditingWorkspaceUI::interaction_mode() const {
+    if(panels_)return panels_->interaction->value();
+    return state().viewport.mode==ViewMode::mesh?InteractionMode::vertices:InteractionMode::objects;
+}
 void EditingWorkspaceUI::interaction_mode(InteractionMode mode) {panels_->interaction->value(mode);}
 std::optional<InteractionMode> EditingWorkspaceUI::changed_interaction_mode() {return panels_->interaction->changedValue();}
 void EditingWorkspaceUI::refresh_selection(bool synchronize_document) {
