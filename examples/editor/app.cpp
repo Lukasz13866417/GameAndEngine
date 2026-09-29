@@ -474,8 +474,16 @@ int run(const Options& options) {
             flush_view(gen);
         }
     };
+    // Worker schemas arriving during a capture are not shown (the inspector is
+    // disabled then). A gesture's terminal event shows the latest one instead.
+    const auto show_current_inspector = [&] {
+        if (const auto schema = schemas.find(session->active_generation());
+            schema != schemas.end() && schema->second.stamp.revision == state.document.revision)
+            workspace.show_inspector(schema->second);
+    };
     const auto feedback = [&](const WorkspaceFeedback& reply) {
         if(reply.camera_changed){viewport_changed();workspace.sync_camera_controls();}
+        if(reply.pose_finished)show_current_inspector();
         if(!reply.message.empty())status.text(reply.message);
     };
     auto camera_changed = [&] {
@@ -810,16 +818,19 @@ int run(const Options& options) {
         show_camera.enabled(!editing.awaiting_remote() && (!viewport_gesture || camera_numeric_active));
         files.enabled(!dialog_was_open);
         log_panel.enabled(!dialog_was_open);
-        const auto update_pose_controls = [&] {
-            workspace.present_panels({dialog_was_open,mode_pending,playing,
-                delivery.ready(session->active_generation(),state.document.revision) && debug_link.value() &&
-                !unresponsive && !session->busy() && current_schema!=schemas.end() &&
-                current_schema->second.stamp.revision==state.document.revision &&
-                current_schema->second.stamp.object==view_state.selected_object &&
-                current_schema->second.stamp.context>=workspace.minimum_inspector_sequence()});
-
+        // Panels follow the gesture state at the start of this input frame; a
+        // gesture that begins below changes them from the next frame.
+        const auto panel_frame = [&] {
+            return WorkspacePanelFrame{.modal=dialog_was_open,.mode_pending=mode_pending,.playing=playing,
+                .inspector_ready=delivery.ready(session->active_generation(),state.document.revision) && debug_link.value() &&
+                    !unresponsive && !session->busy() && current_schema!=schemas.end() &&
+                    current_schema->second.stamp.revision==state.document.revision &&
+                    current_schema->second.stamp.object==view_state.selected_object &&
+                    current_schema->second.stamp.context>=workspace.minimum_inspector_sequence(),
+                .gesture=viewport_gesture};
         };
-        update_pose_controls();
+        const auto update_pose_controls = [&] { workspace.present_pose_controls(panel_frame()); };
+        workspace.present_panels(panel_frame());
         view.enabled(!editing.awaiting_remote() && !viewport_gesture);
         pause.enabled(debug_link.value() && !playing && !editing.awaiting_remote() && !viewport_gesture);
         play.enabled(!mode_pending && !editing.awaiting_remote() && !viewport_gesture && !session->busy() &&
@@ -1298,6 +1309,7 @@ int run(const Options& options) {
         auto routed=workspace.interact_viewport(viewport_context);
         if(routed.navigation.changed) camera_changed();
         if(routed.navigation.cancelled) feedback(workspace.finish_interaction(ViewportTool::navigation,true));
+        if(routed.pose_finished) show_current_inspector();
         if(routed.view_changed) viewport_changed();
         if(routed.selection) commit_selection(routed.selection->active_changed);
         mesh_reply(routed.mesh);

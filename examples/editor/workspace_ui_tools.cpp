@@ -3,18 +3,21 @@
 
 namespace editor_example {
 using namespace vng;
+// Keyframe rows follow the finished pose here. The inspector is rebuilt by the
+// host from the worker's latest schema (pose_finished); schemas that arrived
+// during the capture were intentionally not shown, so no cached copy is current.
 void EditingWorkspaceUI::refresh_after_pose() {
     if(timeline_)(void)dispatch(*this,workspace_situation(viewport()),WorkspaceContext{.timeline=TimelineContext{.input={.synchronize=true}}});
-    if(inspector_schema_&&inspector_schema_->stamp.revision==state().document.revision&&
-       inspector_schema_->stamp.object==viewport().selected_object&&inspector_schema_->stamp.context>=minimum_inspector_sequence_)
-        if(panels_)panels_->inspector->show(*inspector_schema_);
 }
 WorkspaceFeedback EditingWorkspaceUI::finish_interaction(ViewportTool tool,bool cancelled) {
     WorkspaceFeedback reply;auto& tools=interaction_child();
     if(tool==ViewportTool::rotation&&cancelled) {
         auto result=execute(tools.rotation,tools.rotation.cancel());
         if(!result)reply.message=result.error().message;
-        else if(result->finished){refresh_after_pose();reply.message="Rotation cancelled / original transform restored";}
+        else if(result->finished) {
+            refresh_after_pose();reply.pose_finished=true;
+            reply.message="Rotation cancelled / original transform restored";
+        }
         return reply;
     }
     const auto gesture=tool==ViewportTool::translation?EditGesture::move:tool==ViewportTool::scale?EditGesture::scale:
@@ -38,7 +41,7 @@ WorkspaceFeedback EditingWorkspaceUI::finish_interaction(ViewportTool tool,bool 
     }
     if(tool==ViewportTool::bounds)sync_bounds();
     if(tool==ViewportTool::rotation)tools.rotation.reset();
-    refresh_after_pose();
+    refresh_after_pose();reply.pose_finished=true;
     const std::string name=tool==ViewportTool::translation?"Move":tool==ViewportTool::scale?"Scale":tool==ViewportTool::bounds?"World bounds":tool==ViewportTool::rotation?"Rotation":"Camera";
     reply.message=name+(cancelled?" cancelled / original values restored":*result?" updated / Undo restores the whole edit":" unchanged");
     return reply;
@@ -54,7 +57,7 @@ WorkspaceFeedback EditingWorkspaceUI::cancel_interaction() {
     if(const auto* instance=find_instance(state(),object))
         reset_inspector_scale(evaluate_instance(state(),*instance,viewport().time).transform.scale);
     if(camera){sync_camera_controls(true);reply.camera_changed=true;}
-    if(*result){refresh_after_pose();refresh_vertex();}
+    if(*result){refresh_after_pose();refresh_vertex();reply.pose_finished=true;}
     return reply;
 }
 WorkspaceFeedback EditingWorkspaceUI::edit_instance_scale(f32 value,bool finish_edit) {

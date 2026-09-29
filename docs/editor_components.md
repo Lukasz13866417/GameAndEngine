@@ -109,7 +109,10 @@ The host supplies window/preview facts, not per-widget instructions:
 
 ```cpp
 workspace.layout_panels(layout, screen_size);
-workspace.present_panels({modal, pending_play, playing, inspector_ready});
+// Once per frame, from frame-start facts: a gesture that begins during this
+// input frame changes panel availability from the next frame.
+workspace.present_panels({modal, pending_play, playing, inspector_ready, gesture});
+workspace.present_pose_controls(frame); // later in the frame, after selection/schema changes
 
 // These calls also coordinate the dependent panels and tools.
 workspace.select_scene_instance(id, SelectionMode::replace);
@@ -122,7 +125,9 @@ const auto& tools = workspace.interaction();
 
 The workspace owns selection consequences: labels, timeline focus, keyboard
 action target, stale-inspector invalidation and gizmo refresh. It also owns
-copy/paste/delete/undo consequences and gesture completion/rollback. Camera
+copy/paste/delete/undo consequences and gesture completion/rollback. Its replies
+flag a finished gesture (`pose_finished`); the host then shows the worker's latest
+schema, since schemas that arrive during a capture are deliberately not shown. Camera
 visits, menu drafts and restoring the pre-visit view live below the viewport.
 Saving preferences to disk and forwarding accepted worker schemas remain
 application responsibilities.

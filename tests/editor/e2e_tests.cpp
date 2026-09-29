@@ -2206,7 +2206,9 @@ void Driver::attitude_workflow() {
     });
     add("F starts the blueprint forward gizmo",[this](const Observation& o) {
         require(o.dragging && o.gizmo_visible,"F did not start a visible forward gizmo");
-        require(find(dropdown("Gizmo"))->text.find("Forward / back")!=std::string::npos,"F did not select its menu entry");
+        const auto* menu=find(dropdown("Gizmo"));
+        require(menu!=nullptr,"Gizmo menu is missing or disabled on the frame F started its gizmo");
+        require(menu->text.find("Forward / back")!=std::string::npos,"F did not select its menu entry");
         pointer(input::EventKind::pointer_move,{pointer_.x+35,pointer_.y-35});return true;
     });
     add("F moves only along the blueprint axis",[this](const Observation& o) {
@@ -2939,7 +2941,25 @@ void Driver::convenience_workflow() {
         if(!ready(o)) return false;
         require(o.dragging && !equivalent(o.preview_pixels->pixels,scaled_pixels_),"Scale preview waited for release");
         checkpoint(o,"08a-live-scale-gizmo");
+        return true;
+    });
+    // Pause the held gesture until the worker has described the final pose.
+    wait("Worker controls for the paused scale arrive before release",[this](const Observation& o) {
+        require(o.dragging,"Scale capture ended before its worker controls arrived");
+        if(!o.inspector_ready) return false;
         pointer(input::EventKind::pointer_up,scale_pointer_);
+        return true;
+    });
+    wait("Apply the unchanged transform after the paused gesture",[this](const Observation& o) {
+        if(!ready(o) || o.dragging || !o.inspector_ready) return false;
+        const auto* apply=actionable(button("Apply instance transform"));
+        if(!apply) return false;
+        click_at(center(intersection(apply->bounds,apply->clip)));
+        return true;
+    });
+    add("The released gesture presents the worker's current controls",[this](const Observation& o) {
+        require(o.status.find("Stale")==std::string_view::npos,"Inspector kept pre-gesture controls: "+std::string(o.status));
+        require(project::instance_transform(o.state,imported_)->scale==gizmo_scale_,"Unchanged Apply altered the gesture");
         return true;
     });
     wait("Ctrl+Z undo scale gesture",[this](const Observation& o) {
