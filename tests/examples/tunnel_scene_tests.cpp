@@ -405,6 +405,25 @@ TEST_CASE("Express departure has a continuous close camera and clears the low te
     CHECK(p::evaluate_camera(*restored,40)==p::evaluate_camera(*scene,40));
 }
 
+TEST_CASE("The departure keeps a margin under the editor's 64 MiB decoded limit", "[example][tunnel][departure]") {
+    // It embeds the whole connected Earth plus the voyage's assets. Growth has
+    // to fail here, not when the editor opens the committed demo: the scene
+    // must decode within 63.5 MiB, half a MiB under the reader's limit.
+    using namespace vng;
+    constexpr std::size_t margin_limit=63*1024*1024+512*1024;
+    const auto within_margin=[&](std::string_view text) {
+        return content::parse_document(text,{.limits={.max_source_bytes=vng::editor::max_document_bytes,
+            .max_decoded_bytes=margin_limit,.max_string_bytes=vng::editor::mesh_limits().max_source_bytes}}).has_value();
+    };
+    const auto scene=example::tunnel::departure::author_scene(VNG_TUNNEL_ASSETS);REQUIRE(scene);
+    const auto authored=editor_example::encode_scene(*scene);REQUIRE(authored);
+    CHECK(within_margin(*authored));
+    std::ifstream file(std::filesystem::path(VNG_TUNNEL_ASSETS)/"tunnel_departure.vscene",std::ios::binary);
+    REQUIRE(file);
+    const std::string committed{std::istreambuf_iterator<char>{file},std::istreambuf_iterator<char>{}};
+    CHECK(within_margin(committed));
+}
+
 TEST_CASE("A full-budget Earth still loads, saves beside its draft and fits the departure",
           "[example][earth][limits][departure]") {
     using namespace vng;
