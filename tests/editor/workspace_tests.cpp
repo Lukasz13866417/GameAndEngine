@@ -92,8 +92,9 @@ static_assert(private_to_owner<ToolPanel, ToolPanel::Show, ToolPanel::Context>);
 static_assert(private_to_owner<SceneLists, SceneLists::Browsing, SceneListsContext>);
 static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Available, TimelineContext>);
 static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Unavailable, TimelineContext>);
-// Gizmos expose a simple active-operation API, not situation dispatch.
-static_assert(requires(CameraGizmo& gizmo, const NavigationFrame& frame) { gizmo.update(frame); });
+// The camera gizmo is arbitrated by its viewport owner: even a mutable owner
+// hands out only an observation, never the gizmo itself.
+static_assert(std::same_as<decltype(std::declval<ViewportToolsUI&>().camera_gizmo()),const CameraGizmo&>);
 
 EditingWorkspaceUI timeline_workspace(State state, ui::Screen& screen, TimelineHosts hosts) {
     const auto hidden=[&] { return screen.column().visible(false); };

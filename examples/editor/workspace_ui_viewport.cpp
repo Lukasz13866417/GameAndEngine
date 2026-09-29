@@ -72,7 +72,7 @@ ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputCont
         finish_pose(ViewportTool::navigation,reply.navigation.cancelled,"Camera");
     // Explicitly selecting a camera child borrows the viewport, not the scene
     // selection. Keep object captures and pickers from competing with its LMB.
-    if(tools.camera_gizmo().exclusive())return reply;
+    if(tools.object_tools_suspended())return reply;
     tools.gizmo_input.route(tools.transforming(),reply.navigation_was_dragging||tools.camera_gizmo().handledPointer(),
         input.tool_menu,input.raw.pointer,input.raw.events,input.unhandled,static_cast<float>(input.frame_seconds),
         eligibility.enabled&&input.raw.focused&&!walk.active()&&input.keyboard_enabled&&

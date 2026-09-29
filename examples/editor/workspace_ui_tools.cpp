@@ -89,7 +89,7 @@ content::Result<bool> EditingWorkspaceUI::poll_region_menu(std::span<const input
 }
 bool EditingWorkspaceUI::erase_blueprint_handle(){return blueprint_panel_child().erase_handle();}
 void EditingWorkspaceUI::choose_gizmo(GizmoMode mode){gizmo_selector_child().value(mode);invalidate_gizmos();}
-void EditingWorkspaceUI::choose_camera_gizmo(CameraGizmoMode mode){interaction_child().camera_gizmo().select(mode);}
+void EditingWorkspaceUI::choose_camera_gizmo(CameraGizmoMode mode){interaction_child().select_camera(mode);}
 WorkspaceFeedback EditingWorkspaceUI::poll_gizmos(int cycle) {
     auto& panel=blueprint_panel_child();auto& gizmo=gizmo_selector_child();
     WorkspaceFeedback reply;bool cycled{};
@@ -111,14 +111,13 @@ WorkspaceFeedback EditingWorkspaceUI::poll_gizmos(int cycle) {
     }
     return reply;
 }
-CameraPreferenceEdit EditingWorkspaceUI::poll_camera_gizmo(const Settings& settings){return interaction_child().camera_gizmo().poll(settings);}
+CameraPreferenceEdit EditingWorkspaceUI::poll_camera_gizmo(const Settings& settings){return interaction_child().poll_camera(settings);}
 void EditingWorkspaceUI::present_camera_gizmo(CameraGizmo::Presentation p,const Settings& settings) {
-    auto& tools=interaction_child();
-    p.other_gizmo=tools.instances.active()||tools.translation.visible()||tools.rotation.visible()||tools.scale.visible()||
-        tools.mesh.visible()||tools.mesh_part.visible()||tools.regions.tool().gizmo_visible()||tools.pivot.visible()||
-        tools.bounds.handle(0)||tools.bounds.handle(1)||(camera_ui().overlay_shown()&&!camera_ui().visiting());
+    // The viewport adds its own object gizmos; the camera-action overlay is a
+    // sibling target only this workspace sees.
+    p.other_gizmo=camera_ui().overlay_shown()&&!camera_ui().visiting();
     const auto target=camera_target_label();p.target=target;
-    tools.camera_gizmo().present(p,settings);
+    interaction_child().present_camera(p,settings);
 }
 void EditingWorkspaceUI::present_tool_options(ui::Rect bounds,bool enabled,bool diagnostic) {
     auto& tools=interaction_child();auto& panel=blueprint_panel_child();
@@ -130,9 +129,10 @@ void EditingWorkspaceUI::present_tool_options(ui::Rect bounds,bool enabled,bool 
     if(!options&&part)options=&panel;
     if(!options)options=tools.mesh.tool_options();
     if(!options)options=tools.regions.tool_options();
-    if(tools.camera_gizmo().exclusive()){options=nullptr;route({.context={.close=true}});}
+    const bool suspended=tools.object_tools_suspended();
+    if(suspended){options=nullptr;route({.context={.close=true}});}
     const bool captured=tools.transforming();
-    const bool visible=enabled&&!tools.camera_gizmo().exclusive()&&!diagnostic&&
+    const bool visible=enabled&&!suspended&&!diagnostic&&
         (mesh?tools.mesh.visible()||tools.mesh_part.visible()||part:
             tools.translation.visible()||tools.rotation.visible()||tools.scale.visible()||tools.regions.tool().gizmo_visible()||
             tools.pivot.visible()||tools.bounds.handle(0)||tools.bounds.handle(1));
@@ -145,12 +145,15 @@ void EditingWorkspaceUI::present_tool_options(ui::Rect bounds,bool enabled,bool 
     else if(options)route({.show=ToolPanel::Show{*options}});
     route({.context={.viewport=bounds}});
 }
+// Object overlays are hidden while an explicitly chosen camera child owns LMB.
 void EditingWorkspaceUI::append_region_overlays(ui::DrawList& list,const text::Font& font) const {
-    viewport_->interaction_->regions.append(list,font);
+    const auto& tools=*viewport_->interaction_;
+    if(!tools.object_tools_suspended())tools.regions.append(list,font);
 }
 void EditingWorkspaceUI::append_tool_overlays(ui::DrawList& list,const text::Font& font,const gfx::Camera& camera,
     Extent2D extent,ui::Rect bounds,bool enabled,u64 revision,double time) {
     auto& tools=interaction_child();
+    if(tools.object_tools_suspended())return;
     if(viewport().mode==ViewMode::scene&&selected_instances().size()>1&&enabled)
         for(const auto& p:tools.instance_projection.get(state(),extent,camera)) {
             if(!selected_instances().contains(p.object)||p.object==viewport().selected_object)continue;

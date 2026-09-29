@@ -577,10 +577,10 @@ int run(const Options& options) {
             playing,mode_pending,!logs_visible,modal_visible());
     };
     const auto present_camera_gizmo = [&] {
-        workspace.present_camera_gizmo({image.bounds(),{},
-            !playing&&!mode_pending&&!logs_visible&&!modal_visible()&&image_id!=0&&
+        workspace.present_camera_gizmo({.viewport=image.bounds(),
+            .visible=!playing&&!mode_pending&&!logs_visible&&!modal_visible()&&image_id!=0&&
                 (viewport_window.opened()||(!camera_ui.opened()&&!main_bar.opened()&&!scene_bar.opened())),
-            !inspecting()&&!editing.awaiting_remote()&&!viewport_interaction.transforming(),false},settings);
+            .enabled=!inspecting()&&!editing.awaiting_remote()&&!viewport_interaction.transforming()},settings);
     };
     // The playhead may start on time zero; this is not a keyframe selection.
     timeline_input({.input={.clear_selection=true}});
@@ -888,7 +888,7 @@ int run(const Options& options) {
             mesh_tools.mode()!=MeshSelectMode::whole && blueprint_mesh_panel.has_gizmo();
         const int gizmo_cycle = take_gizmo_cycle(shortcut_input,
             !dialog_was_open && (viewport_keyboard || !ui_shortcut_capture) && !editing.awaiting_remote() && !viewport_gesture &&
-            !playing && !mode_pending && !logs_visible && !camera_gizmo.exclusive() &&
+            !playing && !mode_pending && !logs_visible && !viewport_interaction.object_tools_suspended() &&
             view_state.paused && ((view_state.mode == ViewMode::scene && selected_instances.size() != 0 &&
             workspace.interaction_mode() == InteractionMode::objects) || (view_state.mode==ViewMode::mesh &&
             (part_gizmo_target || mesh_tools.mode()!=MeshSelectMode::surface))));
@@ -1505,7 +1505,7 @@ int run(const Options& options) {
             mesh_tools.component_mode() &&
             !playing && !mode_pending && !logs_visible && !diagnostic.value() &&
             image_time_current && matches_view(presented_info,state) && image_revision >= minimum_overlay_revision;
-        if (viewport_uncovered && !camera_gizmo.exclusive() && (!modal_visible() || regions.menu_open())) {
+        if (viewport_uncovered && (!modal_visible() || regions.menu_open())) {
             // Compose annotation geometry immediately above its viewport image,
             // below inspector widgets and popups, including its own RMB menu.
             ui::DrawList annotations;
@@ -1518,7 +1518,7 @@ int run(const Options& options) {
                 viewport_list->commands.insert(std::next(viewport_draw),std::make_move_iterator(annotations.commands.begin()),
                     std::make_move_iterator(annotations.commands.end()));
         }
-        if (viewport_uncovered && !camera_gizmo.exclusive() && !modal_visible()) {
+        if (viewport_uncovered && !modal_visible()) {
             workspace.append_tool_overlays(*viewport_list,*font,image_camera,image_extent,image.bounds(),viewport_enabled,
                 image_revision,std::chrono::duration<double>(now.time_since_epoch()).count());
         }
@@ -1559,7 +1559,7 @@ int run(const Options& options) {
                 .preview_ready = preview_ready, .dirty = editing.dirty(),
                 .gizmo_visible = (instance_transform.active() ? instance_transform.visible() :
                     (translation.visible() || rotation.visible() || scaling.visible() || viewport_interaction.mesh_part.visible())) &&
-                    !camera_gizmo.exclusive() && viewport_uncovered && !modal_visible(),
+                    !viewport_interaction.object_tools_suspended() && viewport_uncovered && !modal_visible(),
                 .dragging = instance_transform.active() || translation.dragging() || rotation.dragging() || editing.active(EditGesture::scale) || regions.dragging() ||
                     viewport_interaction.mesh.active() || viewport_interaction.pivot.dragging() || viewport_interaction.mesh_part.dragging(),
                 .inspector_ready = delivery.ready(active, state.document.revision) && schema != schemas.end() &&

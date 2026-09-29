@@ -432,8 +432,9 @@ private:
         change.active_changed=change.previous_active!=change.active;
         if(reset_vertex && (change.active_changed || change.changed)) view.selected_vertex=0;
         view.selected_object=change.active;
+        // Explicit selection hands LMB back to the object tools.
         if(reset_vertex && viewport_ && viewport_->interaction_)
-            viewport_->interaction_->camera_gizmo().object_tools();
+            viewport_->interaction_->resume_object_tools();
         synchronize_selection_gizmos(change.active_changed || change.changed);
         if(change.active_changed || change.changed) present_selection(reset_vertex);
         if(reset_vertex&&viewport_&&viewport_->interaction_)

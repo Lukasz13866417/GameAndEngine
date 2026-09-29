@@ -216,3 +216,31 @@ TEST_CASE("Region pointer-down observations preserve multi-selection modifiers",
     CHECK(f.workspace.selected_instances().contains(1));
     CHECK_FALSE(f.workspace.selected_instances().contains(*added));
 }
+
+TEST_CASE("An explicitly chosen camera child borrows LMB from object tools until Escape", "[editor][input][viewport][camera_gizmo]") {
+    WorkspaceFixture f;
+    const auto position=[&]{return evaluate_transform(f.workspace.state(),*find_instance(f.workspace.state(),1),0).position;};
+    const auto revision=f.workspace.state().document.revision;
+    const auto camera=f.workspace.state().viewport.editor_camera;
+    f.workspace.choose_camera_gizmo(CameraGizmoMode::pan);
+    REQUIRE(f.workspace.interaction().object_tools_suspended());
+    // Neither the keyboard transform nor a click on the instance edits it.
+    f.pump({{.kind=input::EventKind::key_down,.position={460,300},.key=input::Key::g},
+            {.kind=input::EventKind::pointer_move,.position={520,300}},
+            {.kind=input::EventKind::key_down,.position={520,300},.key=input::Key::enter}});
+    CHECK_FALSE(f.workspace.busy());CHECK(position()==Vec3{});
+    f.pump({{.kind=input::EventKind::pointer_down,.position={460,300}},
+            {.kind=input::EventKind::pointer_move,.position={500,320}},
+            {.kind=input::EventKind::pointer_up,.position={500,320}}});
+    CHECK(f.workspace.state().viewport.editor_camera.target!=camera.target); // LMB panned instead.
+    CHECK(position()==Vec3{});CHECK(f.workspace.state().document.revision==revision);
+    CHECK_FALSE(f.workspace.can_undo());CHECK(f.workspace.selected_instances().active()==1);
+    // An unclaimed Escape hands LMB back; the same keyboard transform now edits.
+    f.pump({{.kind=input::EventKind::key_down,.position={500,320},.key=input::Key::escape}});
+    CHECK_FALSE(f.workspace.interaction().object_tools_suspended());
+    f.workspace.viewport().editor_camera=camera;
+    f.pump({{.kind=input::EventKind::key_down,.position={460,300},.key=input::Key::g},
+            {.kind=input::EventKind::pointer_move,.position={520,300}},
+            {.kind=input::EventKind::key_down,.position={520,300},.key=input::Key::enter}});
+    CHECK(position().x==Catch::Approx(1));CHECK(f.workspace.can_undo());
+}

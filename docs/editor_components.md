@@ -61,7 +61,7 @@ Application run() [host controller]
 │   │   ├── ToolPanel [UI]         retained active-tool options
 │   │   ├── GizmoSelector / RotationPivotControls [UI + local tool choices]
 │   │   ├── BlueprintMeshPanel [controller + UI + owned CPU job]
-│   │   └── ViewportToolsUI [UI tools + input arbitration]
+│   │   └── ViewportToolsUI [UI tools + input arbitration, incl. camera vs object tools]
 │   │       ├── CameraGizmo [UI + camera-child input arbitration]
 │   │       │   ├── CameraPointerGizmo × 5 [Orbit / Look / Pan / Forward / Zoom]
 │   │       │   │   └── CameraPointerLogic [gesture math + capture]
