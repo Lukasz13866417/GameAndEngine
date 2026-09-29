@@ -12,6 +12,66 @@ for (const file of ["data.js", "codebase.js", "architecture-data.js", "architect
 const scopes = context.window.VNG_ARCHITECTURE;
 const model = context.window.VNG_MAP_MODEL;
 const trees = new Map(Array.from(scopes, scope => [scope.id, model.index(scope.root)]));
+const compact = text => text.replace(/\s+/g, "");
+
+// C++ source checks. Comments and string/character literals are blanked (same
+// length) so their braces cannot unbalance a body; a quote after a digit is a
+// C++14 digit separator (1'000), not a literal.
+const texts = new Map();
+const read = file => texts.get(file) ?? texts.set(file, readFileSync(path.resolve(repository, file), "utf8")).get(file);
+function blank(text) {
+  const spaces = (from, to) => text.slice(from, to).replace(/[^\n]/g, " ");
+  let out = "";
+  for (let i = 0; i < text.length;) {
+    const pair = text.slice(i, i + 2);
+    let end;
+    if (pair === "//" || pair === "/*") {
+      end = pair === "//" ? text.indexOf("\n", i) : text.indexOf("*/", i + 2) + 2;
+      if (end < 2 || (pair === "//" && end < 0)) end = text.length;
+      out += spaces(i, end);
+    } else if (text[i] === '"' && /(^|[^\w])(u8|u|U|L)?R$/.test(text.slice(Math.max(0, i - 3), i))) {
+      const open = text.indexOf("(", i), delimiter = text.slice(i + 1, open);
+      end = text.indexOf(`)${delimiter}"`, open) + delimiter.length + 2;
+      out += spaces(i, end);
+    } else if (text[i] === '"' || (text[i] === "'" && !/(^|[^\w.])\d[\w.']*$/.test(text.slice(Math.max(0, i - 40), i)))) {
+      for (end = i + 1; end < text.length && text[end] !== text[i] && text[end] !== "\n";) end += text[end] === "\\" ? 2 : 1;
+      end = Math.min(end + 1, text.length);
+      out += spaces(i, end);
+    } else {
+      out += text[i];
+      end = i + 1;
+    }
+    i = end;
+  }
+  return out;
+}
+// The brace-balanced body after a definition head such as "class X final" or
+// "int run(...)", skipping forward declarations. Undefined when absent.
+function body(file, head) {
+  const code = blank(read(file));
+  const words = head.trim().split(/\s+/).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const definition = new RegExp(`${words.join("\\s+")}${/\w$/.test(head) ? "\\b" : ""}[^;{}]*\\{`, "g");
+  for (const match of code.matchAll(definition)) {
+    const start = match.index + match[0].length;
+    for (let i = start, depth = 1; i < code.length; i++) {
+      if (code[i] === "{") depth++;
+      else if (code[i] === "}" && --depth === 0) return code.slice(start, i);
+    }
+  }
+  return undefined;
+}
+// A declaration at the top level of a body: a member, not a local of a method
+// or of a nested block. Whitespace is ignored.
+function declares(code, declaration) {
+  const text = compact(code), wanted = compact(declaration);
+  for (let at = text.indexOf(wanted); at >= 0; at = text.indexOf(wanted, at + 1)) {
+    let depth = 0;
+    for (const character of text.slice(0, at)) depth += character === "{" ? 1 : character === "}" ? -1 : 0;
+    if (depth === 0) return true;
+  }
+  return false;
+}
+const owned = ["editor", "worker"].map(id => [id, trees.get(id)]);
 
 test("architecture covers the editor, worker and module catalog without ambiguous IDs", () => {
   assert.deepEqual(Array.from(trees.keys()), ["editor", "worker", "modules"]);
@@ -29,7 +89,6 @@ test("architecture covers the editor, worker and module catalog without ambiguou
         const file = path.resolve(repository, source);
         assert.ok(file.startsWith(repository + path.sep) && existsSync(file), `${node.id}: ${source}`);
       }
-      if (node.witness) assert.ok(readFileSync(path.resolve(repository, node.sources[0]), "utf8").includes(node.witness), `${node.id}: stale source witness`);
       for (const ref of node.references || []) assert.ok(trees.get(ref.scope)?.nodes.has(ref.id), `${node.id}: broken reference ${ref.id}`);
       if (node.guide) {
         assert.ok(existsSync(path.resolve(root, node.guide.split("#")[0])));
@@ -38,40 +97,73 @@ test("architecture covers the editor, worker and module catalog without ambiguou
   }
 });
 
-test("ownership edges agree with concrete parent member declarations", () => {
-  // Representative edges across every major boundary, including the renamed
-  // parent-coordinated UI. These catch drift back to the old sibling-owner map.
-  const owners = [
-    ["editor", "session", "workspace", "workspace_ui.hpp", "EditingSession editing_;"],
-    ["editor", "selection", "workspace", "workspace_ui.hpp", "WorkspaceSelection selection_;"],
-    ["editor", "viewport", "workspace", "workspace_ui.hpp", "std::optional<EditingViewportUI> viewport_;"],
-    ["editor", "scene-lists", "workspace", "workspace_ui.hpp", "std::optional<SceneLists> lists_;"],
-    ["editor", "timeline", "workspace", "workspace_ui.hpp", "std::optional<TimelineEditingUI> timeline_;"],
-    ["editor", "state", "session", "editing_session.hpp", "State state_;"],
-    ["editor", "document", "state", "project.hpp", "Document document;"],
-    ["editor", "private-view", "state", "project.hpp", "ViewportState viewport{};"],
-    ["editor", "mesh-editing", "viewport", "workspace_ui.hpp", "MeshEditingUI mesh_;"],
-    ["editor", "interaction", "viewport", "workspace_ui.hpp", "std::optional<ViewportToolsUI> interaction_;"],
-    ["editor", "mesh-tools", "mesh-editing", "mesh_editing_ui.hpp", "MeshToolsUI components_;"],
-    ["editor", "mesh-menu", "mesh-tools", "mesh_tools_ui.hpp", "MeshMenu menu_;"],
-    ["editor", "navigation", "interaction", "viewport_tools_ui.hpp", "CameraGizmo navigation_;"],
-    ["editor", "camera-pointer", "navigation", "camera_gizmo.hpp", "std::array<CameraPointerGizmo,5> pointer_"],
-    ["editor", "camera-walk", "navigation", "camera_gizmo.hpp", "CameraWalkGizmo walk_;"],
-    ["editor", "timeline-panel", "timeline", "timeline_editing_ui.hpp", "TimelinePanel panel_;"],
-    ["editor", "transport", "preview", "preview_logic.hpp", "vng::editor::preview::PreviewSession transport_;"],
-    ["editor", "delivery", "preview", "preview_logic.hpp", "PreviewDeliveryLogic updates_;"],
-    ["editor", "mailbox", "preview", "preview_logic.hpp", "PreviewMailbox frames_;"],
-    ["worker", "programs", "runtime", "runtime.cpp", "MeshPrograms mesh_programs;"],
-    ["worker", "readback", "runtime", "runtime.cpp", "std::optional<opengl::Rgba8ReadbackQueue> readback_queue;"]
-  ];
-  const compact = text => text.replace(/\s+/g, "");
-  for (const [scope, child, parent, source, member] of owners) {
-    assert.equal(trees.get(scope).parents.get(child), parent, child);
-    assert.ok(compact(readFileSync(path.join(repository, "examples/editor", source), "utf8")).includes(compact(member)), `${parent}: ${member}`);
+test("every editor and worker class is witnessed by its own definition", () => {
+  for (const [, tree] of owned) {
+    for (const node of tree.nodes.values()) {
+      if (node.edge === "group") {
+        assert.ok(!node.witness, `${node.id}: a named group has no single definition`);
+        continue;
+      }
+      assert.ok(node.witness, `${node.id}: add a witness to declarations`);
+      assert.ok(body(node.sources[0], node.witness) !== undefined, `${node.id}: "${node.witness}" defines nothing in ${node.sources[0]}`);
+      const named = node.witness.match(/^(?:class|struct)\s+([\w:]+)/)?.[1];
+      if (node.role === "Host") {
+        assert.ok(!named, `${node.id}: a host is a function`);
+        continue;
+      }
+      assert.ok(named, `${node.id}: witness its class or struct`);
+      assert.ok(node.symbol.includes(named), `${node.id}: ${node.symbol} does not name ${named}`);
+      if (/^[A-Za-z_]\w*(::[A-Za-z_]\w*)*$/.test(node.symbol)) {
+        assert.equal(named.split("::").at(-1), node.symbol.split("::").at(-1), `${node.id}: symbol and class disagree`);
+      }
+    }
   }
+});
+
+test("every editor and worker parent link is a member declared in its owner", () => {
+  let links = 0;
+  for (const [, tree] of owned) {
+    for (const node of tree.nodes.values()) {
+      const parent = tree.nodes.get(tree.parents.get(node.id));
+      if (!parent) continue;
+      const head = node.memberOf || parent.witness, file = parent.sources[0];
+      const owner = body(file, head);
+      assert.ok(owner !== undefined, `${node.id}: its owner ${parent.id} has no body "${head}" in ${file}`);
+      const declarations = node.edge === "group" ? node.members : [node.member];
+      assert.ok(declarations?.length && declarations.every(Boolean),
+        `${node.id}: declarations must name the ${node.edge === "group" ? "members it groups" : "member"} in ${parent.id}`);
+      for (const declaration of declarations) {
+        assert.ok(declares(owner, declaration), `${node.id}: "${declaration}" is not a member of ${head} (${file})`);
+        links++;
+      }
+    }
+  }
+  assert.ok(links >= [...owned].reduce((count, [, tree]) => count + tree.parents.size, 0));
   assert.ok(!trees.get("editor").nodes.has("worker"), "A worker is another process, not an editor-owned C++ child");
   assert.equal(trees.get("worker").parents.get("gl-session"), "worker-host", "Worker borrows, not owns, the GL session");
   assert.match(trees.get("worker").nodes.get("worker").borrows.join(" "), /Device& and Window&/);
+});
+
+test("declarations only describe nodes that are on the map", () => {
+  const declarations = context.window.VNG_ARCHITECTURE_DECLARATIONS;
+  assert.deepEqual(Object.keys(declarations), owned.map(([id]) => id));
+  for (const [id, tree] of owned) {
+    for (const key of Object.keys(declarations[id])) assert.ok(tree.nodes.has(key), `${id}: stale declaration ${key}`);
+  }
+});
+
+test("the source scanner finds members, not comments, literals or method locals", () => {
+  const source = `class A final : public B { // class A {
+    void f() { Local unused; auto text = "}}{"; char brace = '}'; auto raw = R"x(})x"; }
+    std::optional<Owned> owned_{1'000, 200'000}; /* } */
+  };`;
+  const code = blank(source);
+  assert.equal(code.length, source.length);
+  assert.equal(code.match(/[{}]/g).join(""), "{{}{}}");
+  const inside = code.slice(code.indexOf("{") + 1, code.lastIndexOf("}"));
+  assert.ok(declares(inside, "std::optional<Owned> owned_{1'000, 200'000};"));
+  assert.ok(!declares(inside, "Local unused;"));
+  assert.ok(!declares(inside, "class A {"));
 });
 
 test("application widgets and drawing sit directly under the editor host", () => {
@@ -116,14 +208,17 @@ test("deep search finds collapsed classes, files and multiple-word descriptions"
 });
 
 test("revealing a bookmark opens only its ancestors; collapse retains valid selection", () => {
-  const tree = trees.get("editor"), expanded = new Set();
-  const expected = ["editor-host", "workspace", "viewport", "interaction", "navigation", "camera-walk"];
-  assert.deepEqual(Array.from(model.path(tree, "camera-walk")), expected);
-  model.reveal(tree, expanded, "camera-walk");
-  assert.deepEqual([...expanded], expected.slice(0, -1));
-  assert.ok(model.layout(tree, expanded).nodes.some(p => p.node.id === "camera-walk"));
-  assert.equal(model.collapse(tree, expanded, "interaction", "camera-walk"), "interaction");
-  assert.equal(model.collapse(tree, expanded, "preview", "camera-walk"), "camera-walk");
+  const tree = trees.get("editor"), expanded = new Set(), leaf = "camera-walk";
+  const route = Array.from(model.path(tree, leaf));
+  assert.equal(route[0], tree.root.id);
+  assert.equal(route.at(-1), leaf);
+  for (let i = 1; i < route.length; i++) assert.equal(tree.parents.get(route[i]), route[i - 1]);
+  model.reveal(tree, expanded, leaf);
+  assert.deepEqual([...expanded], route.slice(0, -1));
+  assert.ok(model.layout(tree, expanded).nodes.some(p => p.node.id === leaf));
+  const ancestor = route.at(-3), unrelated = [...tree.nodes.values()].find(node => node.children.length && !route.includes(node.id)).id;
+  assert.equal(model.collapse(tree, expanded, ancestor, leaf), ancestor);
+  assert.equal(model.collapse(tree, expanded, unrelated, leaf), leaf);
   assert.equal(model.path(tree, "missing").length, 0);
   model.reveal(tree, expanded, "missing"); // Invalid bookmarks do not poison expansion.
   assert.ok(!expanded.has("missing"));
