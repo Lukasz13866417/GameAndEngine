@@ -29,6 +29,10 @@ TEST_CASE("Tunnel haze, bloom and diagnostics share the batched scene renderer",
     const auto pixel=[&](u32 x,u32 y,u32 c){return std::to_integer<unsigned>(rendered->pixels[(y*extent.width+x)*4+c]);};
     CHECK(std::abs(static_cast<int>(pixel(320,200,0))-static_cast<int>(pixel(320,200,2)))<20);
     CHECK(pixel(320,200,2)>200U);
+    // Local construction must remain readable instead of being washed into
+    // the same near-white haze as the far passage.
+    CHECK(pixel(64,200,2)+60U<pixel(320,200,2));
+    CHECK(pixel(64,200,2)>pixel(64,200,0)+8U);
     scene->document.environment.bloom_strength=0;
     ++scene->document.revision;
     auto plain=runtime->render(*device,{*scene,camera,extent,9,false});REQUIRE(plain);
@@ -51,6 +55,8 @@ TEST_CASE("Tunnel haze, bloom and diagnostics share the batched scene renderer",
         {reinterpret_cast<const u8*>(outside->pixels.data()),outside->pixels.size()}));
     REQUIRE(example::write_rgba8_png(std::filesystem::path{folder}/"inside.png",extent,
         {reinterpret_cast<const u8*>(plain->pixels.data()),plain->pixels.size()}));
+    REQUIRE(example::write_rgba8_png(std::filesystem::path{folder}/"inside-bloom.png",extent,
+        {reinterpret_cast<const u8*>(rendered->pixels.data()),rendered->pixels.size()}));
     std::cout<<"Tunnel inside/outside evidence: "<<folder<<'\n';
     scene->viewport.selected_object=1;
     auto diagnostic=runtime->render(*device,{*scene,camera,extent,9,true});REQUIRE(diagnostic);

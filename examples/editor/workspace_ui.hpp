@@ -12,6 +12,10 @@
 #include "rotation_pivot_controls.hpp"
 #include "viewport_context.hpp"
 #include "viewport_picking.hpp"
+#include "workspace_panels.hpp"
+#include "world_bounds_panel.hpp"
+#include "viewport_camera_ui.hpp"
+#include "edit_shortcuts.hpp"
 #include <stdexcept>
 
 namespace editor_example {
@@ -65,6 +69,7 @@ public:
         if(blueprint_panel_)report.children.push_back(blueprint_panel_->debug_report());
         if(gizmo_selector_)report.children.push_back(gizmo_selector_->debug_report());
         if(rotation_pivot_)report.children.push_back(rotation_pivot_->debug_report());
+        if(camera_)report.children.push_back(camera_->debug_report());
         return report;
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
@@ -125,6 +130,7 @@ private:
     MeshNavigationControls navigation_;
     ToolPanel tools_;
     std::optional<BlueprintMeshPanel> blueprint_panel_;
+    std::optional<ViewportCameraUI> camera_;
     std::optional<ViewportToolsUI> interaction_;
     std::optional<GizmoSelector> gizmo_selector_;
     std::optional<RotationPivotControls> rotation_pivot_;
@@ -143,8 +149,97 @@ struct WorkspaceContext {
     std::optional<ToolPanelInput> tools{};
 };
 struct WorkspaceReply { MeshEditingReply mesh{}; SceneListsReply lists{}; TimelineReply timeline{}; };
+enum class SelectionTarget { instances, keyframes };
+struct WorkspaceCommandResult {std::string message;bool discontinuous{}, changed{};};
+// User-facing result of a complete workspace operation, not a child edit proposal.
+struct WorkspaceFeedback {std::string message;bool authored{},camera_changed{},mode_changed{};};
+struct InspectorReply {std::vector<vng::editor::Event> events;WorkspaceFeedback feedback;};
+// Only facts owned above the workspace. Document/tool eligibility is derived
+// below, not duplicated by the application for each individual widget.
+struct WorkspacePanelFrame {
+    bool modal{}, mode_pending{}, playing{}, inspector_ready{};
+};
 class EditingWorkspaceUI final {
 public:
+    // Camera branch: presentation facts and locally polled proposals.
+    [[nodiscard]] const ViewportCameraUI& camera_ui() const {return *viewport_->camera_;}
+    void initialize_camera(vng::ui::Container menu,vng::ui::Container overlay,const Settings&);
+    void sync_camera_controls(bool reset=false,bool idle_only=false);
+    void camera_settings_changed(const Settings&);
+    void camera_menu_layout(vng::ui::Rect button,vng::Vec2 screen);
+    void close_camera_menu();
+    void toggle_camera_menu(const Settings&);
+    void enable_camera_menu(bool);
+    std::string poll_camera_menu(std::span<const vng::input::Event>,bool modal);
+    std::optional<vng::content::Result<Settings>> camera_preferences(const Settings&);
+    WorkspaceFeedback poll_camera_pose(const Settings&);
+    bool end_camera_visit(bool restore);
+    std::string visit_camera(vng::u32,bool editable);
+    bool reconcile_camera_visit();
+    std::string camera_label(bool playing) const;
+    WorkspaceFeedback poll_camera_actions();
+    void present_camera_actions(vng::ui::Rect,const vng::gfx::Camera&,vng::Extent2D,vng::f32 time,
+                                bool playing,bool pending,bool visible,bool modal);
+    // Active interaction lifecycle and its dependent presentation.
+    MeshEditingReply poll_blueprint_controls(bool enabled);
+    WorkspaceFeedback finish_interaction(ViewportTool,bool cancelled);
+    WorkspaceFeedback cancel_interaction();
+    WorkspaceFeedback poll_gizmos(int cycle);
+    void choose_gizmo(GizmoMode);
+    void choose_camera_gizmo(CameraGizmoMode);
+    void clear_mesh_part();
+    void reset_view_tools();
+    void reset_move_tool();
+    void focus_keyframes(bool show_inspector);
+    vng::content::Result<bool> poll_region_menu(std::span<const vng::input::Event>);
+    CameraPreferenceEdit poll_camera_gizmo(const Settings&);
+    void present_camera_gizmo(CameraGizmo::Presentation,const Settings&);
+    void present_tool_options(vng::ui::Rect,bool enabled,bool diagnostic);
+    void append_tool_overlays(vng::ui::DrawList&,const vng::text::Font&,const vng::gfx::Camera&,
+                              vng::Extent2D,vng::ui::Rect,bool viewport_enabled,vng::u64 image_revision,double time);
+    void append_region_overlays(vng::ui::DrawList&,const vng::text::Font&) const;
+    // Workspace-wide actions coordinate selection, panels and authoring together.
+    WorkspaceCommandResult shortcut(EditShortcut);
+    WorkspaceCommandResult delete_selection();
+    WorkspaceFeedback poll_scene_lists(std::span<const vng::input::Event>);
+    std::string open_mesh(BlueprintId);
+    std::string select_scene_instance(vng::u32,vng::editor::SelectionMode);
+    std::string poll_interaction_mode();
+    std::string change_interaction_mode(InteractionMode);
+    void view_changed();
+    [[nodiscard]] std::string_view selection_message() const {return selection_message_;}
+    [[nodiscard]] SelectionTarget keyboard_target() const { return keyboard_target_; }
+    void keyboard_target(SelectionTarget value) { keyboard_target_=value; }
+    // Owned panel construction, layout and availability. No widget handles escape.
+    void create_panels(vng::ui::Screen&);
+    void initialize_panels(vng::ui::Screen&,vng::ui::Screen& popups,vng::ui::Container keyframe_actions,
+                           vng::ui::Container region_controls,vng::ui::Container bounds_controls);
+    void layout_panels(EditorLayout&,vng::Vec2 screen_size);
+    bool resize_panels(const EditorLayout&);
+    void present_panels(const WorkspacePanelFrame&);
+    void sync_sidebar();
+    void poll_tabs();
+    [[nodiscard]] SidebarTab sidebar_tab() const;
+    void show_tab(SidebarTab);
+    [[nodiscard]] InteractionMode interaction_mode() const;
+    void interaction_mode(InteractionMode);
+    void refresh_selection(bool synchronize_document=true);
+    void refresh_vertex();
+    void reset_panel_scroll();
+    [[nodiscard]] MeshEditingReply poll_vertex_controls(bool allowed);
+    [[nodiscard]] bool save_mesh_requested();
+    [[nodiscard]] bool publish_mesh_requested();
+    void show_inspector(const vng::editor::Schema&);
+    void clear_inspector();
+    [[nodiscard]] InspectorReply poll_inspector(bool local_scale);
+    void invalidate_inspector() { minimum_inspector_sequence_=editing_.state().viewport.sequence; }
+    [[nodiscard]] vng::u64 minimum_inspector_sequence() const { return minimum_inspector_sequence_; }
+    void invalidate_gizmos() { gizmos_dirty_=true; }
+    [[nodiscard]] bool gizmos_dirty() const { return gizmos_dirty_; }
+    void acknowledge_gizmos() { gizmos_dirty_=false; }
+    // Bounds controls are workspace children, not mutable handles in the host.
+    [[nodiscard]] bool bounds_visible() const { return bounds_panel_&&bounds_panel_->visible(); }
+    WorkspaceFeedback poll_world_bounds(OrbitDistanceRange);
     // UI children borrow this owner's session and each other's owned option
     // objects. Their addresses remain stable for the workspace's lifetime.
     EditingWorkspaceUI(const EditingWorkspaceUI&)=delete;
@@ -172,11 +267,11 @@ public:
     [[nodiscard]] const EditingSession& session() const { return editing_; }
     void attach_viewport_tools(vng::ui::Container blueprint,vng::ui::Container controls,vng::ui::Container creation,
                                vng::ui::Container inspector,vng::ui::Container popup);
-    [[nodiscard]] BlueprintMeshPanel& blueprint_panel();
-    [[nodiscard]] ViewportToolsUI& interaction();
+    [[nodiscard]] const BlueprintMeshPanel& blueprint_panel() const;
+    [[nodiscard]] const ViewportToolsUI& interaction() const;
     void attach_manipulation(vng::ui::Container gizmo,vng::ui::Container pivot);
-    [[nodiscard]] GizmoSelector& gizmo_selector();
-    [[nodiscard]] RotationPivotControls& rotation_pivot();
+    [[nodiscard]] const GizmoSelector& gizmo_selector() const;
+    [[nodiscard]] const RotationPivotControls& rotation_pivot() const;
     void begin_viewport_frame();
     [[nodiscard]] ViewportInputReply interact_viewport(const ViewportInputContext&);
     void refresh_viewport_gizmos(const ViewportInputContext&);
@@ -218,7 +313,15 @@ public:
 
     // Parent-facing authoring actions. Children only receive const session
     // observations; no callback or mutable session escape bypasses this owner.
-    void select_keyframe(std::optional<vng::f32> time) { editing_.select_keyframe(time); }
+    void select_keyframe(std::optional<vng::f32> time) {
+        // Programmatic selection obeys the same invariant as timeline input:
+        // presentation and authoring eligibility must name the same key.
+        editing_.select_keyframe(time);
+        if(timeline_) {
+            if(time)timeline_->present(TimelineInput{.select=std::span<const vng::f32>{&*time,1}});
+            else timeline_->present(TimelineInput{.clear_selection=true});
+        }
+    }
     bool can_edit_scene_pose() const { return editing_.can_edit_scene_pose(); }
     bool dirty() const { return editing_.dirty(); }
     bool can_undo() const { return editing_.can_undo(); }
@@ -226,7 +329,7 @@ public:
     bool busy() const { return editing_.busy(); }
     bool active(EditGesture kind) const { return editing_.active(kind); }
     vng::u32 active_object() const { return editing_.active_object(); }
-    auto take_changes() { return editing_.take_changes(); }
+    std::optional<EditNotice> take_changes();
     unsigned timeline_track_limit() const { return editing_.timeline_track_limit(); }
     auto timeline_track_limit(unsigned limit) { return editing_.timeline_track_limit(limit); }
     unsigned instance_limit() const { return editing_.instance_limit(); }
@@ -293,19 +396,42 @@ public:
         if(viewport_) report.children={viewport_->debug_report(),lists_->debug_report(),timeline_->debug_report()};
         report.children.push_back(editing_.debug_report());
         report.children.push_back(selection_.debug_report());
+        if(panels_)report.children.push_back(panels_->debug_report());
+        report.owned={{"keyboard target",keyboard_target_==SelectionTarget::instances?"instances":"keyframes"},
+            {"minimum inspector context",std::to_string(minimum_inspector_sequence_)},
+            {"gizmo refresh pending",debug_bool(gizmos_dirty_)}};
         return report;
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 private:
     friend struct Dispatcher;
+    // Coordination details are private; the host calls whole workspace operations.
+    std::string camera_target_label() const;
+    WorkspaceFeedback edit_instance_scale(vng::f32,bool finish);
+    bool erase_blueprint_handle();
+    void refresh_after_pose();
+    [[nodiscard]] std::optional<InteractionMode> changed_interaction_mode();
+    [[nodiscard]] std::string selection_changed(bool active_changed);
+    void reset_inspector_scale(vng::f32);
+    void sync_bounds();
+    void bounds_available(bool enabled);
+    void show_bounds() { bounds_panel_->show(); }
+    BlueprintMeshPanel& blueprint_panel_child();
+    ViewportToolsUI& interaction_child();
+    GizmoSelector& gizmo_selector_child();
+    RotationPivotControls& rotation_pivot_child();
     WorkspaceSelection::Change publish_selection(WorkspaceSelection::Change change,bool reset_vertex=true) {
         auto& view=editing_.viewport();
         change.previous_active=view.selected_object;
         change.active_changed=change.previous_active!=change.active;
         if(reset_vertex && (change.active_changed || change.changed)) view.selected_vertex=0;
         view.selected_object=change.active;
+        if(reset_vertex && viewport_ && viewport_->interaction_)
+            viewport_->interaction_->camera_gizmo().object_tools();
         synchronize_selection_gizmos(change.active_changed || change.changed);
         if(change.active_changed || change.changed) present_selection(reset_vertex);
+        if(reset_vertex&&viewport_&&viewport_->interaction_)
+            selection_message_=selection_changed(change.active_changed);
         return change;
     }
     void synchronize_selection_gizmos(bool changed) {
@@ -439,10 +565,25 @@ private:
         }
         // Includes Ctrl-click/scrub clearing selection without moving playhead.
         editing_.select_keyframe(timeline_->view().selected_keyframe());
+        if(reply.select_instance) {
+            const auto& [id,mode]=*reply.select_instance;
+            const auto message=select_scene_instance(id,mode);
+            if(reply.message.empty())reply.message=message;
+        } else if(reply.interacted&&!reply.selection_requested)
+            focus_keyframes(reply.select_inspector);
         return reply;
     }
     EditingSession editing_;
     WorkspaceSelection selection_;
+    SelectionTarget keyboard_target_{SelectionTarget::instances};
+    std::optional<WorkspacePanels> panels_;
+    std::optional<WorldBoundsPanel> bounds_panel_;
+    std::optional<vng::u32> revealed_instance_;
+    vng::u64 minimum_inspector_sequence_{};
+    bool gizmos_dirty_{};
+    std::string last_blueprint_status_;
+    std::string selection_message_;
+    std::optional<vng::editor::Schema> inspector_schema_;
     std::optional<EditingViewportUI> viewport_;
     std::optional<SceneLists> lists_;
     std::optional<TimelineEditingUI> timeline_;

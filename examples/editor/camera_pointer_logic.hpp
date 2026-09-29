@@ -12,6 +12,10 @@ namespace editor_example {
 class CameraPointerLogic {
 public:
     enum class ScrollMode { zoom, move_forward };
+    enum class DragMode { orbit, look, pan, dolly, zoom };
+    // A bound camera gizmo selects one operation. The standalone worker keeps
+    // the legacy modifier-selected MMB gesture by leaving this unset.
+    void gesture(DragMode mode, bool primary_button) { gesture_=mode; primary_button_=primary_button; }
     void scroll_mode(ScrollMode mode) { if (mode != scroll_mode_) cancel(); scroll_mode_ = mode; }
     void look_in_place(bool enabled) { look_in_place_ = enabled; }
     void speeds(CameraDragSpeeds speeds) { speeds_ = speeds; }
@@ -37,7 +41,7 @@ public:
     void cancel() noexcept;
     [[nodiscard]] DebugReport debug_report() const {
         return {.name="navigation", .role="camera pointer navigation",
-            .situation=dragging_ ? (mode_==Mode::orbit ? "Orbit" : mode_==Mode::pan ? "Pan" : "Dolly") : "Idle",
+            .situation=dragging_ ? (mode_==DragMode::orbit ? "Orbit" : mode_==DragMode::look ? "Look" : mode_==DragMode::pan ? "Pan" : mode_==DragMode::zoom ? "Zoom" : "Dolly") : "Idle",
             .received={{"orbit enabled",debug_bool(orbit_enabled_)}, {"look in place",debug_bool(look_in_place_)},
                 {"mesh surface reference supplied",debug_bool(surface_!=nullptr)}},
             .owned={{"pointer captured",debug_bool(dragging_)}, {"pointer handled",debug_bool(handled_)},
@@ -48,12 +52,14 @@ public:
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
 
 private:
-    enum class Mode { orbit, pan, dolly };
     void move(CameraPose&, ViewMode, bool& smooth_zoom, vng::Vec2, bool fast);
     void scroll(CameraPose&, ViewMode, double amount);
     void approach(CameraPose&, ViewMode, vng::Vec3 center, double amount);
     [[nodiscard]] std::optional<double> surface_distance(vng::Vec3 eye, vng::Vec3 center) const;
-    Mode mode_{Mode::orbit};
+    DragMode mode_{DragMode::orbit};
+    std::optional<DragMode> gesture_;
+    bool primary_button_{};
+    unsigned captured_button_{2};
     ScrollMode scroll_mode_{ScrollMode::move_forward};
     CameraDragSpeeds speeds_{};
     bool dragging_{}, handled_{}, cancelled_{};

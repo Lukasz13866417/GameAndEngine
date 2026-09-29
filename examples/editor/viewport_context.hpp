@@ -1,6 +1,6 @@
 #pragma once
 
-#include "camera_navigation_logic.hpp"
+#include "camera_gizmo.hpp"
 #include "mesh_editing_ui.hpp"
 #include "workspace_selection.hpp"
 

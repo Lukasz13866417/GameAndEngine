@@ -122,14 +122,15 @@ void CameraPointerLogic::move(CameraPose& s, ViewMode view, bool& smooth_zoom, V
     previous_ = pointer;
     if(dx==0 && dy==0)return;
     const double boost=fast?4.:1.;
-    if (mode_ == Mode::orbit) {
+    if (mode_ == DragMode::orbit || mode_ == DragMode::look) {
         const auto before=s;
-        const auto eye = look_in_place_ ? camera(s,view).position() : Vec3{};
+        const bool look=look_in_place_ || mode_==DragMode::look;
+        const auto eye = look ? camera(s,view).position() : Vec3{};
         s.yaw = static_cast<f32>(std::remainder(s.yaw - dx * speeds_.rotation, 360.0));
         s.pitch =
             static_cast<f32>(std::clamp(s.pitch + dy * speeds_.rotation, -static_cast<f64>(camera_max_pitch),
                                         static_cast<f64>(camera_max_pitch)));
-        if (look_in_place_) {
+        if (look) {
             const auto orbited = camera(s,view).position();
             for(std::size_t i=0;i<3;++i)
                 s.target[i]=std::clamp(s.target[i]+eye[i]-orbited[i],-camera_target_limit,camera_target_limit);
@@ -155,8 +156,8 @@ void CameraPointerLogic::move(CameraPose& s, ViewMode view, bool& smooth_zoom, V
                 s.target[c]=static_cast<float>(std::clamp(target,-double(camera_target_limit),double(camera_target_limit)));
             }
         }
-    } else if (mode_ == Mode::dolly) {
-        if(captured_origin_) {
+    } else if (mode_ == DragMode::dolly || mode_ == DragMode::zoom) {
+        if(captured_origin_ && mode_!=DragMode::zoom) {
             approach(s,view,*captured_origin_,-dy*.01*speeds_.forward*boost);
         } else scroll(s, view, -dy * .01 * speeds_.forward * boost);
     } else {
@@ -221,7 +222,7 @@ bool CameraPointerLogic::update(CameraPose& pose, ViewMode view, bool& smooth_zo
             if (event.kind == input::EventKind::pointer_move) {
                 handled_ = true;
                 move(pose, view, smooth_zoom, event.position,event.modifiers.left_alt);
-            } else if (event.kind == input::EventKind::pointer_up && event.button == 2) {
+            } else if (event.kind == input::EventKind::pointer_up && event.button == captured_button_) {
                 handled_ = true;
                 move(pose, view, smooth_zoom, event.position,event.modifiers.left_alt);
                 dragging_ = false; // Successful release, not cancellation.
@@ -230,11 +231,11 @@ bool CameraPointerLogic::update(CameraPose& pose, ViewMode view, bool& smooth_zo
         }
         if (!contains(origin, size, event.position) || !available.contains(event))
             continue;
-        if (event.kind == input::EventKind::pointer_down && event.button == 2) {
+        if (event.kind == input::EventKind::pointer_down && (event.button == 2 || (primary_button_ && event.button==0))) {
             if(!orbit_enabled_ && !event.modifiers.shift && !event.modifiers.control && !event.modifiers.alt) continue;
-            mode_ = event.modifiers.shift     ? Mode::pan
-                    : event.modifiers.control ? Mode::dolly
-                                              : Mode::orbit;
+            mode_ = gesture_.value_or(event.modifiers.shift ? DragMode::pan
+                    : event.modifiers.control ? DragMode::dolly : DragMode::orbit);
+            captured_button_=event.button;
             captured_origin_=drag_origin_;
             if(captured_origin_ && (!std::isfinite(captured_origin_->x)||!std::isfinite(captured_origin_->y)||!std::isfinite(captured_origin_->z)))
                 captured_origin_.reset();
@@ -245,7 +246,8 @@ bool CameraPointerLogic::update(CameraPose& pose, ViewMode view, bool& smooth_zo
         } else if (event.kind == input::EventKind::scroll && finite(event.scroll)) {
             if (event.scroll.y != 0) {
                 handled_ = true;
-                scroll(pose, view, static_cast<f64>(event.scroll.y) * .15 * (event.modifiers.left_alt?4.:1.));
+                scroll(pose, view, static_cast<f64>(event.scroll.y) * .15 *
+                    (scroll_mode_==ScrollMode::zoom?speeds_.zoom:speeds_.forward) * (event.modifiers.left_alt?4.:1.));
                 smooth_zoom = true;
             }
         }

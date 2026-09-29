@@ -13,6 +13,44 @@ more detail:
 3. [Codebase](codebase.html): components, responsibilities, ownership and dependencies.
 4. [Code walkthrough](walkthrough.html): real C++ classes, their APIs and lifetimes, along a draw/edit path.
 5. [Demo walkthrough](demo.html): the actual file-backed cube demo, from load to diagnostics.
+6. [Architecture map](architecture.html): a full-window, pan-and-zoom tree of the actual components.
+
+## Architecture map
+
+Open [`architecture.html`](architecture.html) for the spatial viewer, rather than
+the guide's expandable article cards. It works directly from disk, offline.
+
+- Switch between **Editor**, **Preview worker**, and **Engine modules**.
+- Click a node for its purpose, concrete type, ownership boundaries and source links.
+  Use its **+/−** button to expand or collapse a branch. **Focus branch** isolates a
+  subtree; **Whole map** returns without losing the other expanded branches.
+- Drag the background to pan; scroll/pinch or use **+/−** to zoom. **Fit** (`F`)
+  frames the visible tree; **Overview** restores the starting view. **Expand all**
+  exposes the whole tree. The desktop minimap shows the visible area.
+- Search (`/`) spans all three maps, including collapsed nodes and source paths.
+  Arrow down/Enter chooses a result. Tree arrow keys navigate/expand/collapse;
+  Home/End jump to the first/last visible node. Details can be hidden for more space.
+- The selected component has a bookmark, e.g. `architecture.html#editor/navigation`.
+  Reload and browser Back/Forward restore the selection and reveal its ancestors.
+- Solid edges mean ownership; dashed edges mean an explicitly labelled grouping.
+  The module view groups CMake targets and shows exact **Dependencies** / **Used by**
+  links separately. The map does not claim that these dependencies form a tree.
+
+This is a curated source-backed map, **not live component diagnostics** or an
+exhaustive member listing. Role tags distinguish UI, logic, authored/derived data,
+GPU resources, platform integrations and conceptual groups. Widget storage, UI
+drawing and the toolbar/dialog group sit directly under **Editor application**;
+there is no invented ApplicationShell ownership layer.
+Source files open in a separate tab; how C++ is displayed depends on the browser.
+
+`architecture-data.js` owns the runtime map, with source witnesses; its module
+view reuses `codebase.js` instead of duplicating the CMake catalog.
+`architecture-model.js` is pure tree/navigation/layout logic;
+`architecture.js` owns only the viewer's UI state and events. Pan/zoom updates a
+single transform, not the tree. `architecture.css` is independent of guide layout.
+Run `node --test docs/explore/tests/*.test.cjs` for data, source and layout checks.
+The optional browser test below also covers the map (including file bookmarks,
+keyboard navigation, pan/zoom and narrow screens).
 
 The Editor and Codebase trees are **learning maps**. Component cards name real CMake
 targets and expose expandable **Depends on** and **Used by** lists; the separate

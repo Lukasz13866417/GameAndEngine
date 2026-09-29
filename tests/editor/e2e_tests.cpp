@@ -222,7 +222,7 @@ private:
     std::vector<std::byte> drag_pixels_;
     u64 input_frame_{};
     bool selection_dirty_{};
-    project::CameraPose animation_camera_{}, visit_start_{};
+    project::CameraPose animation_camera_{}, visit_start_{}, visit_pan_before_{};
     u32 camera_{};
     project::CameraPose zoom_before_{};
     project::WorldBounds bounds_before_{}, bounds_after_{};
@@ -304,9 +304,18 @@ private:
                 return nullptr;
             }
         }
+        const bool navigation_control=locator.label=="Scroll moves camera" || locator.label=="Walk (WASD / Q E)" ||
+            locator.label=="Pan (Shift + MMB)" || locator.label=="Optical zoom (wheel)" ||
+            locator.label.starts_with("Walk ");
+        if(navigation_control)viewport_events_=detached_;
+        if(navigation_control && !target) {
+            for(const auto& item:tree_.widgets)if(item.role==Role::button && item.visible &&
+                (item.label.starts_with("CAMERA / ")||item.label.starts_with("Camera modes / ")) && item.label.ends_with(" +")) {
+                viewport_events_=detached_;click_at(center(item.bounds));return nullptr;
+            }
+        }
         const bool camera_control=locator.label=="Orbit" || locator.label=="Elevation" || locator.label=="Orbit distance" ||
-            locator.label=="Zoom" || locator.label=="Scroll moves camera" || locator.label=="Walk camera" ||
-            locator.label=="Stop walking";
+            locator.label=="Zoom" || locator.scope=="CAMERA SETTINGS";
         const auto* owner=target;
         while(owner && owner->parent) owner=node(owner->parent);
         if(camera_control && (!owner || !owner->visible)) {
@@ -389,7 +398,7 @@ private:
             return true;
         });
         if(locator.role==Role::checkbox && locator.label=="Scroll moves camera")
-            click(button("Close camera settings"));
+            add("Return to object tools after camera preference",[this](const Observation&) {key(input::Key::escape);return true;});
     }
     void fill(Locator locator, std::string value) {
         add("Fill " + locator.label, [this, locator, value = std::move(value)](const Observation&) {
@@ -398,6 +407,7 @@ private:
             click_at(center(intersection(target->bounds, target->clip)));
             key(input::Key::a, {.control = true});
             events_.push_back({.kind = input::EventKind::text, .text = value});
+            if(locator.label.starts_with("Walk "))key(input::Key::enter);
             return true;
         });
     }
@@ -1574,6 +1584,21 @@ void Driver::popout_workflow() {
     });
     select_viewport("detached cube",[]{return 1U;});
     instance_modal_workflow();
+    click(button("Pan (Shift + MMB)"));
+    add("Camera child menu operates in the popped-out viewport",[this](const Observation& o) {
+        require(o.viewport_detached&&!o.gizmo_visible,"Camera menu did not suspend object gizmos");
+        zoom_before_=o.state.viewport.editor_camera;zoom_revision_=o.state.document.revision;
+        viewport_events_=true;drag_start_=center(o.viewport);
+        pointer(input::EventKind::pointer_down,drag_start_);
+        pointer(input::EventKind::pointer_move,{drag_start_.x+25,drag_start_.y+10});
+        pointer(input::EventKind::pointer_up,{drag_start_.x+25,drag_start_.y+10});return true;
+    });
+    wait("Detached camera gizmo pans without editing the selected object",[this](const Observation& o) {
+        if(!ready(o)||o.state.viewport.editor_camera.target==zoom_before_.target)return false;
+        require(o.state.document.revision==zoom_revision_&&!o.dirty,"Detached camera pan authored scene data");
+        require(o.selected_instances.size()==1&&o.selected_instances[0]==1,"Camera pan lost selection");
+        checkpoint(o,"popout-camera-gizmo");key(input::Key::escape);return true;
+    });
     add("Return keyboard focus to detached viewport",[this](const Observation&){viewport_events_=true;return true;});
     add("Prepare detached gizmo drag",[this](const Observation&){imported_=1;return true;});
     drag("Detached translation",true,50);
@@ -3966,6 +3991,24 @@ void Driver::workflow() {
                 "Navigation authored the camera without Save");
         return true;
     });
+    click(button("Pan (Shift + MMB)"));
+    add("Entered scene camera uses the same selectable pan gizmo",[this](const Observation& o) {
+        visit_pan_before_=o.state.viewport.editor_camera;
+        drag_start_=center(o.viewport);
+        pointer(input::EventKind::pointer_down,drag_start_);
+        pointer(input::EventKind::pointer_move,{drag_start_.x+32,drag_start_.y-12});
+        pointer(input::EventKind::pointer_up,{drag_start_.x+32,drag_start_.y-12});
+        return true;
+    });
+    wait("Entered camera pan is visible and stays private until saved",[this](const Observation& o) {
+        if(!ready(o)||o.state.viewport.editor_camera.target==visit_pan_before_.target)return false;
+        require(o.state.viewport.editor_camera.yaw==visit_pan_before_.yaw,"Pan changed camera rotation");
+        require(!o.gizmo_visible,"Object gizmo is still active while operating the camera");
+        const auto* camera=project::find_instance(o.state,camera_);
+        require(project::camera_pose(project::evaluate_instance(o.state,*camera,o.state.viewport.time))==animation_camera_,
+            "Camera child gizmo bypassed Save this camera");
+        checkpoint(o,"08g-entered-camera-gizmo");return true;
+    });
     click(button("Save this camera"));
     wait("Save this camera authors the editor view into the camera", [this](const Observation& o) {
         if (!ready(o)) return false;
@@ -4506,18 +4549,24 @@ void Driver::workflow() {
     fill(field("Minimum orbit distance", "EDITOR SETTINGS"), "0.005");
     fill(field("Maximum orbit distance", "EDITOR SETTINGS"), "25000");
     fill(field("Maximum viewing distance", "EDITOR SETTINGS"), "50000");
-    fill(field("Walk forward speed (units/s)", "EDITOR SETTINGS"), "15");
-    fill(field("Walk sideways speed (units/s)", "EDITOR SETTINGS"), "8");
-    fill(field("Walk vertical speed (units/s)", "EDITOR SETTINGS"), "6");
-    fill(field("Walk Shift multiplier", "EDITOR SETTINGS"), "3");
     click(button("Apply & save", "EDITOR SETTINGS"));
     wait("Expanded zoom preferences persist", [this](const Observation& o) {
         if(o.modal) return false;
         const auto settings=take(project::load_settings(directory_/"settings.conf"));
         require(settings.orbit_distance==project::OrbitDistanceRange{.005F,25000},"Zoom preferences did not persist");
-        require(settings.maximum_viewing_distance==50000 && settings.walk==project::WalkSpeeds{15,8,6,3},"Camera settings did not persist");
+        require(settings.maximum_viewing_distance==50000,"Camera settings did not persist");
         if(!o.presented || o.presented->view_far_plane!=50000) return false;
         return true;
+    });
+    click(button("Walk (WASD / Q E)"));
+    fill(field("Walk forward speed (units/s)"), "15");
+    fill(field("Walk sideways speed (units/s)"), "8");
+    fill(field("Walk vertical speed (units/s)"), "6");
+    fill(field("Walk Shift multiplier"), "3");
+    wait("Walk gizmo exposes and saves its own speed controls",[this](const Observation& o) {
+        const auto settings=take(project::load_settings(directory_/"settings.conf"));
+        require(settings.walk==project::WalkSpeeds{15,8,6,3},"Mode-local walk settings did not persist");
+        checkpoint(o,"16a-camera-walk-options");key(input::Key::escape);return true;
     });
     click(button("Frame world bounds"));
     wait("World bounds frame and six handles appear beyond the old zoom limit", [this](const Observation& o) {
@@ -4585,7 +4634,7 @@ void Driver::workflow() {
         if(!ready(o))return false;
         require(!o.dirty && o.state.document.world_bounds==bounds_after_,"Cancel failed to restore saved bounds");return true;
     });
-    click(button("Walk camera"));
+    click(button("Walk (WASD / Q E)"));
     add("Walk W key starts camera-relative movement", [this](const Observation& o) {
         zoom_before_=o.state.viewport.editor_camera; zoom_revision_=o.state.document.revision;
         events_.push_back({.kind=input::EventKind::key_down,.key=input::Key::w}); return true;
@@ -4613,7 +4662,7 @@ void Driver::workflow() {
         events_.push_back({.kind=input::EventKind::key_up,.key=input::Key::w});
         key(input::Key::escape); return true;
     });
-    wait("Escape exits walk mode", [this](const Observation&) { return actionable(button("Walk camera"))!=nullptr; });
+    wait("Escape exits walk mode", [this](const Observation&) { return actionable(button("Walk (WASD / Q E)"))!=nullptr; });
     fill(field("Maximum viewing distance","CAMERA SETTINGS"),"60000");
     click(button("Save camera preferences"));
     wait("Flyout preferences reach worker without changing document",[this](const Observation& o) {

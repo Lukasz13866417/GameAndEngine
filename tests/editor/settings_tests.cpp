@@ -91,7 +91,7 @@ TEST_CASE("Debug preview FPS accepts the unsigned range with zero meaning unlimi
 TEST_CASE("Editor settings documents are bounded versioned and deterministic", "[editor][settings]") {
     const Settings settings{144, 90, 0, 30, 75};
     const auto bytes = encode_settings(settings);
-    CHECK(bytes.starts_with("vng-editor-settings 8\n144 90 0 30 75\n"));
+    CHECK(bytes.starts_with("vng-editor-settings 9\n144 90 0 30 75\n"));
     const auto decoded = decode_settings(bytes);
     REQUIRE(decoded);
     CHECK(*decoded == settings);
@@ -112,14 +112,17 @@ TEST_CASE("Editor settings documents are bounded versioned and deterministic", "
 }
 
 TEST_CASE("Camera drag preferences persist and older settings opt into camera movement", "[editor][settings]") {
-    Settings s; s.camera_drag={2,3,.6F}; s.scroll_moves_camera=false;
+    Settings s; s.camera_drag={2,3,.6F,4}; s.scroll_moves_camera=false;
     auto decoded=decode_settings(encode_settings(s)); REQUIRE(decoded); CHECK(*decoded==s);
     auto legacy=decode_settings("vng-editor-settings 7\n60 60 0 10 100\n0.01 10000\n256\n4096\n1\n10000 10 10 10 4\n100\n");
     REQUIRE(legacy); CHECK(legacy->scroll_moves_camera); CHECK(legacy->camera_drag==CameraDragSpeeds{});
+    auto previous=decode_settings("vng-editor-settings 8\n60 60 0 10 100\n0.01 10000\n256\n4096\n1\n10000 10 10 10 4\n100\n2 3 0.6 1\n");
+    REQUIRE(previous); CHECK(previous->camera_drag==CameraDragSpeeds{2,3,.6F,1});
     for (auto bad : {0.F,-1.F,101.F,std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}) {
         s.camera_drag={bad,1,.3F}; CHECK_FALSE(validate_settings(s));
         s.camera_drag={1,bad,.3F}; CHECK_FALSE(validate_settings(s));
         s.camera_drag={1,1,bad}; CHECK_FALSE(validate_settings(s));
+        s.camera_drag={1,1,.3F,bad}; CHECK_FALSE(validate_settings(s));
     }
 }
 

@@ -51,7 +51,7 @@ public:
         const auto dt=std::min(seconds,.1)*(fast_?speeds.fast_multiplier:1)/length;
         const std::array delta{
             (-std::sin(yaw)*std::cos(pitch)*forward*speeds.forward + std::cos(yaw)*side*speeds.sideways)*dt,
-            (-std::sin(pitch)*forward*speeds.forward + up*speeds.vertical)*dt,
+            (-std::sin(pitch)*forward*speeds.forward + static_cast<float>(up)*speeds.vertical)*dt,
             (-std::cos(yaw)*std::cos(pitch)*forward*speeds.forward - std::sin(yaw)*side*speeds.sideways)*dt};
         double fraction=1;
         for(std::size_t i=0;i<3;++i) if(delta[i]!=0)

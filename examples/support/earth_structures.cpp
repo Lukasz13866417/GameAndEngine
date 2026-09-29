@@ -62,17 +62,27 @@ void rim(Builder& b,const SkywaySample& p,f32 width,f32 height,f32 thickness,f32
         b.quad(a,next,ni,ai,color);b.quad(c,ci,fi,far,color);
     }
 }
+// Unit apothem: flat roof, floor and side walls, eight equal edges. A radial
+// circle sampled eight times and then stretched would not be a regular octagon.
+constexpr f32 octagon_corner=.414213562373095F; // tan(pi/8)
+constexpr std::array<Vec2,8> bore{{{1,octagon_corner},{octagon_corner,1},
+    {-octagon_corner,1},{-1,octagon_corner},{-1,-octagon_corner},
+    {-octagon_corner,-1},{octagon_corner,-1},{1,-octagon_corner}}};
+Vec3 bore_point(const TunnelSection& p,unsigned corner,f32 apothem) {
+    return add(p.frame.position,add(mul(p.frame.side,bore[corner].x*apothem*p.size),
+        mul(p.frame.up,bore[corner].y*apothem*p.size)));
+}
+Vec3 bore_normal(const SkywaySample& p,unsigned face) {
+    const auto next=(face+1)%bore.size();
+    return unit(add(mul(p.side,bore[face].x+bore[next].x),mul(p.up,bore[face].y+bore[next].y)));
+}
 }
 
 StructureMesh tunnel_shell(std::span<const TunnelSection> path,f32 light) {
     StructureMesh mesh;
     if(path.size()<2)return mesh;
-    constexpr unsigned sides=6;
-    constexpr f32 tau=2*std::numbers::pi_v<f32>;
-    const auto at=[](const TunnelSection& p,f32 angle,f32 inset) {
-        return add(p.frame.position,add(mul(p.frame.side,std::cos(angle)*(.007F-inset)*p.size),
-            mul(p.frame.up,std::sin(angle)*(.006F-inset)*p.size)));
-    };
+    constexpr unsigned sides=bore.size();
+    constexpr f32 outer=.006F,inner=tunnel_inner_height;
     const auto quad=[&](u32 a,u32 b,u32 c,u32 d) {
         // Match winding to the authored normal regardless of route direction.
         const auto geometric=cross(sub(mesh.vertices[b].position,mesh.vertices[a].position),
@@ -81,46 +91,86 @@ StructureMesh tunnel_shell(std::span<const TunnelSection> path,f32 light) {
         mesh.faces.emplace_back(a,b,c);mesh.faces.emplace_back(a,c,d);
     };
     // Finite thickness lets depth testing choose dark exterior or lit lining.
-    // Indexed rings share samples; interior detail must not multiply Earth's
-    // vertex budget for every route segment.
+    // Share samples along the route, but NOT normals across interior corners:
+    // each of the eight wall planes must read as a plane, not a smooth cylinder.
+    constexpr std::array<Vec3,8> lining{{{.048F,.079F,.11F},{.11F,.135F,.15F},
+        {.026F,.049F,.073F},{.067F,.10F,.125F},{.044F,.057F,.071F},
+        {.025F,.032F,.044F},{.082F,.075F,.068F},{.034F,.057F,.083F}}};
     for(bool inside:{false,true}) {
         const auto first=u32(mesh.vertices.size());
-        for(const auto& p:path)for(unsigned j=0;j<sides;++j) {
-            const auto angle=(f32(j)+.5F)*tau/sides;
-            auto normal=unit(add(mul(p.frame.side,std::cos(angle)/.007F),mul(p.frame.up,std::sin(angle)/.006F)));
-            if(inside)normal=mul(normal,-1);
-            const auto color=inside?Vec3{.018F,.033F,.057F}:mul(Vec3{.10F,.15F,.18F},.72F+.28F*std::sin(angle));
-            mesh.vertices.push_back({at(p,angle,inside?.00006F:0),normal,color,0});
+        for(std::size_t i=0;i<path.size();++i)for(unsigned j=0;j<sides;++j) {
+            const auto& p=path[i];
+            if(inside) {
+                // Gentle deterministic bay-to-bay variation; no random flicker
+                // when a part is rebuilt or its lighting strength changes.
+                const auto color=mul(lining[j],.8F+.1F*f32((i*7+j*3)%5));
+                const auto normal=mul(bore_normal(p.frame,j),-1);
+                for(auto k:{j,(j+1)%sides})mesh.vertices.push_back({bore_point(p,k,inner),normal,color,0});
+            } else {
+                const auto normal=unit(add(mul(p.frame.side,bore[j].x),mul(p.frame.up,bore[j].y)));
+                mesh.vertices.push_back({bore_point(p,j,outer),normal,mul(hull,.8F+.2F*bore[j].y),0});
+            }
         }
+        const u32 stride=sides*(inside?2:1);
         for(u32 i=0;i+1<path.size();++i)for(u32 j=0;j<sides;++j) {
-            const auto a=first+i*sides+j,b=first+i*sides+(j+1)%sides;
-            quad(a,b,b+sides,a+sides);
+            const auto a=first+i*stride+j*(inside?2:1),b=inside?a+1:first+i*stride+(j+1)%sides;
+            quad(a,b,b+stride,a+stride);
         }
     }
     // Only seal wall thickness, never the passage. Use distinct rim normals.
     for(const auto index:{std::size_t{0},path.size()-1})for(unsigned j=0;j<sides;++j) {
         const auto& p=path[index];
-        const auto a=(f32(j)+.5F)*tau/sides,c=a+tau/sides;
         const auto first=u32(mesh.vertices.size());
         const auto normal=mul(p.frame.tangent,index==0?-1.F:1.F);
-        for(auto v:{at(p,a,0),at(p,c,0),at(p,c,.00006F),at(p,a,.00006F)})
+        for(auto v:{bore_point(p,j,outer),bore_point(p,(j+1)%sides,outer),
+            bore_point(p,(j+1)%sides,inner),bore_point(p,j,inner)})
             mesh.vertices.push_back({v,normal,rib,0});
         quad(first,first+1,first+2,first+3);
     }
-    // Planar inner-face guide lanes. Adjacent route segments share vertices,
-    // while the finite outer skin occludes these lamps from orbital views.
+    // Each corner has a narrow recessed-looking guide seam. The nearby change
+    // of wall normal, dark lining and luminous trim makes all eight junctions
+    // legible. These are strips, not hundreds of separate box meshes.
     for(unsigned j=0;j<sides;++j) {
-        const auto a=(f32(j)+.5F)*tau/sides,c=a+tau/sides;
         const auto first=u32(mesh.vertices.size());
-        const auto lamp=j<3?Vec3{.13F,.65F,.85F}:Vec3{1.F,.39F,.075F};
+        const auto lamp=j<4?Vec3{.21F,.65F,.80F}:Vec3{.95F,.49F,.17F};
         for(const auto& p:path) {
-            const auto x=at(p,a,.00009F),y=at(p,c,.00009F);
-            const auto normal=unit(sub(p.frame.position,mul(add(x,y),.5F)));
-            for(f32 t:{.214F,.226F})mesh.vertices.push_back({add(mul(x,1-t),mul(y,t)),normal,lamp,5*light});
+            const auto x=bore_point(p,j,inner-.000015F),y=bore_point(p,(j+1)%sides,inner-.000015F);
+            const auto normal=mul(bore_normal(p.frame,j),-1);
+            for(f32 t:{.012F,.030F})mesh.vertices.push_back({add(mul(x,1-t),mul(y,t)),normal,lamp,3*light});
         }
         for(u32 i=0;i+1<path.size();++i) {
             const auto v=first+i*2;quad(v,v+1,v+3,v+2);
         }
+    }
+    // Staggered dark maintenance plates, alternating between wall planes and
+    // between long and short bays. Follow individual route segments rather
+    // than spanning multiple bends of a curved / Bezier route.
+    for(std::size_t i=0;i+1<path.size();++i) {
+        const unsigned j=(i*3+3)%sides;
+        const auto first=u32(mesh.vertices.size());
+        const auto across=[&](const TunnelSection& p,f32 t) {
+            return add(mul(bore_point(p,j,inner-.000025F),1-t),mul(bore_point(p,(j+1)%sides,inner-.000025F),t));
+        };
+        const f32 left=.24F+.06F*f32(i%3),right=left+(i%2?.28F:.48F);
+        for(const auto t:{.10F,.82F})for(const auto u:{left,right}) {
+            const auto position=add(mul(across(path[i],u),1-t),mul(across(path[i+1],u),t));
+            const auto normal=mul(unit(add(mul(bore_normal(path[i].frame,j),1-t),mul(bore_normal(path[i+1].frame,j),t))),-1);
+            mesh.vertices.push_back({position,normal,i%3?armor:Vec3{.14F,.16F,.17F},0});
+        }
+        quad(first,first+1,first+3,first+2);
+    }
+    // Shallow transverse reinforcement bands close the eight corner seams into
+    // a visible octagon, even far between the large exterior support collars.
+    // Two indexed rings per fourth bay keep these much cheaper than eight boxes.
+    for(std::size_t i=0;i+1<path.size();i+=4) {
+        const auto first=u32(mesh.vertices.size());
+        for(f32 t:{.44F,.56F})for(unsigned j=0;j<sides;++j) {
+            const auto a=bore_point(path[i],j,inner-.00004F),b=bore_point(path[i+1],j,inner-.00004F);
+            const auto center=add(mul(path[i].frame.position,1-t),mul(path[i+1].frame.position,t));
+            const auto position=add(mul(a,1-t),mul(b,t));
+            mesh.vertices.push_back({position,unit(sub(center,position)),{.009F,.015F,.025F},0});
+        }
+        for(unsigned j=0;j<sides;++j)quad(first+j,first+(j+1)%sides,first+sides+(j+1)%sides,first+sides+j);
     }
     const auto first=u32(mesh.vertices.size());
     for(const auto& p:path)for(f32 sign:{-1.F,1.F})
@@ -134,16 +184,21 @@ StructureMesh tunnel_shell(std::span<const TunnelSection> path,f32 light) {
 
 StructureMesh tunnel_collar(const SkywaySample& frame,f32 size) {
     StructureMesh mesh;
-    constexpr f32 tau=2*std::numbers::pi_v<f32>;
-    constexpr std::array<Vec2,4> profile{{{.0058F,-.0015F},{.0094F,-.0015F},{.0094F,.0015F},{.0058F,.0015F}}};
-    for(const auto p:profile)for(unsigned j=0;j<6;++j) {
-        const auto angle=(f32(j)+.5F)*tau/6;
-        const auto normal=add(mul(frame.side,std::cos(angle)),mul(frame.up,std::sin(angle)));
-        mesh.vertices.push_back({add(frame.position,add(mul(normal,p.x*size),mul(frame.tangent,p.y*size))),
-            normal,mul(rib,.76F+.24F*std::sin(angle)),0});
+    constexpr unsigned sides=bore.size();
+    // Shallow inward lip avoids coplanar lining/rib surfaces (z-fighting).
+    constexpr f32 lip=tunnel_inner_height*.985F;
+    constexpr std::array<Vec2,4> profile{{{lip,-.00065F},{.0084F,-.00065F},
+        {.0084F,.00065F},{lip,.00065F}}};
+    for(const auto p:profile)for(unsigned j=0;j<sides;++j) {
+        const auto radial=add(mul(frame.side,bore[j].x),mul(frame.up,bore[j].y));
+        // Radial + shoulder normals distinguish the front and rear shoulders.
+        const auto normal=unit(add(mul(unit(radial),p.x==lip?-1.F:1.F),
+            mul(frame.tangent,p.y<0?-1.F:1.F)));
+        mesh.vertices.push_back({add(frame.position,add(mul(radial,p.x*size),mul(frame.tangent,p.y*size))),
+            normal,mul(rib,.85F+.15F*bore[j].y),0});
     }
-    for(u32 k=0;k<4;++k)for(u32 j=0;j<6;++j) {
-        const auto a=k*6+j,b=k*6+(j+1)%6,c=((k+1)%4)*6+(j+1)%6,d=((k+1)%4)*6+j;
+    for(u32 k=0;k<4;++k)for(u32 j=0;j<sides;++j) {
+        const auto a=k*sides+j,b=k*sides+(j+1)%sides,c=((k+1)%4)*sides+(j+1)%sides,d=((k+1)%4)*sides+j;
         mesh.faces.emplace_back(a,b,c);mesh.faces.emplace_back(a,c,d);
     }
     return mesh;

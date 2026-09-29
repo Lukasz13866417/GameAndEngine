@@ -5,8 +5,9 @@
 
 namespace example::earth {
 // Complete blueprint budget (terrain, clouds and infrastructure). Indices are
-// u32; the extra capacity accommodates real tunnel linings on dense Earths.
-inline constexpr std::size_t max_earth_vertices=131072;
+// u32; the extra capacity accommodates hard-edged octagonal linings, corner
+// seams and service panels on dense Earths, without separate runtime objects.
+inline constexpr std::size_t max_earth_vertices=196608;
 // Optional, blueprint-owned authoring layer. The result remains ordinary mesh
 // geometry, with no runtime particles, per-city objects, or extra draw calls.
 struct InfrastructureSettings {

@@ -4,6 +4,11 @@
 
 namespace editor_example {
 
+const BlueprintMeshPanel& EditingWorkspaceUI::blueprint_panel() const {return *viewport_->blueprint_panel_;}
+const ViewportToolsUI& EditingWorkspaceUI::interaction() const {return *viewport_->interaction_;}
+const GizmoSelector& EditingWorkspaceUI::gizmo_selector() const {return *viewport_->gizmo_selector_;}
+const RotationPivotControls& EditingWorkspaceUI::rotation_pivot() const {return *viewport_->rotation_pivot_;}
+
 void EditingViewportUI::attach_tools(vng::ui::Container blueprint,vng::ui::Container controls,vng::ui::Container creation,
                                   vng::ui::Container inspector,vng::ui::Container popup) {
     if(blueprint_panel_||interaction_)throw std::logic_error("Viewport tools are already attached");
@@ -18,12 +23,12 @@ void EditingWorkspaceUI::attach_viewport_tools(vng::ui::Container blueprint,vng:
     synchronize_selection_gizmos(false);
 }
 
-BlueprintMeshPanel& EditingWorkspaceUI::blueprint_panel() {
+BlueprintMeshPanel& EditingWorkspaceUI::blueprint_panel_child() {
     if(!viewport_||!viewport_->blueprint_panel_)throw std::logic_error("Viewport tools have not been attached");
     return *viewport_->blueprint_panel_;
 }
 
-ViewportToolsUI& EditingWorkspaceUI::interaction() {
+ViewportToolsUI& EditingWorkspaceUI::interaction_child() {
     if(!viewport_||!viewport_->interaction_)throw std::logic_error("Viewport tools have not been attached");
     return *viewport_->interaction_;
 }
@@ -36,17 +41,17 @@ void EditingWorkspaceUI::attach_manipulation(vng::ui::Container gizmo,vng::ui::C
     synchronize_selection_gizmos(false);
 }
 
-GizmoSelector& EditingWorkspaceUI::gizmo_selector() {
+GizmoSelector& EditingWorkspaceUI::gizmo_selector_child() {
     if(!viewport_||!viewport_->gizmo_selector_)throw std::logic_error("Viewport manipulation controls have not been attached");
     return *viewport_->gizmo_selector_;
 }
 
-RotationPivotControls& EditingWorkspaceUI::rotation_pivot() {
+RotationPivotControls& EditingWorkspaceUI::rotation_pivot_child() {
     if(!viewport_||!viewport_->rotation_pivot_)throw std::logic_error("Viewport manipulation controls have not been attached");
     return *viewport_->rotation_pivot_;
 }
 
-void EditingWorkspaceUI::begin_viewport_frame() {interaction().begin_frame();}
+void EditingWorkspaceUI::begin_viewport_frame() {interaction_child().begin_frame();}
 
 vng::content::Result<bool> EditingWorkspaceUI::finish(
     ViewportToolsUI& interaction,ViewportTool tool,bool cancelled) {

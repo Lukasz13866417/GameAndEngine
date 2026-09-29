@@ -114,7 +114,10 @@ inline auto shade(Stage& s, vng::dsl::Expr<Lighting> lights, LightingStyle style
         // not a volumetric light/shadow simulation.
         const auto delta=lights.get(Eye{})-world;
         const auto distance2=vng::dsl::dot(delta,delta);
-        auto optical_depth=distance2/(18.F*18.F);
+        const auto haze_distance=distance2/(18.F*18.F);
+        // Leave nearby panel seams / plane changes readable. Deeper in the
+        // bore the white scattered light still rapidly fills the whole view.
+        auto optical_depth=haze_distance*haze_distance;
         if(style==LightingStyle::tunnel) {
             // The slow study bends in X/Z. Its interior haze must not turn
             // the same shell white when viewed from an exterior editor camera.
