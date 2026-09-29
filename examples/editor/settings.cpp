@@ -166,7 +166,10 @@ vng::content::Result<Settings> decode_settings(std::string_view text) {
         if (!read(result.camera_drag.pan) || !read(result.camera_drag.forward) || !read(result.camera_drag.rotation) || !read(moves) || moves > 1)
             return invalid("Invalid camera navigation preferences");
         result.scroll_moves_camera = moves != 0;
-        if(version9 && !read(result.camera_drag.zoom)) return invalid("Invalid optical zoom speed");
+        // Version 8 had one multiplier for Ctrl+middle drag, including optical
+        // zoom. Its own optical-zoom speed starts from that value.
+        if (!version9) result.camera_drag.zoom = result.camera_drag.forward;
+        else if (!read(result.camera_drag.zoom)) return invalid("Invalid optical zoom speed");
     }
     if (text.find_first_not_of(" \r\n") != std::string_view::npos)
         return invalid("Unexpected data after editor settings");

@@ -247,6 +247,8 @@ metadata and **Logs → Interaction timing** measurements/export.
   **Ctrl + middle drag** moves the camera forward/backward by default: eye and
   pivot translate together, preserving zoom. Turn off **Scroll moves camera**
   in the camera gizmo's corner menu for optical zoom instead (1 = the original 43-degree lens).
+  The wheel uses the same sensitivity as the matching drag: **Forward / back**'s
+  multiplier when it moves the camera, **Optical zoom**'s when it zooms.
   Hold **Left Alt** for **4×** faster panning and forward/backward movement or
   optical zoom (wheel and Ctrl+middle-drag). Rotation is unaffected; Right Alt
   does not enable the boost.
@@ -292,7 +294,10 @@ metadata and **Logs → Interaction timing** measurements/export.
   zoom, viewing distance and orbit limits. Navigation modes and speeds belong
   to the camera gizmo instead: independent pan, forward and optical-zoom
   multipliers (default 1), and rotation in degrees per logical pixel (default
-  0.3, shared by Orbit and Look).
+  0.3, shared by Orbit and Look). Settings saved by older editors keep their
+  Ctrl + middle drag optical-zoom speed: the new optical-zoom multiplier starts
+  from their single Ctrl-drag multiplier. The wheel now follows the same
+  multiplier, so a non-default value also changes the wheel step.
   Pose controls remain live.
   Camera settings stay open while navigating the viewport; use **Close camera settings**
   (or Escape) to dismiss them. Navigation preferences have sliders plus typed fields;
