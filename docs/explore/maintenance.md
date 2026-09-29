@@ -1,5 +1,22 @@
 # Documentation maintenance handoff
 
+## Architecture map checks · 2026-09-29
+
+`architecture.html` is the sixth page. What keeps its data honest:
+
+- **Editor and worker maps.** `declarations` in `architecture-data.js` gives each
+  class node a witness (the head of its definition) and each link the member its
+  owner declares. When a member moves to another owner, move the node in the tree
+  and edit its entry; `architecture.test.cjs` names any stale witness or member.
+- **Module map.** Add a new CMake library to the catalog in `codebase.js`, with
+  guide sections in `codebase-details.js`. Give a new non-test executable a card or
+  list it in `programs` with its links. Tests compare Direct dependencies, Used by
+  and module source ownership with `CMakeLists.txt` and `tests/layering`.
+- **Browser coverage.** `tests/architecture-browser.cjs` runs inside `browser.cjs`
+  and takes expected paths and counts from the data. It also checks short
+  viewports (683×384, 640×360, 568×320, 844×390), focus after re-rendering,
+  history replacement for arrow keys and which zooms are announced.
+
 ## Class-by-class walkthrough · 2026-09-19
 
 Added a separate fifth page, `walkthrough.html`, titled **Code walkthrough**.
