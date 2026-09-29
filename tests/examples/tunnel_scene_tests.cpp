@@ -80,6 +80,56 @@ TEST_CASE("Tunnel bore and collars are regular octagons with readable planar lin
     CHECK(shell.vertices.size()<=50*path.size()+80);
 }
 
+namespace {
+// Casts rays across a cross-section from a point on the tunnel axis and
+// requires the first surface in every direction to be no closer than the
+// regular octagonal bore with the given apothem: nothing reaches into the
+// passage, not even between vertices.
+void require_clear_bore(const example::earth::detail::StructureMesh& mesh, const example::earth::SkywaySample& at,
+                        vng::f32 apothem) {
+    using namespace vng;
+    std::vector<Vec3> positions;std::vector<spatial::TriangleBvh::Triangle> triangles;
+    for(const auto& v:mesh.vertices)positions.push_back(v.position);
+    for(const auto& f:mesh.faces)triangles.push_back(f.vertices);
+    const spatial::TriangleBvh bvh{positions,triangles};
+    for(unsigned k=0;k<32;++k) {
+        const auto angle=f32(k)*std::numbers::pi_v<f32>/16;
+        const auto c=std::cos(angle),s=std::sin(angle);
+        const auto extent=apothem/std::max({std::abs(c),std::abs(s),(std::abs(c)+std::abs(s))/std::numbers::sqrt2_v<f32>});
+        const Vec3 d{at.side.x*c+at.up.x*s,at.side.y*c+at.up.y*s,at.side.z*c+at.up.z*s};
+        const auto hit=bvh.intersect({{at.position.x,at.position.y,at.position.z},{d.x,d.y,d.z}});
+        INFO("direction "<<k<<" at "<<at.position.z);
+        if(hit)CHECK(hit->distance>=extent*(1-2e-4));
+    }
+}
+}
+
+TEST_CASE("Dispersal terminals and joiner rims continue the octagonal bore without a ledge", "[example][tunnel]") {
+    using namespace vng;
+    namespace e=example::earth;
+    using namespace e::placement;
+    const auto size=3.F/e::detail::tunnel_inner_height;
+    e::detail::TerminalPath path;
+    for(std::size_t i=0;i<path.size();++i)path[i]={{0,0,f32(i)*.01F*size},{0,0,1},{1,0,0},{0,1,0}};
+    const auto terminal=e::detail::dispersal_terminal(path,size,1);
+    // The throat is the narrowest point, and it is the tunnel's own lining.
+    for(f32 z=0;z<=f32(path.size()-1)*.01F*size;z+=.0025F*size) {
+        auto at=path.front();at.position.z=z+.0001F;
+        require_clear_bore(terminal,at,3);
+    }
+    f32 throat=1e9F;
+    for(const auto& v:terminal.vertices)if(std::abs(v.position.z)<1e-4F)
+        throat=std::min(throat,std::max({std::abs(v.position.x),std::abs(v.position.y),
+            (std::abs(v.position.x)+std::abs(v.position.y))/std::numbers::sqrt2_v<f32>}));
+    CHECK(std::abs(throat-3)<3e-4F);
+    // A tunnel attached to a joiner has the joiner's size and ends at the socket.
+    const auto joiner=e::detail::tunnel_joiner(1,1,1);
+    for(const auto& socket:e::detail::joiner_sockets(1,1))for(f32 offset:{-.0019F,0.F,.0019F}) {
+        auto at=socket;at.position=add(socket.position,mul(socket.tangent,offset));
+        require_clear_bore(joiner,at,e::detail::tunnel_inner_height);
+    }
+}
+
 TEST_CASE("Collars sit on route samples, where the lip meets the octagonal lining", "[example][tunnel]") {
     namespace e=example::earth;
     CHECK(e::detail::collar_sections(24)==std::array<std::size_t,7>{0,4,8,12,16,20,24});

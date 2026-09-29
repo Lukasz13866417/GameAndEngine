@@ -30,11 +30,14 @@ int main(int argc,char** argv) {
             if(!future)return example::earth::make_savannah_variant(source);
             if(tunnels) {
                 // Preserve authored terrain, clouds, cities and other addons;
-                // only replace the tunnel recipes, retaining their placement.
+                // regenerate only tunnels and their fittings (freestanding
+                // terminals, joiners) from their recipes, retaining placement.
+                // Hand edits to those parts' vertices are replaced.
+                using Kind=example::earth::InfrastructureKind;
                 auto parts=example::earth::infrastructure_parts(source);
                 if(!parts)return vng::content::Result<vng::content::vmesh::Document>{std::unexpected(parts.error())};
                 vng::content::Result<vng::content::vmesh::Document> result{source};
-                for(const auto& part:*parts)if(part.kind==example::earth::InfrastructureKind::skyway) {
+                for(const auto& part:*parts)if(part.kind==Kind::skyway||part.kind==Kind::terminal||part.kind==Kind::joiner) {
                     result=example::earth::rebuild_infrastructure_part(*result,part.id);
                     if(!result)return result;
                 }

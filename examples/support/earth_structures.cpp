@@ -1,4 +1,5 @@
 #include "earth_structures.hpp"
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -42,32 +43,37 @@ public:
         const auto axis=unit(sub(b,a));beam(a,b,width,color,std::abs(axis.y)<.9F?Vec3{0,1,0}:Vec3{0,0,1});
     }
 };
-// A flattened octagonal cross section: broad roof, chamfered corners, hollow
-// mouth. Inner and outer skins plus rim thickness are actual opaque geometry.
-constexpr std::array<Vec2,8> section{{{1,.55F},{.65F,1},{-.65F,1},{-1,.55F},
-    {-1,-.55F},{-.65F,-1},{.65F,-1},{1,-.55F}}};
-Vec3 section_point(const SkywaySample& p,unsigned j,f32 width,f32 height) {
-    return add(p.position,add(mul(p.side,section[j].x*width),mul(p.up,section[j].y*height)));
-}
-void rim(Builder& b,const SkywaySample& p,f32 width,f32 height,f32 thickness,f32 depth,Vec3 color) {
-    auto front=p,back=p;front.position=add(p.position,mul(p.tangent,depth*.5F));
-    back.position=add(p.position,mul(p.tangent,-depth*.5F));
-    for(unsigned j=0;j<8;++j) {
-        const auto k=(j+1)%8;
-        const auto a=section_point(front,j,width,height),c=section_point(back,j,width,height);
-        const auto next=section_point(front,k,width,height),far=section_point(back,k,width,height);
-        const auto ai=section_point(front,j,width-thickness,height-thickness),ci=section_point(back,j,width-thickness,height-thickness);
-        const auto ni=section_point(front,k,width-thickness,height-thickness),fi=section_point(back,k,width-thickness,height-thickness);
-        b.quad(a,c,far,next,color);b.quad(ai,ni,fi,ci,color);
-        b.quad(a,next,ni,ai,color);b.quad(c,ci,fi,far,color);
-    }
-}
 // Unit apothem: flat roof, floor and side walls, eight equal edges. A radial
 // circle sampled eight times and then stretched would not be a regular octagon.
 constexpr f32 octagon_corner=.414213562373095F; // tan(pi/8)
 constexpr std::array<Vec2,8> bore{{{1,octagon_corner},{octagon_corner,1},
     {-octagon_corner,1},{-1,octagon_corner},{-1,-octagon_corner},
     {-octagon_corner,-1},{octagon_corner,-1},{1,-octagon_corner}}};
+// A dispersal terminal's mouth: the same eight corners, flattened into a broad
+// roof with short chamfers. Inner and outer skins plus rim thickness are
+// actual opaque geometry.
+constexpr std::array<Vec2,8> mouth_section{{{1,.55F},{.65F,1},{-.65F,1},{-1,.55F},
+    {-1,-.55F},{-.65F,-1},{.65F,-1},{1,-.55F}}};
+// The tunnel's outer skin; the lining is tunnel_inner_height.
+constexpr f32 tunnel_outer_height=.006F;
+// Corner j of a profile that blends from the regular bore (0) to the flattened
+// mouth (1), with half extents width and height.
+Vec3 profile_point(const SkywaySample& p,unsigned j,f32 blend,f32 width,f32 height) {
+    const auto corner=add(mul(Vec3{bore[j].x,bore[j].y,0},1-blend),mul(Vec3{mouth_section[j].x,mouth_section[j].y,0},blend));
+    return add(p.position,add(mul(p.side,corner.x*width),mul(p.up,corner.y*height)));
+}
+void rim(Builder& b,const SkywaySample& p,f32 blend,f32 width,f32 height,f32 thickness,f32 depth,Vec3 color) {
+    auto front=p,back=p;front.position=add(p.position,mul(p.tangent,depth*.5F));
+    back.position=add(p.position,mul(p.tangent,-depth*.5F));
+    const auto at=[&](const SkywaySample& s,unsigned j,f32 inset){return profile_point(s,j,blend,width-inset,height-inset);};
+    for(unsigned j=0;j<8;++j) {
+        const auto k=(j+1)%8;
+        const auto a=at(front,j,0),c=at(back,j,0),next=at(front,k,0),far=at(back,k,0);
+        const auto ai=at(front,j,thickness),ci=at(back,j,thickness),ni=at(front,k,thickness),fi=at(back,k,thickness);
+        b.quad(a,c,far,next,color);b.quad(ai,ni,fi,ci,color);
+        b.quad(a,next,ni,ai,color);b.quad(c,ci,fi,far,color);
+    }
+}
 Vec3 bore_point(const TunnelSection& p,unsigned corner,f32 apothem) {
     return add(p.frame.position,add(mul(p.frame.side,bore[corner].x*apothem*p.size),
         mul(p.frame.up,bore[corner].y*apothem*p.size)));
@@ -82,7 +88,7 @@ StructureMesh tunnel_shell(std::span<const TunnelSection> path,f32 light) {
     StructureMesh mesh;
     if(path.size()<2)return mesh;
     constexpr unsigned sides=bore.size();
-    constexpr f32 outer=.006F,inner=tunnel_inner_height;
+    constexpr f32 outer=tunnel_outer_height,inner=tunnel_inner_height;
     const auto quad=[&](u32 a,u32 b,u32 c,u32 d) {
         // Match winding to the authored normal regardless of route direction.
         const auto geometric=cross(sub(mesh.vertices[b].position,mesh.vertices[a].position),
@@ -223,20 +229,32 @@ TerminalPath freestanding_terminal_path(f32 size,f32 height) {
 }
 StructureMesh dispersal_terminal(const TerminalPath& path,f32 size,f32 light) {
     Builder b;
-    const auto width=[&](std::size_t i){const auto t=f32(i)/f32(path.size()-1);return size*(.007F+.033F*t*t*(3-2*t));};
-    const auto height=[&](std::size_t i){const auto t=f32(i)/f32(path.size()-1);return size*(.006F+.007F*t);};
-    const auto wall=.0011F*size;
+    // The throat continues the tunnel exactly: its regular octagonal lining
+    // and skin, at the tunnel's own size. Toward the mouth the profile opens
+    // into the broad flattened section and the thin wall thickens into the
+    // terminal's shell; the passage never narrows below the bore.
+    const auto t=[&](std::size_t i){return f32(i)/f32(path.size()-1);};
+    const auto smooth=[](f32 x){x=std::clamp(x,0.F,1.F);return x*x*(3-2*x);};
+    const auto blend=[&](std::size_t i){return smooth(t(i));};
+    const auto shell=.0011F*size;
+    const auto wall=[&](std::size_t i){return size*(tunnel_outer_height-tunnel_inner_height)+
+        (shell-size*(tunnel_outer_height-tunnel_inner_height))*smooth(t(i)*4);};
+    const auto inner_width=[&](std::size_t i){return size*(tunnel_inner_height+.033F*blend(i));};
+    const auto inner_height=[&](std::size_t i){return size*(tunnel_inner_height+.006F*t(i));};
+    const auto width=[&](std::size_t i){return inner_width(i)+wall(i);};
+    const auto height=[&](std::size_t i){return inner_height(i)+wall(i);};
+    const auto outer=[&](std::size_t i,unsigned j){return profile_point(path[i],j,blend(i),width(i),height(i));};
+    const auto inner=[&](std::size_t i,unsigned j){return profile_point(path[i],j,blend(i),inner_width(i),inner_height(i));};
     for(std::size_t i=0;i+1<path.size();++i)for(unsigned j=0;j<8;++j) {
         const auto k=(j+1)%8;
-        const auto a=section_point(path[i],j,width(i),height(i)),d=section_point(path[i],k,width(i),height(i));
-        const auto c=section_point(path[i+1],k,width(i+1),height(i+1)),next=section_point(path[i+1],j,width(i+1),height(i+1));
+        const auto a=outer(i,j),d=outer(i,k),c=outer(i+1,k),next=outer(i+1,j);
         b.quad(a,d,c,next,j==1?hull:armor);
-        b.quad(section_point(path[i],j,width(i)-wall,height(i)-wall),section_point(path[i+1],j,width(i+1)-wall,height(i+1)-wall),
-            section_point(path[i+1],k,width(i+1)-wall,height(i+1)-wall),section_point(path[i],k,width(i)-wall,height(i)-wall),hull);
+        b.quad(inner(i,j),inner(i+1,j),inner(i+1,k),inner(i,k),hull);
         // Deliberately sparse navigation strips, not an entirely glowing shell.
-        if(j==0||j==3)b.quad(a,next,add(next,mul(path[i+1].up,wall*.6F)),add(a,mul(path[i].up,wall*.6F)),trim,light);
+        if(j==0||j==3)b.quad(a,next,add(next,mul(path[i+1].up,shell*.6F)),add(a,mul(path[i].up,shell*.6F)),trim,light);
     }
-    for(std::size_t i:{0U,2U,4U,6U,8U})rim(b,path[i],width(i)+wall,height(i)+wall,wall*1.8F,.003F*size,rib);
+    // Structural rings clasp the shell from outside and stay out of the passage.
+    for(std::size_t i:{0U,2U,4U,6U,8U})rim(b,path[i],blend(i),width(i)+shell,height(i)+shell,shell+.8F*wall(i),.003F*size,rib);
     const auto& mouth=path.back();
     // Two short divider fins produce three clear exit lanes. They extend out
     // beyond the flared mouth, so small craft have room to fan away from it.
@@ -349,7 +367,10 @@ StructureMesh tunnel_joiner(f32 size,f32 height,f32 light) {
             {wall,2*(h+wall),std::hypot(edge.x,edge.y,edge.z)},armor);
     }
     for(const auto& socket:sockets) {
-        rim(b,socket,.0085F*size,.0075F*size,.0016F*size,.004F*size,rib);
+        // A tunnel attached here has the joiner's size: the rim is its regular
+        // octagon, clasping the tunnel's skin without reaching into the bore.
+        const auto clasp=(tunnel_outer_height+.0025F)*size;
+        rim(b,socket,0,clasp,clasp,.0025F*size,.004F*size,rib);
         b.box(add(socket.position,{0,.009F*size,0}),socket.side,socket.up,socket.tangent,
             {.009F*size,.001F*size,.004F*size},trim,light);
     }
