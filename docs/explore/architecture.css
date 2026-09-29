@@ -38,16 +38,17 @@ body.details-hidden main { grid-template-columns:minmax(0,1fr); }
 .map-heading { display:flex; align-items:flex-start; justify-content:space-between; padding:16px 24px 9px; gap:15px; min-height:78px; }
 .map-heading>div { min-width:0; }
 .eyebrow { font:600 10px/1.5 system-ui,sans-serif; letter-spacing:.11em; text-transform:uppercase; margin:0 0 5px; color:var(--accent); }
-#breadcrumbs { display:flex; flex-wrap:wrap; gap:3px 6px; align-items:center; font-size:12px; }
+#breadcrumbs ol { display:flex; flex-wrap:wrap; gap:3px 6px; align-items:center; margin:0; padding:0; list-style:none; font-size:12px; }
+#breadcrumbs li { display:flex; gap:6px; align-items:center; }
 #breadcrumbs button { padding:0; background:none; border:0; color:var(--muted); text-align:left; }
-#breadcrumbs button:last-child { color:var(--text); }
+#breadcrumbs button[aria-current] { color:var(--text); }
 #breadcrumbs span { color:#54626c; }
 #node-count { font-size:11px; white-space:nowrap; }
 #map { position:relative; flex:1; min-height:160px; overflow:hidden; cursor:grab; touch-action:none; background:radial-gradient(circle, #33404b 0.7px, transparent 1px); background-size:22px 22px; }
 #map.panning { cursor:grabbing; user-select:none; }
 #plane { position:absolute; inset:0 auto auto 0; transform-origin:0 0; will-change:transform; }
 #edges { position:absolute; inset:0; overflow:visible; pointer-events:none; }
-.edge { fill:none; stroke:#506375; stroke-width:1.5; }
+.edge { fill:none; stroke:#61778a; stroke-width:1.5; } /* 3.97:1 on the canvas */
 .edge.active { stroke:var(--accent); stroke-width:2; }
 .edge.group { stroke-dasharray:5 5; }
 #nodes { position:absolute; inset:0; }
@@ -71,7 +72,7 @@ body.details-hidden main { grid-template-columns:minmax(0,1fr); }
 .map-actions { display:flex; position:absolute; left:20px; bottom:20px; align-items:center; gap:3px; background:#171f27f2; border:1px solid var(--border); padding:5px; border-radius:7px; box-shadow:0 5px 20px #0003; cursor:default; }
 .map-actions button { background:transparent; border-color:transparent; font-size:12px; white-space:nowrap; }
 .map-actions button:hover { background:#2b3c46; }
-.map-actions output { font:11px ui-monospace,monospace; width:38px; text-align:center; color:var(--muted); }
+.zoom-level { font:11px ui-monospace,monospace; width:38px; text-align:center; color:var(--muted); }
 .divider { height:17px; border-left:1px solid var(--border); margin:0 4px; }
 #leave-branch { position:absolute; top:8px; left:20px; background:#21372f; font-size:12px; }
 #minimap { position:absolute; width:152px; height:100px; right:16px; bottom:20px; border:1px solid var(--border); background:#121a22e8; border-radius:6px; pointer-events:none; }
@@ -114,7 +115,7 @@ body.details-hidden main { grid-template-columns:minmax(0,1fr); }
 @media (max-width:390px) { .map-actions .divider { margin:0; } .map-actions button { padding:6px 4px; } }
 /* Short viewports: phones in landscape, laptops zoomed to 200% (683×384).
    Compact chrome keeps the canvas, its controls and the inspector on screen. */
-@media (max-height:480px) { .topbar { min-height:40px; padding:4px 16px; gap:14px; } .brand { font-size:0; gap:0; } .brand span { font-size:19px; padding:0 5px 2px; } h1 { font-size:14px; } h1 span { display:none; } #navigation { font-size:11px; gap:14px; } .toolbar { padding:5px 12px; } #map-search { padding-top:6px; padding-bottom:6px; } .search-wrap>kbd { top:7px; } .map-heading { min-height:0; padding:6px 12px 4px; } .eyebrow { margin-bottom:2px; } #breadcrumbs { flex-wrap:nowrap; overflow-x:auto; white-space:nowrap; scrollbar-width:none; } #node-count { display:none; } #map { min-height:120px; } #minimap { display:none; } .map-footer { padding:3px 12px; } .map-footer p { display:none; } .map-actions { left:8px; bottom:8px; padding:3px; } .map-actions button { padding:4px 7px; font-size:11px; } #leave-branch { top:6px; left:8px; padding:4px 8px; font-size:11px; } #details { padding:12px 16px; } #details h2 { font-size:18px; } .inspector-actions { margin:10px 0 14px; } }
+@media (max-height:480px) { .topbar { min-height:40px; padding:4px 16px; gap:14px; } .brand { font-size:0; gap:0; } .brand span { font-size:19px; padding:0 5px 2px; } h1 { font-size:14px; } h1 span { display:none; } #navigation { font-size:11px; gap:14px; } .toolbar { padding:5px 12px; } #map-search { padding-top:6px; padding-bottom:6px; } .search-wrap>kbd { top:7px; } .map-heading { min-height:0; padding:6px 12px 4px; } .eyebrow { margin-bottom:2px; } #breadcrumbs ol { flex-wrap:nowrap; overflow-x:auto; white-space:nowrap; scrollbar-width:none; } #node-count { display:none; } #map { min-height:120px; } #minimap { display:none; } .map-footer { padding:3px 12px; } .map-footer p { display:none; } .map-actions { left:8px; bottom:8px; padding:3px; } .map-actions button { padding:4px 7px; font-size:11px; } #leave-branch { top:6px; left:8px; padding:4px 8px; font-size:11px; } #details { padding:12px 16px; } #details h2 { font-size:18px; } .inspector-actions { margin:10px 0 14px; } }
 /* Room for one toolbar row. */
 @media (max-height:480px) and (min-width:560px) { .toolbar { flex-wrap:nowrap; gap:8px; } .scopes { flex:0 1 auto; min-width:0; padding:2px; } .scopes button { flex:0 1 auto; padding:4px 9px; white-space:nowrap; } .search-wrap { order:0; flex:1 1 150px; width:auto; min-width:120px; } #details-toggle { padding:4px 10px; } }
 /* Room for the inspector beside the canvas: both keep the full height. */

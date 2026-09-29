@@ -31,15 +31,15 @@
   </div>
   <main id="main">
     <section class="map-panel" aria-label="Architecture canvas">
-      <div class="map-heading"><div><p class="eyebrow" id="scope-subtitle"></p><div id="breadcrumbs" aria-label="Component path"></div></div><span id="node-count" class="muted"></span></div>
-      <div id="map" tabindex="-1" aria-label="Pan and zoom architecture canvas" aria-describedby="map-help">
+      <div class="map-heading"><div><p class="eyebrow" id="scope-subtitle"></p><nav id="breadcrumbs" aria-label="Component path"></nav></div><span id="node-count" class="muted"></span></div>
+      <div id="map" role="group" tabindex="-1" aria-label="Pan and zoom architecture canvas" aria-describedby="map-help">
         <div id="plane">
           <svg id="edges" aria-hidden="true"></svg>
           <div id="nodes" role="tree" aria-label="Component ownership tree"></div>
         </div>
         <div class="map-actions" role="group" aria-label="Map controls">
           <button id="zoom-out" aria-label="Zoom out">−</button>
-          <output id="zoom-label" aria-label="Zoom level">100%</output>
+          <span class="zoom-level"><span class="sr-only">Zoom </span><span id="zoom-label">100%</span></span>
           <button id="zoom-in" aria-label="Zoom in">+</button>
           <span class="divider"></span>
           <button id="fit" title="Fit the visible tree (F)">Fit</button>

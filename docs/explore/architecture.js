@@ -39,9 +39,14 @@
     const rect = map.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
-  function writeBookmark() {
+  // Deliberate jumps (clicks, search, links) add a history entry. Keyboard
+  // steps through the tree and expand/collapse replace it, so Back leaves
+  // the page instead of retracing every arrow key.
+  function writeBookmark(replace = false) {
     const hash = `${state.scope.id}/${state.selected}`;
-    if (location.hash.slice(1) !== hash) location.hash = hash;
+    if (location.hash.slice(1) === hash) return;
+    if (replace) history.replaceState(history.state, "", `#${hash}`);
+    else location.hash = hash;
   }
   function applyTransform() {
     if (transformFrame) return;
@@ -138,7 +143,7 @@
     if (!current.children?.length) return;
     if (state.expanded.has(id)) state.selected = model.collapse(state.tree, state.expanded, id, state.selected);
     else state.expanded.add(id);
-    renderTree(id); renderDetails(); writeBookmark();
+    renderTree(id); renderDetails(); writeBookmark(true);
     $("map-node-" + state.selected)?.focus({ preventScroll: true });
     announce(`${current.title} ${state.expanded.has(id) ? "expanded" : "collapsed"}. ${diagram.nodes.length} visible nodes.`);
   }
@@ -211,11 +216,19 @@
     detail.append(guide, element("p", "map-note", state.scope.id === "modules"
       ? "Dashed branches group build targets; dependencies are the separate lists above, not tree edges. Tests compare Direct dependencies and Used by with CMakeLists.txt. Used by leaves out test executables."
       : "Solid branches mean lifetime ownership; dashed branches are explicitly named groups. This is a curated source map, not live component status or a complete member listing."));
-    const breadcrumbs = $("breadcrumbs");
-    breadcrumbs.replaceChildren();
+    const breadcrumbs = element("ol");
+    $("breadcrumbs").replaceChildren(breadcrumbs);
     for (const [i, id] of model.path(state.tree, node.id).entries()) {
-      if (i) breadcrumbs.append(element("span", "", "/"));
-      breadcrumbs.append(button(state.tree.nodes.get(id).title, () => select(state.scope.id, id, { center: true, focusKeyboard: true })));
+      const crumb = element("li");
+      if (i) {
+        const separator = element("span", "", "/");
+        separator.setAttribute("aria-hidden", "true");
+        crumb.append(separator);
+      }
+      const target = button(state.tree.nodes.get(id).title, () => select(state.scope.id, id, { center: true, focusKeyboard: true }));
+      if (id === node.id) target.setAttribute("aria-current", "location");
+      crumb.append(target);
+      breadcrumbs.append(crumb);
     }
     breadcrumbs.scrollLeft = breadcrumbs.scrollWidth; // One-line path on short screens ends at the selection.
     $("scope-subtitle").textContent = state.scope.subtitle;
@@ -235,7 +248,7 @@
     // Re-rendering removes the control that was used; keep focus somewhere useful.
     if (options.focusKeyboard) $("map-node-" + id)?.focus({ preventScroll: true });
     else if (options.focusDetails) $("details").querySelector("h2").focus({ preventScroll: true });
-    if (!options.fromHash) writeBookmark();
+    if (!options.fromHash) writeBookmark(options.replace);
     $("inspector").scrollTop = 0;
     announce(`${state.tree.nodes.get(id).title}. ${state.scope.subtitle}.`);
   }
@@ -261,7 +274,7 @@
     else if (event.key === "Enter" || event.key === " ") toggleBranch(node.id);
     else return;
     event.preventDefault();
-    if (destination) select(state.scope.id, destination, { center: true, focusKeyboard: true });
+    if (destination) select(state.scope.id, destination, { center: true, focusKeyboard: true, replace: true });
   }
   function closeSearch() { results.hidden = true; }
   function searchResults() {
@@ -298,10 +311,13 @@
     const tab = button(scope.title, () => select(scope.id, states.get(scope.id).selected));
     tab.dataset.scope = scope.id; $("scopes").append(tab);
   }
-  $("zoom-in").addEventListener("click", () => zoom(1.2));
-  $("zoom-out").addEventListener("click", () => zoom(1 / 1.2));
-  function zoom(factor, point = { x: map.clientWidth / 2, y: map.clientHeight / 2 }) {
+  $("zoom-in").addEventListener("click", () => zoom(1.2, undefined, true));
+  $("zoom-out").addEventListener("click", () => zoom(1 / 1.2, undefined, true));
+  // Wheel and pinch zoom continuously and stay silent; a button or key
+  // press is one deliberate step, so it announces the new level once.
+  function zoom(factor, point = { x: map.clientWidth / 2, y: map.clientHeight / 2 }, speak = false) {
     state.view = model.zoom(state.view, factor, point); applyTransform();
+    if (speak) announce(`Zoom ${Math.round(state.view.scale * 100)}%`);
   }
   $("fit").addEventListener("click", fit);
   $("overview").addEventListener("click", overview);
@@ -372,7 +388,7 @@
     else if (event.key.toLowerCase() === "f") { event.preventDefault(); fit(); }
     else if (event.key === "Escape") { closeSearch(); }
     else if (event.target.closest("#map") && ["+", "=", "-"].includes(event.key)) {
-      event.preventDefault(); zoom(event.key === "-" ? 1 / 1.2 : 1.2);
+      event.preventDefault(); zoom(event.key === "-" ? 1 / 1.2 : 1.2, undefined, true);
     }
   });
   new ResizeObserver(() => {

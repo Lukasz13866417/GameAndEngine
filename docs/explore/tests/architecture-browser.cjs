@@ -26,6 +26,18 @@ module.exports = async function architectureBrowser(page, url, output) {
   assert.equal(await selected().getAttribute("data-id"), editor.scope.root.id);
   assert.equal(await text(page.locator("#scope-subtitle")), editor.scope.subtitle);
   assert.equal(await page.locator(".node").count(), visible(editor.tree, editor.scope.expanded));
+  assert.equal(await page.getByRole("group", { name: "Pan and zoom architecture canvas" }).count(), 1);
+  assert.equal(await page.getByRole("navigation", { name: "Component path" }).locator("[aria-current='location']").count(), 1);
+  // Ownership and grouping edges keep at least 3:1 contrast with the canvas.
+  const contrast = await page.evaluate(() => {
+    const rgb = color => color.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
+    const luminance = color => rgb(color).map(value => value / 255)
+      .map(value => value <= .03928 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
+      .reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0);
+    const [edge, canvas] = [getComputedStyle(document.querySelector(".edge:not(.active)")).stroke, getComputedStyle(document.body).backgroundColor].map(luminance);
+    return (Math.max(edge, canvas) + .05) / (Math.min(edge, canvas) + .05);
+  });
+  assert.ok(contrast >= 3, `edge contrast ${contrast.toFixed(2)}:1`);
   await page.screenshot({ path: path.join(output, "architecture-editor.png") });
 
   // Search reaches hidden descendants, establishes a bookmark and focuses the
@@ -42,13 +54,16 @@ module.exports = async function architectureBrowser(page, url, output) {
   await page.goForward();
   await page.waitForFunction(id => document.querySelector(".node[aria-selected='true']")?.dataset.id === id, walk);
   await selected().focus();
+  const entries = await page.evaluate(() => history.length);
   await page.keyboard.press("ArrowLeft");
   assert.equal(await selected().getAttribute("data-id"), owner);
+  assert.equal(await page.evaluate(() => location.hash), `#editor/${owner}`);
   await page.keyboard.press("ArrowLeft");
   assert.equal(await selected().getAttribute("aria-expanded"), "false");
   assert.equal(await page.locator(`#map-node-${walk}`).count(), 0);
   await page.keyboard.press("ArrowRight");
   assert.equal(await selected().getAttribute("aria-expanded"), "true");
+  assert.equal(await page.evaluate(() => history.length), entries, "Keyboard steps replace the history entry");
   await page.locator("#details").getByRole("button", { name: "Focus branch", exact: true }).click();
   const revealed = [...editor.scope.expanded, ...model.path(editor.tree, walk).slice(0, -1)];
   assert.equal(await page.locator(".node").count(), visible(model.index(editor.tree.nodes.get(owner)), revealed));
@@ -108,6 +123,8 @@ module.exports = async function architectureBrowser(page, url, output) {
   const beforeZoom = await page.locator("#zoom-label").innerText();
   await page.locator("#zoom-in").click();
   await page.waitForFunction(before => document.querySelector("#zoom-label").textContent !== before, beforeZoom);
+  assert.equal(await text(page.locator("#announcement")), `Zoom ${await text(page.locator("#zoom-label"))}`);
+  assert.equal(await page.locator("#zoom-label").evaluate(label => label.closest("output, [aria-live], [role='status'], [role='log']")), null);
   await page.locator("#fit").click();
   const bounds = await page.locator("#map").boundingBox();
   const point = { x: bounds.x + bounds.width - 8, y: bounds.y + 8 }; // Empty edge, outside fitted cards.
@@ -117,9 +134,10 @@ module.exports = async function architectureBrowser(page, url, output) {
   await page.mouse.move(point.x - 85, point.y + 55, { steps: 8 });
   await page.mouse.up();
   await page.waitForFunction(before => document.querySelector("#plane").getAttribute("style") !== before, beforePan);
-  const beforeWheel = await page.locator("#zoom-label").innerText();
+  const beforeWheel = await page.locator("#zoom-label").innerText(), spoken = await text(page.locator("#announcement"));
   await page.mouse.wheel(0, -150);
   await page.waitForFunction(before => document.querySelector("#zoom-label").textContent !== before, beforeWheel);
+  assert.equal(await text(page.locator("#announcement")), spoken, "Wheel zoom is not announced");
   await page.locator("#expand-all").click();
   assert.equal(await page.locator(".node").count(), editor.tree.nodes.size);
   await page.locator("#overview").click();

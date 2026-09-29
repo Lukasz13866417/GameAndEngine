@@ -360,6 +360,9 @@ test("viewer keeps offline assets, accessible controls and no raw HTML insertion
   }
   assert.match(html, /role="tree"/);
   assert.match(html, /aria-live="polite"/);
+  assert.match(html, /<div id="map" role="group"[^>]* aria-label="/);
+  assert.match(html, /<nav id="breadcrumbs" aria-label="/);
+  assert.doesNotMatch(html, /<output\b/, "The zoom level must not be a live region");
   assert.match(html, /<noscript>/);
   for (const file of ["architecture.js", "architecture-model.js", "architecture-data.js"]) {
     const js = readFileSync(path.join(root, file), "utf8");
