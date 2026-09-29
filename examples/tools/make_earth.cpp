@@ -95,16 +95,15 @@ int main(int argc,char** argv) {
             scene->document.environment.bloom_threshold=1.6F;
             scene->document.environment.bloom_strength=.16F;
         }
-        if(auto saved=vng::content::vmesh::write_vmesh(mesh_path,*variant);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
-        if(auto saved=file.save_as(scene_path,*scene,replace);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
+        // Checks both outputs before writing either; never a new mesh beside the old scene.
+        if(auto saved=file.save_as_with_mesh(scene_path,*scene,mesh_path,*variant,replace);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
         std::cout<<"Copied Earth to "<<mesh_path<<" and "<<scene_path<<" (original terrain/clouds retained)\n";
         return 0;
     }
     auto scene=example::earth::author_scene(argv[1]);
     if(!scene){std::cerr<<scene.error().message<<'\n';return 1;}
     const auto& mesh=editor_example::mesh_geometry(*scene,example::earth::blueprint_id)->document();
-    if(auto saved=vng::content::vmesh::write_vmesh(mesh_path,mesh);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
     editor_example::SceneFile file;
-    if(auto saved=file.save_as(scene_path,*scene);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
+    if(auto saved=file.save_as_with_mesh(scene_path,*scene,mesh_path,mesh);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
     std::cout<<"Earth: "<<mesh.vertex_count<<" vertices / "<<mesh.faces.size()<<" triangles\n";
 }

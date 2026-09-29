@@ -8,10 +8,12 @@
 #include <vng/editor/limits.hpp>
 #include <vng/content/document.hpp>
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <span>
 #include <sstream>
 #include <fcntl.h>
 #include <unistd.h>
@@ -624,27 +626,85 @@ content::Result<void> erase_instance(State& state, u32 id) {
     return {};
 }
 namespace {
+constexpr std::size_t max_scene_decoded_bytes = 64U * 1024U * 1024U;
+// The limits decode() reads a scene with. encode_state() checks every scene
+// against the same numbers, so a scene it returns always reads back.
+content::DocumentLimits scene_read_limits(std::size_t decoded_bytes = max_scene_decoded_bytes) {
+    return {.max_source_bytes = max_scene_bytes, .max_decoded_bytes = decoded_bytes,
+            .max_string_bytes = editor::mesh_limits().max_source_bytes};
+}
+std::string mib(std::size_t bytes) {
+    std::array<char, 32> text{};
+    const auto end = std::to_chars(text.data(), text.data() + text.size(),
+        static_cast<double>(bytes) / (1024. * 1024.), std::chars_format::fixed, 1).ptr;
+    return {text.data(), end};
+}
+// Where one mesh's quoted text landed in the encoded scene, and its length
+// once read back (the decoded string is exactly the .vmesh text).
+struct EmbeddedMesh { std::size_t begin, end, bytes; };
+// decode() counts every node and every string against the decoded limit.
+// Parse the scene without its mesh text, with the budget that text leaves:
+// the same parser and limits, without copying megabytes of vertices.
+content::Result<void> check_readable(std::string_view scene, std::span<const EmbeddedMesh> meshes) {
+    std::size_t text{}, quoted{};
+    for (const auto& mesh : meshes) { text += mesh.bytes; quoted += mesh.end - mesh.begin; }
+    const auto share = mib(text) + " MiB of it is mesh text";
+    if (text >= max_scene_decoded_bytes)
+        return invalid("Scene exceeds the editor's 64 MiB decoded limit; " + share);
+    std::string skeleton;
+    skeleton.reserve(scene.size() - quoted + 2 * meshes.size());
+    std::size_t at{};
+    for (const auto& mesh : meshes) {
+        skeleton.append(scene.substr(at, mesh.begin - at));
+        skeleton.append("\"\"");
+        at = mesh.end;
+    }
+    skeleton.append(scene.substr(at));
+    auto parsed = content::parse_document(skeleton, {.limits = scene_read_limits(max_scene_decoded_bytes - text)});
+    if (parsed) return {};
+    if (parsed.error().code == content::ErrorCode::limit_exceeded)
+        return invalid("Scene exceeds the editor's 64 MiB decoded limit (" + parsed.error().message + "); " + share);
+    return std::unexpected(parsed.error());
+}
 content::Result<std::string> encode_state(const State& s, bool include_editor_view) {
     if (auto valid = validate_state(s); !valid)
         return std::unexpected(valid.error());
-    auto mesh = content::vmesh::write_vmesh(s.document.mesh.document());
-    if (!mesh)
-        return std::unexpected(mesh.error());
     std::ostringstream o;
     o.imbue(std::locale::classic());
     o << std::setprecision(9) << std::boolalpha;
-    o << "vscene 1.0\neditor_project = 4;\nrevision = " << s.document.revision
-      << ";\nmesh_data = " << quote_string(*mesh) << ";\n";
+    std::vector<EmbeddedMesh> embedded;
+    const auto embed = [&](const editor::EditableMesh& mesh, const std::string& label) -> content::Result<void> {
+        auto text = content::vmesh::write_vmesh(mesh.document());
+        if (!text) return std::unexpected(text.error());
+        // The reader's per-string cap; also what EditableMesh::load accepts.
+        const auto limit = editor::mesh_limits().max_source_bytes;
+        if (text->size() > limit)
+            return invalid("Cannot store " + label + ": it needs " + mib(text->size()) +
+                           " MiB of mesh text, and a scene stores at most " + std::to_string(limit >> 20) + " MiB per mesh");
+        const auto begin = static_cast<std::size_t>(std::streamoff(o.tellp()));
+        o << quote_string(*text);
+        embedded.push_back({begin, static_cast<std::size_t>(std::streamoff(o.tellp())), text->size()});
+        return {};
+    };
+    const auto label = [&](BlueprintId id) -> std::string {
+        const auto found = std::ranges::find(s.document.mesh_assets, id, &MeshBlueprint::id);
+        return found == s.document.mesh_assets.end() ? "the scene mesh" : "mesh \"" + found->name + "\"";
+    };
+    o << "vscene 1.0\neditor_project = 4;\nrevision = " << s.document.revision << ";\nmesh_data = ";
+    if (auto written = embed(s.document.mesh, label(BlueprintId::mesh)); !written)
+        return std::unexpected(written.error());
+    o << ";\n";
     o << "blueprints = { mesh = ";
     write_settings(o, s.document.mesh_blueprint);
     o << "; sun = ";
     write_settings(o, s.document.sun_blueprint);
     o << "; };\nnext_blueprint_id = " << s.document.next_blueprint_id << ";\nmesh_assets = [\n";
     for (const auto& asset : s.document.mesh_assets) {
-        auto geometry = content::vmesh::write_vmesh(asset.geometry.document());
-        if (!geometry) return std::unexpected(geometry.error());
         o << "    { id = " << static_cast<u32>(asset.id) << "; name = " << quote_string(asset.name)
-          << "; mesh_data = " << quote_string(*geometry) << "; settings = ";
+          << "; mesh_data = ";
+        if (auto written = embed(asset.geometry, label(asset.id)); !written)
+            return std::unexpected(written.error());
+        o << "; settings = ";
         write_settings(o, asset.settings);
         o << "; },\n";
     }
@@ -655,9 +715,10 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
     }
     o << "];\nmesh_drafts = [\n";
     for(const auto& [id,draft]:s.document.mesh_drafts) {
-        auto geometry=content::vmesh::write_vmesh(draft.document());
-        if(!geometry) return std::unexpected(geometry.error());
-        o << "    { id = " << static_cast<u32>(id) << "; mesh_data = " << quote_string(*geometry) << "; },\n";
+        o << "    { id = " << static_cast<u32>(id) << "; mesh_data = ";
+        if (auto written = embed(draft, "the unapplied draft of " + label(id)); !written)
+            return std::unexpected(written.error());
+        o << "; },\n";
     }
     o << "];\nmesh_placements = [\n";
     for(const auto& [id,placement]:s.document.mesh_placements) {
@@ -725,6 +786,8 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
     auto result = o.str();
     if (result.size() > max_scene_bytes)
         return invalid("Editor scene exceeds the 64 MiB preview limit");
+    if (auto readable = check_readable(result, embedded); !readable)
+        return std::unexpected(readable.error());
     return result;
 }
 } // namespace
@@ -735,9 +798,7 @@ content::Result<std::string> encode_scene(const State& s) {
     return encode_state(s, false);
 }
 content::Result<State> decode(std::string_view source) {
-    auto doc = content::parse_document(source, {.limits = {.max_source_bytes = max_scene_bytes,
-                                                           .max_decoded_bytes = 64 * 1024 * 1024,
-                                                           .max_string_bytes = editor::mesh_limits().max_source_bytes}});
+    auto doc = content::parse_document(source, {.limits = scene_read_limits()});
     if (!doc)
         return std::unexpected(doc.error());
     auto mesh_source = doc->root().get<std::string>("mesh_data");

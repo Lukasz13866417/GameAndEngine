@@ -285,6 +285,96 @@ TEST_CASE("Failed encoding and failed temporary writes leave the original scene 
     CHECK(bytes(path) == encoded(state));
 }
 
+TEST_CASE("Scenes the editor could not read back are refused before anything is written",
+          "[editor][file][limits]") {
+    TemporaryDirectory temporary;
+    SceneFile file;
+    // Plain instances cost about 4 KB each of the reader's 64 MiB decoded
+    // budget, but under 200 bytes of text: the file-size limit alone would
+    // let 18,000 of them through, and loading would then fail.
+    const auto with_instances = [](u32 count) {
+        auto state = scene();
+        for (u32 i = 0; i < count; ++i)
+            state.document.instances.push_back({state.document.next_instance_id++, BlueprintId::mesh, "Copy",
+                                                MeshSettings{}, {}});
+        return state;
+    };
+    const auto fits = encode_scene(with_instances(12000));
+    REQUIRE(fits);
+    CHECK(decode(*fits));
+    const auto oversized = with_instances(18000);
+    const auto refused = encode_scene(oversized);
+    REQUIRE_FALSE(refused);
+    CHECK(refused.error().message.find("64 MiB decoded limit") != std::string::npos);
+    CHECK_FALSE(encode(oversized)); // Preview snapshots are read with the same limits.
+    CHECK_FALSE(file.save_as(temporary.path / "oversized.vscene", oversized));
+    CHECK_FALSE(fs::exists(temporary.path / "oversized.vscene"));
+    no_temporaries(temporary.path);
+}
+
+TEST_CASE("A mesh whose text the reader would refuse is not stored in a scene", "[editor][file][limits]") {
+    // 19 floats of eight or nine significant digits per vertex: within the
+    // editor's vertex, scalar and binary limits, over 32 MiB of .vmesh text.
+    constexpr u32 count = 160000;
+    u32 seed = 1;
+    const auto value = [&] { seed = seed * 1664525U + 1013904223U; return f32(seed >> 8) / 16777216.F; };
+    content::vmesh::Document document;
+    document.vertex_count = count;
+    document.vertex_fields.push_back({"position", {content::vmesh::ScalarType::Float32, 3}, std::vector<f32>(count * 3)});
+    for (const auto* name : {"a", "b", "c", "d"})
+        document.vertex_fields.push_back({name, {content::vmesh::ScalarType::Float32, 4}, std::vector<f32>(count * 4)});
+    for (auto& field : document.vertex_fields)
+        for (auto& x : std::get<std::vector<f32>>(field.values)) x = value();
+    auto heavy = editor::EditableMesh::create(std::move(document));
+    REQUIRE(heavy);
+    auto state = scene();
+    state.document.mesh = std::move(*heavy);
+    const auto refused = encode_scene(state);
+    REQUIRE_FALSE(refused);
+    CHECK(refused.error().message.find("the scene mesh") != std::string::npos);
+    CHECK(refused.error().message.find("32 MiB per mesh") != std::string::npos);
+    TemporaryDirectory temporary;
+    SceneFile file;
+    CHECK_FALSE(file.save_as_with_mesh(temporary.path / "heavy.vscene", scene(), temporary.path / "heavy.vmesh",
+                                       state.document.mesh.document()));
+    CHECK_FALSE(fs::exists(temporary.path / "heavy.vscene"));
+    CHECK_FALSE(fs::exists(temporary.path / "heavy.vmesh"));
+    no_temporaries(temporary.path);
+}
+
+TEST_CASE("A scene and its authored mesh are saved together or not at all", "[editor][file]") {
+    TemporaryDirectory temporary;
+    SceneFile file;
+    auto state = scene();
+    const auto& mesh = state.document.mesh.document();
+    const auto scene_path = temporary.path / "earth.vscene", mesh_path = temporary.path / "earth.vmesh";
+    auto bad = state;
+    (*editor_example::sun_settings(bad, 2)).radius = std::numeric_limits<f32>::quiet_NaN();
+    CHECK_FALSE(file.save_as_with_mesh(scene_path, bad, mesh_path, mesh));
+    CHECK_FALSE(fs::exists(scene_path));
+    CHECK_FALSE(fs::exists(mesh_path));
+    CHECK_FALSE(file.path());
+    no_temporaries(temporary.path);
+
+    REQUIRE(file.save_as_with_mesh(scene_path, state, mesh_path, mesh));
+    CHECK(file.path() == std::optional{scene_path});
+    CHECK(bytes(scene_path) == encoded(state));
+    const auto reloaded = editor::EditableMesh::load(mesh_path);
+    REQUIRE(reloaded);
+    CHECK(reloaded->document() == mesh);
+
+    // Existing files need explicit replacement; a refused save keeps both.
+    const auto scene_before = bytes(scene_path), mesh_before = bytes(mesh_path);
+    ++state.document.revision;
+    CHECK_FALSE(file.save_as_with_mesh(scene_path, state, mesh_path, mesh));
+    CHECK_FALSE(file.save_as_with_mesh(scene_path, bad, mesh_path, mesh, true));
+    CHECK(bytes(scene_path) == scene_before);
+    CHECK(bytes(mesh_path) == mesh_before);
+    REQUIRE(file.save_as_with_mesh(scene_path, state, mesh_path, mesh, true));
+    CHECK(bytes(scene_path) == encoded(state));
+    no_temporaries(temporary.path);
+}
+
 TEST_CASE("Scene paths reject symlinks directories special files and embedded null bytes",
           "[editor][file]") {
     TemporaryDirectory temporary;

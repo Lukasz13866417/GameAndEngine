@@ -1165,7 +1165,10 @@ IPC uses bounded, nonblocking Unix messages (64 MiB logical message, fragmented;
 64 MiB outgoing queue). Schema/event codecs are deterministic and versioned.
 The project reserves envelope space within that scene limit. Individual meshes
 accept at most 196,608 vertices, 32 MiB source text and 32 MiB decoded data;
-the bundled spaceship fits these limits. Imported-asset vertex patches carry
+the bundled spaceship fits these limits. Save, Save As and every scene snapshot
+check a scene against the limits it is read with: a mesh needing more than
+32 MiB of text, or a scene decoding to more than 64 MiB, is refused with an
+error rather than written as a file the editor could not open. Imported-asset vertex patches carry
 their blueprint identity, so updates and rollback address the correct GPU buffer.
 Scene revisions reject stale edits; worker generations reject events
 from obsolete code. Rendering and callbacks happen between frames. Dirty edits
