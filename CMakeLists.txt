@@ -129,21 +129,21 @@ if(VNG_BUILD_EDITOR)
         # draws through vng_ui without a GL context. The app and the UI tests
         # both link this; neither lists these sources again.
         add_library(vng_editor_ui STATIC
-    examples/editor/workspace_panels.cpp
-    examples/editor/viewport_camera_ui.cpp
-    examples/editor/workspace_ui_camera.cpp
-    examples/editor/workspace_ui_tools.cpp
-    examples/editor/workspace_ui_commands.cpp
-            examples/editor/workspace_ui_panels.cpp
-            examples/editor/camera_gizmo.cpp
             examples/editor/inspector_panel.cpp examples/editor/timeline_panel.cpp examples/editor/tool_panel.cpp
             examples/editor/blueprint_mesh_panel.cpp examples/editor/mesh_tools_ui.cpp examples/editor/mesh_menu.cpp
             examples/editor/mesh_editing_ui.cpp
             examples/editor/scene_lists.cpp
             examples/editor/timeline_editing_ui.cpp
-            examples/editor/workspace_ui_proposals.cpp
+            examples/editor/workspace_panels.cpp
+            examples/editor/viewport_camera_ui.cpp
+            examples/editor/camera_gizmo.cpp
+            examples/editor/workspace_ui_camera.cpp
+            examples/editor/workspace_ui_commands.cpp
             examples/editor/workspace_ui_interaction.cpp
+            examples/editor/workspace_ui_panels.cpp
             examples/editor/workspace_ui_picking.cpp
+            examples/editor/workspace_ui_proposals.cpp
+            examples/editor/workspace_ui_tools.cpp
             examples/editor/workspace_ui_viewport.cpp
             examples/editor/file_dialog.cpp examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp
             examples/editor/save_dialog.cpp
