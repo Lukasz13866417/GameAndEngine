@@ -283,9 +283,9 @@ metadata and **Logs → Interaction timing** measurements/export.
   **Walk** enables keyboard navigation: **W/S** forward/back along the
   camera's direction (including pitch), **A/D** sideways relative to the camera,
   **E/Q** world up/down. **Shift** increases speed; **middle-drag** looks around
-  in place. **Object tools / selection** or **Escape** exits. Typing in a field, opening a
-  dialog, or losing focus releases held movement keys and camera drags without
-  leaving the chosen mode. Speeds are scene units
+  in place. **Object tools / selection** or **Escape** exits. Typing in a field or
+  losing focus releases held movement keys and camera drags without leaving the
+  chosen mode; a dialog hides the corner menu and so also ends it. Speeds are scene units
   per second, not per frame. Its local options show separate forward, sideways,
   vertical speeds and a Shift multiplier **only while Walk is selected**.
   Other camera children show their own sensitivity instead. Sliders change it
