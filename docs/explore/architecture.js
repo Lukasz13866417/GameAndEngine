@@ -149,7 +149,7 @@
     return part;
   }
   function jumpLink(label, scope, id, suffix = "→") {
-    const item = button("", () => select(scope, id, { center: true }), "child-link");
+    const item = button("", () => select(scope, id, { center: true, focusDetails: true }), "child-link");
     item.append(element("span", "", label), element("span", "", suffix));
     return item;
   }
@@ -158,7 +158,9 @@
     detail.replaceChildren();
     const badge = element("span", "role-badge", node.role === "UI" ? "UI · presents or owns controls" : node.role);
     badge.dataset.role = node.role;
-    detail.append(badge, element("h2", "", node.title), element("code", "symbol", node.symbol),
+    const heading = element("h2", "", node.title);
+    heading.tabIndex = -1; // Receives focus after an inspector link replaces the details.
+    detail.append(badge, heading, element("code", "symbol", node.symbol),
       element("p", "summary", node.summary), element("p", "detail-text", node.detail));
     const actions = element("div", "inspector-actions");
     actions.append(button("Locate on map", () => center(node.id, true)));
@@ -213,7 +215,7 @@
     breadcrumbs.replaceChildren();
     for (const [i, id] of model.path(state.tree, node.id).entries()) {
       if (i) breadcrumbs.append(element("span", "", "/"));
-      breadcrumbs.append(button(state.tree.nodes.get(id).title, () => select(state.scope.id, id, { center: true })));
+      breadcrumbs.append(button(state.tree.nodes.get(id).title, () => select(state.scope.id, id, { center: true, focusKeyboard: true })));
     }
     breadcrumbs.scrollLeft = breadcrumbs.scrollWidth; // One-line path on short screens ends at the selection.
     $("scope-subtitle").textContent = state.scope.subtitle;
@@ -230,7 +232,9 @@
     renderTree(); renderDetails();
     if (options.center) center(id, true);
     else if (changedScope) applyTransform();
+    // Re-rendering removes the control that was used; keep focus somewhere useful.
     if (options.focusKeyboard) $("map-node-" + id)?.focus({ preventScroll: true });
+    else if (options.focusDetails) $("details").querySelector("h2").focus({ preventScroll: true });
     if (!options.fromHash) writeBookmark();
     $("inspector").scrollTop = 0;
     announce(`${state.tree.nodes.get(id).title}. ${state.scope.subtitle}.`);
@@ -305,7 +309,10 @@
     for (const node of state.tree.nodes.values()) if (node.children?.length) state.expanded.add(node.id);
     renderTree(); fit(); announce("All branches expanded. Select a node or search to inspect it at a readable zoom.");
   });
-  $("leave-branch").addEventListener("click", () => { state.focus = state.scope.root.id; renderTree(); fit(); });
+  $("leave-branch").addEventListener("click", () => {
+    state.focus = state.scope.root.id; renderTree(); fit();
+    $("map-node-" + state.selected)?.focus({ preventScroll: true }); // This button is now hidden.
+  });
   $("details-toggle").addEventListener("click", () => {
     const hidden = !$("inspector").hidden;
     $("inspector").hidden = hidden; document.body.classList.toggle("details-hidden", hidden);

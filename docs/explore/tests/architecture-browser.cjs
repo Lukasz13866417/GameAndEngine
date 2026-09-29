@@ -55,6 +55,19 @@ module.exports = async function architectureBrowser(page, url, output) {
   await page.screenshot({ path: path.join(output, "architecture-navigation-branch.png") });
   await page.locator("#leave-branch").click();
   assert.equal(await page.locator(".node").count(), visible(editor.tree, revealed));
+  const focused = () => page.evaluate(() => {
+    const item = document.activeElement;
+    return { id: item.dataset.id, heading: item.matches("#details h2") ? item.textContent : null };
+  });
+  assert.equal((await focused()).id, owner, "Whole map hides its button and focuses the selection");
+  // Re-rendering removes the control that was used. Inspector links keep focus
+  // in the inspector, on the new heading; breadcrumbs focus the chosen card.
+  await page.locator("#details .child-link").first().focus();
+  await page.keyboard.press("Enter");
+  assert.equal((await focused()).heading, editor.tree.nodes.get(owner).children[0].title);
+  await page.locator("#breadcrumbs button").first().focus();
+  await page.keyboard.press("Enter");
+  assert.equal((await focused()).id, editor.scope.root.id);
 
   // Search across scopes, independent lifetimes, and direct build links.
   const worker = maps.get("worker");

@@ -5,7 +5,7 @@ button,input { font:inherit; }
 button,a,input { -webkit-tap-highlight-color:transparent; }
 button { border:1px solid var(--border); border-radius:5px; background:#202831; color:var(--text); padding:6px 10px; cursor:pointer; }
 button:hover { background:#2d3a45; border-color:#6a8490; }
-button:focus-visible,a:focus-visible,input:focus-visible,[role="treeitem"]:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+button:focus-visible,a:focus-visible,input:focus-visible,[role="treeitem"]:focus-visible,#details h2:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 button:disabled { opacity:.45; cursor:default; }
 a { color:var(--accent); text-decoration:none; }
 a:hover { text-decoration:underline; }
