@@ -7,15 +7,12 @@
 namespace editor_example::tunnel_haze {
 // Kilometres at which the optical depth reaches 1.
 inline constexpr vng::f32 reach_km=18.F;
-// false: (d/18)^4 at every distance. Nearby panels stay readable, and beyond
-//        18 km the bore whitens faster than the original (d/18)^2 did.
-// true:  (d/18)^4 up to 18 km, then the original (d/18)^2: the same gentle
-//        near field with the original, softer far-field falloff.
-inline constexpr bool original_far_field=false;
-// Optical depth from a squared camera distance in kilometres.
+// Optical depth (d/18)^4 from a squared camera distance in kilometres: nearby
+// panels stay readable, and beyond 18 km the bore whitens faster than the
+// original (d/18)^2. Keeping (d/18)^2 past 18 km looked the same in every
+// departure frame (at most 4 of 255 levels), as the veil is white there.
 template<class Squared> auto depth(Squared distance2) {
     const auto x=distance2/(reach_km*reach_km);
-    if constexpr(original_far_field) return x*vng::dsl::min(x,1.F);
-    else return x*x;
+    return x*x;
 }
 }

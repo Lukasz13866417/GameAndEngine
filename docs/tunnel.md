@@ -242,13 +242,13 @@ bright near-white spill extending onto the walls. Its optical depth is
 nearby panels, seams and craft stay readable; 1 at 18 km; and 16 at 36 km, so the
 far passage turns white sooner than the original (d / 18 km)^2 did. The `tunnel`
 material transmits 1 / (1 + depth); the departure's walls, craft and mouth veil
-transmit e^-depth. Setting `tunnel_haze::original_far_field` keeps this near
-field and returns to (d / 18 km)^2 beyond 18 km; in the departure's frames the
-two differ by at most 4 of 255 levels, because the veil is already white
-there. This is a stylized lighting approximation, not dynamic volumetric
+transmit e^-depth. Keeping (d / 18 km)^2 beyond 18 km was tried; in the
+departure's frames it differed by at most 4 of 255 levels, because the veil is
+already white there. This is a stylized lighting approximation, not dynamic volumetric
 scattering or shadow-casting local lights. Other scene materials are unchanged.
-The departure variant uses `tunnel_departure`, whose exit is at Z=0 with the
-tube along +Z. A depth-tested veil across the mouth renders **after** opaque
+The departure variant uses `tunnel_departure`, whose throat (where the bore
+meets the dispersal terminal) is at Z=0 with the tube along +Z; the terminal's
+mouth opens 12 km further out. A depth-tested veil across the mouth renders **after** opaque
 geometry, hiding distant Earth/addons as well as stars. Nearby walls and craft
 occlude it. Its opacity approaches white exponentially with distance, then
 fades continuously during the approach; it never writes depth and is disabled

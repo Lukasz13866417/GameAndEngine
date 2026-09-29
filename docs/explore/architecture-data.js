@@ -72,7 +72,7 @@
                           ui("camera-pointer", "Pointer gizmos × 5", "CameraPointerGizmo", "Orbit, Look, Pan, Forward/back and Optical zoom children.",
                             "Five separately owned children share one implementation. Each owns a CameraPointerLogic (camera_pointer_logic.hpp) capture/math helper and a mode-local sensitivity control. The parent routes each input occurrence to its captured child or the selected shortcut, so menu input cannot leak into camera motion.", "camera_gizmo.hpp"),
                           ui("camera-walk", "Walk gizmo", "CameraWalkGizmo", "Held-key walking with its own speed sliders.",
-                            "Owns CameraWalkLogic and forward, sideways, vertical and Shift-speed controls, shown only in Walk. Elapsed-time movement is independent of OS key repeat. Typing or controls-window focus clears held keys without leaving Walk; Escape returns to object tools.", "camera_gizmo.hpp")
+                            "Owns CameraWalkLogic and forward, sideways, vertical and Shift-speed controls, shown only in Walk. Elapsed-time movement is independent of OS key repeat. Typing, lost focus or a focused control clears held keys without leaving Walk; an Escape nothing else claims, or hiding the corner menu, returns to object tools.", "camera_gizmo.hpp")
                         ] }),
                       tool("gizmo-controls", "Gizmo input & options", "GizmoControls", "Sensitivity, scale limits and shared gizmo input.", "gizmo_controls.hpp"),
                       tool("move", "Move gizmo", "SceneMoveGizmo", "Selection movement, including blueprint-defined axes.", "scene_move_gizmo.hpp"),
