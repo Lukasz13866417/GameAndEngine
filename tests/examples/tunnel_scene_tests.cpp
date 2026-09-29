@@ -80,6 +80,21 @@ TEST_CASE("Tunnel bore and collars are regular octagons with readable planar lin
     CHECK(shell.vertices.size()<=50*path.size()+80);
 }
 
+TEST_CASE("Collars sit on route samples, where the lip meets the octagonal lining", "[example][tunnel]") {
+    namespace e=example::earth;
+    CHECK(e::detail::collar_sections(24)==std::array<std::size_t,7>{0,4,8,12,16,20,24});
+    CHECK(e::detail::collar_sections(192)==std::array<std::size_t,7>{0,32,64,96,128,160,192});
+    for(std::size_t segments:{8U,32U,40U,64U,256U}) {
+        const auto sections=e::detail::collar_sections(segments);
+        CHECK(sections.front()==0);
+        CHECK(sections.back()==segments);
+        for(std::size_t i=1;i<sections.size();++i) {
+            CHECK(sections[i]>sections[i-1]);
+            CHECK(std::abs(double(sections[i])-double(i*segments)/6)<=.5);
+        }
+    }
+}
+
 TEST_CASE("One shared tunnel has a dark outside, lit lining and open ends", "[example][tunnel]") {
     using namespace vng;
     namespace e=example::earth;

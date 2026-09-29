@@ -204,6 +204,12 @@ StructureMesh tunnel_collar(const SkywaySample& frame,f32 size) {
     return mesh;
 }
 
+std::array<std::size_t,7> collar_sections(std::size_t segments) {
+    std::array<std::size_t,7> result{};
+    for(std::size_t i=0;i<result.size();++i)result[i]=(i*segments+3)/6; // nearest sample
+    return result;
+}
+
 TerminalPath freestanding_terminal_path(f32 size,f32 height) {
     TerminalPath path;
     for(std::size_t i=0;i<path.size();++i) {
