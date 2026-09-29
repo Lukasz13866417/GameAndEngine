@@ -6,8 +6,19 @@
 #include "support/earth_structures.hpp"
 #include "support/earth_placement.hpp"
 #include "support/mesh_frame.hpp"
+#include <vng/content/document.hpp>
+#include <vng/editor/limits.hpp>
+#include <vng/editor/mesh.hpp>
+#include <vng/spatial/triangle_bvh.hpp>
+#include <stdlib.h>
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <numbers>
 
 TEST_CASE("Tunnel bore and collars are regular octagons with readable planar lining", "[example][tunnel]") {
     using namespace vng;
@@ -327,6 +338,58 @@ TEST_CASE("Express departure has a continuous close camera and clears the low te
     const auto restored=p::decode(*encoded);REQUIRE(restored);
     CHECK(p::active_camera(*restored,40)->id==d::camera_id);
     CHECK(p::evaluate_camera(*restored,40)==p::evaluate_camera(*scene,40));
+}
+
+TEST_CASE("A full-budget Earth still loads, saves beside its draft and fits the departure",
+          "[example][earth][limits][departure]") {
+    using namespace vng;
+    namespace e=example::earth;
+    namespace p=editor_example;
+    const std::filesystem::path assets=VNG_TUNNEL_ASSETS;
+    auto earth=editor::EditableMesh::load(assets/"earth_future.vmesh");REQUIRE(earth);
+    // Grow the committed Earth to its budget by repeating its first vertices
+    // (terrain: the most faces, so the most text, per vertex) and the faces
+    // among them.
+    auto grown=earth->document();
+    const auto base=grown.vertex_count;
+    REQUIRE(base<e::max_earth_vertices);
+    const auto extra=e::max_earth_vertices-base;
+    for(auto& field:grown.vertex_fields)std::visit([&](auto& values) {
+        const auto prefix=std::vector(values.begin(),values.begin()+std::ptrdiff_t(extra*field.type.components));
+        values.insert(values.end(),prefix.begin(),prefix.end());
+    },field.values);
+    const auto faces=grown.faces.size();
+    for(std::size_t i=0;i<faces;++i) {
+        const auto v=grown.faces[i].vertices;
+        if(v[0]<extra&&v[1]<extra&&v[2]<extra)
+            grown.faces.emplace_back(u32(v[0]+base),u32(v[1]+base),u32(v[2]+base));
+    }
+    grown.vertex_count=e::max_earth_vertices;
+    // It still loads as an editor mesh (32 MiB of .vmesh text).
+    const auto text=content::vmesh::write_vmesh(grown,{.limits=editor::mesh_limits()});REQUIRE(text);
+    auto full=editor::EditableMesh::create(grown);REQUIRE(full);
+    // Its scene can hold it twice while a blueprint edit is unapplied.
+    auto cube=editor::EditableMesh::load(assets/"colored_cube.vmesh");REQUIRE(cube);
+    p::State scene{.document={.mesh=std::move(*cube)}};
+    scene.document.mesh_assets.push_back({static_cast<p::BlueprintId>(3),"EARTH / full budget",*full,{}});
+    scene.document.next_blueprint_id=4;
+    scene.document.mesh_drafts.emplace(static_cast<p::BlueprintId>(3),*full);
+    CHECK(p::encode_scene(scene));
+    // The departure regenerated from it still saves and reopens.
+    std::array<char,64> name{};
+    std::strcpy(name.data(),"/tmp/vng-full-earth-XXXXXX");
+    REQUIRE(::mkdtemp(name.data()));
+    const std::filesystem::path folder=name.data();
+    struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code ignored;std::filesystem::remove_all(path,ignored);}} cleanup{folder};
+    for(const auto* asset:{"colored_cube.vmesh","spaceship.vmesh","fleet_carrier.vmesh","fleet_frigate.vmesh","fleet_escort.vmesh"})
+        std::filesystem::create_symlink(assets/asset,folder/asset);
+    {
+        std::ofstream out(folder/"earth_future.vmesh",std::ios::binary);
+        out<<*text;
+        REQUIRE(out);
+    }
+    const auto departure=example::tunnel::departure::author_scene(folder);REQUIRE(departure);
+    CHECK(p::encode_scene(*departure));
 }
 
 TEST_CASE("The voyage flies nose first, keeps its courier in frame and never shakes", "[example][tunnel][departure]") {
