@@ -80,6 +80,10 @@ std::optional<double> sphere(const Ray& ray, Vec3 center, double radius) {
 } // namespace
 
 std::optional<vng::u32> pick_object(const State& state, vng::Vec2 pixel, vng::Extent2D extent, const gfx::Camera* presented,PickStats* statistics) {
+    return pick(state,pixel,extent,presented,statistics).transform([](const Pick& hit){return hit.object;});
+}
+
+std::optional<Pick> pick(const State& state, vng::Vec2 pixel, vng::Extent2D extent, const gfx::Camera* presented,PickStats* statistics,PickOptions options) {
     if(statistics)*statistics={};
     // Blueprint view edits an asset, not one of its scene instances.
     if (state.viewport.mode == ViewMode::mesh) return {};
@@ -130,7 +134,7 @@ std::optional<vng::u32> pick_object(const State& state, vng::Vec2 pixel, vng::Ex
     }
     for (const auto& source : state.document.instances) {
         if(state.viewport.hides_surface(source.id))continue;
-        if (!std::holds_alternative<CameraSettings>(source.settings) || !instance_in_view(state, source) ||
+        if (!options.camera_glyphs || !std::holds_alternative<CameraSettings>(source.settings) || !instance_in_view(state, source) ||
             !evaluate_visibility(state, source, state.viewport.time)) continue;
         // Reuse the exact displayed geometry, including the protruding grip and
         // handle. Empty space around the body and the wire frustum isn't a hit.
@@ -164,7 +168,9 @@ std::optional<vng::u32> pick_object(const State& state, vng::Vec2 pixel, vng::Ex
             selected=instance.id;
         }
     }
-    return selected;
+    if(!selected)return {};
+    const auto point=ray.origin+ray.direction*nearest;
+    return Pick{*selected,{static_cast<f32>(point.x),static_cast<f32>(point.y),static_cast<f32>(point.z)}};
 }
 
 vng::editor::Schema local_position_gizmo(const State& state, vng::u64 generation) {
