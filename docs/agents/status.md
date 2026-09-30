@@ -1,5 +1,23 @@
 # Status snapshot (volatile, dated)
 
+## Integration update — 2026-09-30
+
+This branch integrates PRs #15 (agent guides and camera keys), #16 (scene review
+app) and #17 (workspace, camera gizmos, octagonal tunnels and architecture map).
+The 2026-09-28 branch/checkouts/budget records below are historical, not current
+instructions. Re-check merge status with `gh pr list --state open` and fetch
+`origin/main` before choosing a base.
+
+The main checkout is on `feature/scene-animation-forest` with substantial
+uncommitted animation work. It was deliberately left untouched by this review;
+do not discard or switch it to main to catch up with the merged PRs.
+
+Current source limits are 196,608 editor-mesh vertices and 180,224 Earth-authoring
+vertices. The scene decoded-byte budget remains 64 MiB. The architecture catalog
+now covers every CMake library and all non-test executable dependencies.
+
+## Historical snapshot — 2026-09-28
+
 Read this when you choose a base branch, see a failing test, find someone else's worktree or branch, or need to know
 how full the big scene or the disk is. **Snapshot: 2026-09-28, `origin/main` at 0b7b5c1; `feature/agent-docs` is
 0b7b5c1 + f885dab + the agent-guides commit.** Every fact here will go stale. Re-run its check before you rely on it,
@@ -118,7 +136,7 @@ Limits and their sources: [limits-and-non-features.md](limits-and-non-features.m
 | Asset | Usage at snapshot | Check |
 |---|---|---|
 | `examples/assets/tunnel_departure.vscene` | On `feature/agent-docs`: file 48.5 MB (48,491,063 bytes); **56.1 of 64 MiB decoded**; 423 instances, 18 blueprints, 909 tracks; **10,131 of 16,384 keys**; longest track 1,959 of 4,096. Byte-identical to fresh `vng_make_tunnel_departure` output there. `main`'s copy differs only in stored angles. | `./build/vng_scene_probe examples/assets/tunnel_departure.vscene --size` (~20 s) |
-| `examples/assets/earth_future.vmesh` | 117,466 of 131,072 vertices (13,606 left: roughly 10 more 32-segment global corridors at ~1.3k vertices each; per-part costs in [assets.md](assets.md#vertex-budget-131072-per-mesh-max_earth_vertices-equal-to-the-editors-max_mesh_vertices)) | `grep -m1 '^vertices' examples/assets/earth_future.vmesh` |
+| `examples/assets/earth_future.vmesh` | 117,466 of 131,072 vertices (13,606 left: roughly 10 more 32-segment global corridors at ~1.3k vertices each; per-part costs in [assets.md](assets.md#vertex-budget)) | `grep -m1 '^vertices' examples/assets/earth_future.vmesh` |
 | Other editor scenes (files unchanged since 40eaf29; measured then) | earth_future 43.5 MiB decoded; asteroid_fleet 23.9; solar_system 19.6; earth and earth_savannah 14.7; fleet_reveal 7.4; tunnel_interior 3.7 | `--size` on each; `git log --oneline -- examples/assets/<file>` |
 | Hand-edited committed scenes | asteroid_fleet has 913 instances (its generator makes 642). solar_system has 644, the same count its generator makes (4 + 40 ships + 600 rocks, `solar_system_scene_tests.cpp`); whether it holds other hand edits is unverified. `fleet_reveal`, `asteroid_fleet`, `earth`, `earth_savannah` and `editor_timeline` have no camera instance (legacy camera). **Regenerating destroys hand edits.** | `./build/vng_scene_probe SCENE --list` |
 

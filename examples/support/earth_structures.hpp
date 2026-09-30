@@ -18,11 +18,15 @@ struct StructureMesh {
 };
 using TerminalPath = std::array<SkywaySample, 9>;
 // One tunnel construction for orbital and interior views. Samples control route
-// tessellation only; the hexagonal shell, lining and lighting stay identical.
+// tessellation only; the regular-octagonal shell, lining and lighting stay identical.
 struct TunnelSection { SkywaySample frame; vng::f32 size; };
 inline constexpr vng::f32 tunnel_inner_height = tunnel_inner_half_height;
 [[nodiscard]] StructureMesh tunnel_shell(std::span<const TunnelSection>, vng::f32 light);
 [[nodiscard]] StructureMesh tunnel_collar(const SkywaySample&, vng::f32 size);
+// The route samples that carry a tunnel's seven collars: both ends and five
+// between, spread evenly. On a sample the collar's lip meets the octagonal
+// lining exactly; between samples a straight bay cuts inside a curved route.
+[[nodiscard]] std::array<std::size_t,7> collar_sections(std::size_t segments);
 [[nodiscard]] StructureMesh dispersal_terminal(const TerminalPath&, vng::f32 size, vng::f32 light);
 // Canonical coordinates: Y radial up, Z forward; the host supplies placement.
 [[nodiscard]] TerminalPath freestanding_terminal_path(vng::f32 size, vng::f32 height);

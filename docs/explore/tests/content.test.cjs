@@ -124,7 +124,7 @@ test("editor role names match real components and the documented ownership tree"
     "mesh_tools_ui.hpp": ["MeshToolsUI"],
     "timeline_editing_ui.hpp": ["TimelineEditingUI"],
     "viewport_tools_ui.hpp": ["ViewportToolsUI"],
-    "camera_navigation_logic.hpp": ["CameraNavigationLogic"],
+    "camera_gizmo.hpp": ["CameraGizmo", "CameraPointerGizmo", "CameraWalkGizmo"],
     "camera_pointer_logic.hpp": ["CameraPointerLogic"],
     "camera_walk_logic.hpp": ["CameraWalkLogic"],
     "selection_input_logic.hpp": ["SelectionInputLogic"],
@@ -177,7 +177,7 @@ test("every related topic and local documentation/source link exists", () => {
 });
 
 test("all page assets, local links and stable topic routes are available offline", () => {
-  assert.deepEqual(Array.from(pages, page => page.id), ["start", "editor", "codebase", "walkthrough", "demo"]);
+  assert.deepEqual(Array.from(pages, page => page.id), ["start", "editor", "codebase", "walkthrough", "demo", "architecture"]);
   for (const id of ids) assert.ok(routes.has(id), `Preserve old bookmark ${id}`);
   for (const page of pages) {
     const html = readFileSync(path.join(root, page.file), "utf8");

@@ -4,9 +4,13 @@
 #include "earth_tunnel_sizes.hpp"
 
 namespace example::earth {
-// Complete blueprint budget (terrain, clouds and infrastructure). Indices are
-// u32; the extra capacity accommodates real tunnel linings on dense Earths.
-inline constexpr std::size_t max_earth_vertices=131072;
+// Complete blueprint budget (terrain, clouds and infrastructure); indices are
+// u32. Sized by what an Earth must still do when full, not by the editor's
+// per-mesh vertex cap (max_mesh_vertices): load as a mesh (32 MiB of .vmesh
+// text at up to ~182 bytes per added vertex), save in a scene that also holds
+// an unapplied draft of it (64 MiB), and fit the departure demo, which embeds
+// it among the voyage's other assets. vng_tunnel_scene_tests checks all three.
+inline constexpr std::size_t max_earth_vertices=180224;
 // Optional, blueprint-owned authoring layer. The result remains ordinary mesh
 // geometry, with no runtime particles, per-city objects, or extra draw calls.
 struct InfrastructureSettings {

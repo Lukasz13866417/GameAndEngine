@@ -92,9 +92,9 @@ static_assert(private_to_owner<ToolPanel, ToolPanel::Show, ToolPanel::Context>);
 static_assert(private_to_owner<SceneLists, SceneLists::Browsing, SceneListsContext>);
 static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Available, TimelineContext>);
 static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Unavailable, TimelineContext>);
-static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Orbiting, NavigationFrame>);
-static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Walking, NavigationFrame>);
-static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Unavailable, NavigationFrame>);
+// The camera gizmo is arbitrated by its viewport owner: even a mutable owner
+// hands out only an observation, never the gizmo itself.
+static_assert(std::same_as<decltype(std::declval<ViewportToolsUI&>().camera_gizmo()),const CameraGizmo&>);
 
 EditingWorkspaceUI timeline_workspace(State state, ui::Screen& screen, TimelineHosts hosts) {
     const auto hidden=[&] { return screen.column().visible(false); };
@@ -423,23 +423,25 @@ TEST_CASE("Timeline selection is owned locally and availability survives narrow 
 TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losing focus state", "[editor][workspace][navigation]") {
     Fixture f;
     ViewportToolsUI interaction{f.session.session(),f.screen.column(),f.screen.column(),f.screen.column(),f.screen.column()};
-    const auto& navigation=interaction.camera_navigation();
+    const auto& navigation=interaction.camera_gizmo();
     input::Frame raw{.logical_size={800,600},.framebuffer={800,600},.focused=true};
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}};
     NavigationFrame frame{.pose={0,0,8,{},1},.mode=ViewMode::scene,
         .viewport={0,0,800,600},.raw=raw,.unhandled=raw.events,.seconds=.016,
         .drag_speeds={},.walk_speeds={}};
-    auto reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.walk_active=true});
+    interaction.select_camera(CameraGizmoMode::walk);
+    CHECK(interaction.object_tools_suspended());
+    auto reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame});
     CHECK(reply.changed);
     CHECK(reply.pose.target.z<0.F);
     CHECK(navigation.walking().moving());
     frame.pose=reply.pose;
-    raw.events.clear(); frame.unhandled={}; raw.focused=false; frame.controls_have_focus=true;
+    raw.events.clear(); frame.unhandled={}; raw.focused=false;
     reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame});
     CHECK_FALSE(reply.changed);
     CHECK(navigation.walking().active());
     CHECK_FALSE(navigation.walking().moving());
-    raw.focused=true; frame.controls_have_focus=false;
+    raw.focused=true;
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}}; frame.unhandled=raw.events;
     reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.enabled=false});
     CHECK_FALSE(reply.changed); CHECK_FALSE(navigation.walking().moving());
@@ -448,9 +450,11 @@ TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losi
     CHECK(report.find("Unavailable")!=std::string::npos);
     CHECK(navigation.debug_string()==report);
     raw.events.clear(); frame.unhandled={};
-    reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.walk_active=false});
-    CHECK(navigation.debug_report().situation=="Orbiting");
+    interaction.resume_object_tools();
+    reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame});
+    CHECK(navigation.debug_report().situation=="Orbit");
     CHECK_FALSE(navigation.walking().active());
+    CHECK_FALSE(interaction.object_tools_suspended());
     CHECK_FALSE(reply.changed);
 }
 

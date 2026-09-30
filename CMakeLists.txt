@@ -134,9 +134,16 @@ if(VNG_BUILD_EDITOR)
             examples/editor/mesh_editing_ui.cpp
             examples/editor/scene_lists.cpp
             examples/editor/timeline_editing_ui.cpp
-            examples/editor/workspace_ui_proposals.cpp
+            examples/editor/workspace_panels.cpp
+            examples/editor/viewport_camera_ui.cpp
+            examples/editor/camera_gizmo.cpp
+            examples/editor/workspace_ui_camera.cpp
+            examples/editor/workspace_ui_commands.cpp
             examples/editor/workspace_ui_interaction.cpp
+            examples/editor/workspace_ui_panels.cpp
             examples/editor/workspace_ui_picking.cpp
+            examples/editor/workspace_ui_proposals.cpp
+            examples/editor/workspace_ui_tools.cpp
             examples/editor/workspace_ui_viewport.cpp
             examples/editor/file_dialog.cpp examples/editor/import_dialog.cpp examples/editor/open_scene_dialog.cpp
             examples/editor/save_dialog.cpp
@@ -281,7 +288,8 @@ if(VNG_BUILD_TESTS)
         add_test(NAME vng_layering_tests COMMAND ${VNG_NODE_EXECUTABLE} --test
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/layering/layering.test.cjs)
         add_test(NAME vng_guide_tests COMMAND ${VNG_NODE_EXECUTABLE} --test
-            ${CMAKE_CURRENT_SOURCE_DIR}/docs/explore/tests/content.test.cjs)
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/explore/tests/content.test.cjs
+            ${CMAKE_CURRENT_SOURCE_DIR}/docs/explore/tests/architecture.test.cjs)
     endif()
     add_executable(vng_timeline_tests tests/timeline/timeline_tests.cpp)
     target_link_libraries(vng_timeline_tests PRIVATE vng_timeline Catch2::Catch2WithMain)
@@ -362,9 +370,11 @@ if(VNG_BUILD_TESTS)
                     tests/editor/tool_panel_tests.cpp tests/editor/region_ui_tests.cpp tests/editor/component_transform_tests.cpp
                     tests/editor/component_dispatch_tests.cpp
                     tests/editor/input_routing_tests.cpp
+                    tests/editor/camera_gizmo_tests.cpp
                     tests/editor/viewport_input_tests.cpp
                     tests/editor/movement_binding_tests.cpp
                     tests/editor/workspace_tests.cpp
+                    tests/editor/workspace_ownership_tests.cpp
                     tests/editor/workspace_picking_tests.cpp
                     tests/editor/instance_transform_tests.cpp)
                 target_link_libraries(vng_editor_ui_tests PRIVATE vng_editor_ui Catch2::Catch2WithMain)

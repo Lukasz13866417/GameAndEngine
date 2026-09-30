@@ -1560,10 +1560,11 @@ void append_integer(Output& output, Number value)
 
 void append_float(Output& output, f32 value)
 {
+    // The shortest text that reads back as exactly this value: no precision
+    // argument. from_chars recovers the same bits, so round trips stay exact
+    // while typical meshes shrink by about an eighth.
     std::array<char, 64> buffer{};
-    const auto conversion = std::to_chars(
-        buffer.data(), buffer.data() + buffer.size(), value,
-        std::chars_format::general, std::numeric_limits<f32>::max_digits10);
+    const auto conversion = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
     if (conversion.ec == std::errc{}) {
         output.append(std::string_view(buffer.data(), conversion.ptr));
     }

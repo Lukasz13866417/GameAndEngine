@@ -15,6 +15,14 @@ public:
     [[nodiscard]] vng::content::Result<void> save(const State&);
     [[nodiscard]] vng::content::Result<void> save_as(const std::filesystem::path&, const State&,
                                                    bool replace_existing = false);
+    // Saves a scene together with the standalone .vmesh it was authored from,
+    // such as an Earth and its scene. Both are encoded and checked against the
+    // editor's read limits before either is written, and the mesh is published
+    // only after the scene, so a scene that cannot be saved leaves no new mesh.
+    [[nodiscard]] vng::content::Result<void> save_as_with_mesh(const std::filesystem::path& scene, const State&,
+                                                             const std::filesystem::path& mesh,
+                                                             const vng::content::vmesh::Document&,
+                                                             bool replace_existing = false);
 
 private:
     std::optional<std::filesystem::path> path_;

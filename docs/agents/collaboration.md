@@ -21,8 +21,9 @@ live only in [status.md](status.md). Read it first.
 ## 1. Who is here
 
 - **Owner: Lukasz** (GitHub `Lukasz13866417`, repo `Lukasz13866417/GameAndEngine`). Use
-  **they/them**. They review every change as a GitHub PR and merge it themselves; history
-  shows "Merge pull request #N from …" merge commits. Never merge a PR yourself.
+  **they/them**. They review changes as GitHub PRs and may explicitly ask an agent to review
+  and merge them. Never merge a PR without that approval; merge only the reviewed, tested
+  head and leave unresolved problems open.
 - **Other agents** work on this machine at the same time: Claude sessions (Opus, Fable) and
   Codex. Each one has its own worktree. The main checkout `/home/luke/Desktop/GameAndEngine`
   usually holds someone else's uncommitted work.

@@ -6,8 +6,8 @@ using namespace vng;
 ViewportSelectionReply EditingWorkspaceUI::pick_viewport(const ViewportSelectionContext& context) {
     const auto& c=context.frame;
     const auto& image=c.presented;
-    auto& tools=interaction();
-    auto& parts=blueprint_panel();
+    auto& tools=interaction_child();
+    auto& parts=blueprint_panel_child();
     auto& capture=viewport_->pick_capture_;
     auto& box=tools.selection_box;
     auto& input=tools.selection_input;
@@ -48,7 +48,7 @@ ViewportSelectionReply EditingWorkspaceUI::pick_viewport(const ViewportSelection
         if(auto applied=apply_pending(parts);!applied)reply.status=applied.error().message;
         else reply.blueprint_changed|=*applied;
     };
-    const bool enabled=c.tools.enabled && c.input.raw.focused && !c.input.raw.overflow &&
+    const bool enabled=c.tools.enabled && !tools.object_tools_suspended() && !tools.camera_gizmo().contains(c.input.raw.pointer) && c.input.raw.focused && !c.input.raw.overflow &&
         image.bounds.width>0 && image.bounds.height>0 && !image.extent.empty();
     const auto events=input.route(c.input.raw.events,c.input.unhandled,image.bounds,
         context.selected_gizmo_handle,enabled&&!components.menu_open()&&tools.accepts(ViewportTool::selection));
@@ -136,7 +136,7 @@ ViewportSelectionReply EditingWorkspaceUI::pick_viewport(const ViewportSelection
         }
         if(event.kind==input::EventKind::pointer_down&&event.button==1&&c.tools.components&&
            view.mode==ViewMode::mesh&&components.component_mode()&&selection_enabled&&!editing_.active(EditGesture::vertices)&&
-           image.bounds.contains(event.position)&&!tools.camera_navigation().pointer().handledPointer()&&
+           image.bounds.contains(event.position)&&!tools.camera_gizmo().handledPointer()&&
            !event.modifiers.alt&&!event.modifiers.control&&input.available(event)) {
             mesh_input({.open_menu=MeshMenuPlacement{event.position,c.input.raw.logical_size,image.bounds}},
                 ToolPanelInput{.context={.close=true}});
@@ -164,6 +164,9 @@ ViewportSelectionReply EditingWorkspaceUI::pick_viewport(const ViewportSelection
             }
         }
     }
+    if(reply.vertex_changed||reply.blueprint_changed)refresh_vertex();
+    if(reply.viewport_changed)++view.sequence;
+    if(reply.inspector_changed)invalidate_inspector();
     return reply;
 }
 } // namespace editor_example

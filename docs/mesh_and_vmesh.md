@@ -131,8 +131,9 @@ The rules for version 1 are intentionally small:
 - Metadata values are quoted UTF-8 strings with JSON-style escapes. Metadata
   and field names are stable slash-separated identifiers such as `color/0`;
   C++ type spellings never become file identifiers.
-- Floating-point input must be finite. The writer emits enough digits to
-  preserve every accepted `f32` value exactly.
+- Floating-point input must be finite. The writer emits the shortest text
+  that reads back as the same `f32`, so every accepted value is preserved
+  exactly.
 - Parsing is bounded by configurable source, decoded-byte, token, entry, and
   primitive-count limits before count-driven allocations are attempted.
 

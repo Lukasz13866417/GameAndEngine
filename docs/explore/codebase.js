@@ -37,7 +37,7 @@
       { type: "Header-only (INTERFACE)", visibility: "INTERFACE", extra: { related: ["resources"] } }),
     component("vng_render", "Rendering contracts", "Renderer tickets, views, frames and typed state/program facades.",
       "Renderer<Ticket, Backend> supplies compile-time identity, not draw policy. Factories such as compile_program dispatch through the device type. OpenGL integration headers live in render_opengl/ and the other *_opengl directories; nothing under render/ includes a backend.",
-      ["include/vng/render/renderer.hpp", "include/vng/render/program.hpp", "include/vng/render/graphics_state.hpp", "tests/render"], ["vng_gfx", "vng_resources"],
+      ["include/vng/render/renderer.hpp", "include/vng/render/program.hpp", "include/vng/render/graphics_state.hpp", "include/vng/render/bloom.hpp", "tests/render"], ["vng_gfx", "vng_resources"],
       { type: "Header-only (INTERFACE)", visibility: "INTERFACE", extra: { related: ["renderer", "graphics-state", "code-backend-dispatch"] } }),
     component("vng_analysis", "Render evidence data", "Image evidence, provenance and inspection contracts for diagnostic rendering.",
       "Neutral analysis types describe captured results and their relationship to entities, primitives and observations. Producing pixels and enhanced shaders belongs to the rendering integration, not this target.",
@@ -77,7 +77,7 @@
       ["include/vng/glsl/emitter.hpp", "src/glsl/emitter.cpp", "tests/glsl"], ["vng_shader"], { kind: "Backend" }),
     component("vng_opengl", "OpenGL device & resources", "Own actual buffers/programs/images and execute frame-scoped draw commands.",
       "Device validates context/thread ownership. Move-only resource wrappers and Frames govern GPU lifetimes; Commands borrows the frame's active state. GLAD loads functions. This target does not depend on GLFW.",
-      ["include/vng/opengl/device.hpp", "include/vng/opengl/frame.hpp", "include/vng/opengl/commands.hpp", "src/opengl/compile_program.cpp", "tests/opengl"],
+      ["include/vng/opengl/device.hpp", "include/vng/opengl/frame.hpp", "include/vng/opengl/commands.hpp", "include/vng/opengl/resources.hpp", "src/opengl/compile_program.cpp", "tests/opengl"],
       ["vng_gfx", "vng_render", "vng_glsl", "vng_resources"], { kind: "Backend", external: external("vng_glad_dependency") }),
     component("vng_window_glfw", "Native window & input", "GLFW implements window creation, input collection and event polling.",
       "Window-neutral declarations live under window/ and input/. GlfwWindow is the concrete window implementation; pairing it with an OpenGL context is another target. Native window lifetime is distinct from a GPU resource lifetime.",
@@ -92,11 +92,11 @@
       ["vng_render", "vng_analysis", "vng_glsl", "vng_opengl"], { kind: "Integration" }),
     component("vng_resources_opengl", "Resource-backed mesh renderer", "Build and reload the resources needed by the reusable ticket-driven MeshRenderer.",
       "This renderer owns its mesh/program/texture realization and retained providers. Per-submission state remains in tickets. The editor's BlueprintMeshRenderer is a different application policy, not this class under another name.",
-      ["include/vng/resources_opengl/mesh_renderer.hpp", "include/vng/opengl/resources.hpp", "src/resources_opengl/mesh_renderer.cpp", "tests/opengl/resource_owner_tests.cpp"],
+      ["include/vng/resources_opengl/mesh_renderer.hpp", "src/resources_opengl/mesh_renderer.cpp", "tests/opengl/resource_owner_tests.cpp"],
       ["vng_opengl", "vng_providers"], { kind: "Integration", external: external("vng_glad_dependency") }),
     component("vng_bloom_opengl", "Bloom renderer", "Extract and blur bright light, then composite it into a displayable image.",
       "This implementation owns its postprocessing resources and exposes the bloom rendering facade. Sun-specific surface patterns and artistic policy remain in the sun example helpers.",
-      ["include/vng/render/bloom.hpp", "include/vng/bloom_opengl/bloom.hpp", "src/bloom_opengl/bloom.cpp", "tests/opengl/bloom_tests.cpp"],
+      ["include/vng/bloom_opengl/bloom.hpp", "src/bloom_opengl/bloom.cpp", "tests/opengl/bloom_tests.cpp"],
       ["vng_opengl", "vng_resources"], { kind: "Integration", external: external("vng_glad_dependency") }),
     component("vng_rig_opengl", "Skinned-mesh renderer", "Use CPU skin bindings and changing bone palettes to deform mesh vertices on the GPU.",
       "The concrete renderer owns its GPU realization and depends on the neutral rig library. A caller supplies the pose/view through its rendering API; the rig library never calls this renderer.",
@@ -104,14 +104,17 @@
       ["vng_rig", "vng_render_opengl", "vng_resources"], { kind: "Integration", external: external("vng_glad_dependency") }),
     component("vng_text_opengl", "Text renderer", "Turn text tickets into GPU glyph batches and maintain atlas resources.",
       "The renderer combines neutral font shaping with OpenGL resources and the provider protocol. Persistent glyph caching belongs here, not in each button or label.",
-      ["include/vng/text/text_renderer.hpp", "include/vng/text_opengl/text_renderer.hpp", "src/text_opengl/text_renderer.cpp", "tests/opengl/text_renderer_tests.cpp"],
+      ["include/vng/text_opengl/text_renderer.hpp", "src/text_opengl/text_renderer.cpp", "tests/opengl/text_renderer_tests.cpp"],
       ["vng_opengl", "vng_text", "vng_resources"], { kind: "Integration", external: external("vng_glad_dependency") }),
     component("vng_ui_opengl", "UI renderer", "Draw UI shapes and text from a Screen's drawing data.",
       "This implementation consumes the neutral UI representation and reuses TextRenderer. It does not own editor selection, scene state or undo history.",
-      ["include/vng/ui/ui_renderer.hpp", "include/vng/ui_opengl/ui_renderer.hpp", "src/ui_opengl/ui_renderer.cpp", "tests/opengl/ui_renderer_tests.cpp"],
+      ["include/vng/ui_opengl/ui_renderer.hpp", "src/ui_opengl/ui_renderer.cpp", "tests/opengl/ui_renderer_tests.cpp"],
       ["vng_ui", "vng_text_opengl"], { kind: "Integration", external: external("vng_glad_dependency") })
   ];
   const applications = [
+    component("vng_review_file", "Scene review documents", "Read, merge and atomically save review notes and candidate scene references without a renderer.",
+      "Review holds candidate scenes, timestamps, pinned notes and verdicts in a .vreview document. Its codec resolves scene paths relative to the review file. Field-wise three-way merging preserves independent reviewer and author edits; it does not change the scene files being reviewed.",
+      ["examples/review/review_file.hpp", "examples/review/review_file.cpp", "tests/examples/review_tests.cpp", "docs/review.md"], ["vng_content"], { kind: "App library" }),
     component("vng_earth_assets", "Earth asset authoring", "Generate the stylized Earth mesh and edit its named cloud formations on the CPU.",
       "make_mesh builds the Earth blueprint offline as an ordinary .vmesh document. Cloud settings, formation identities and move/turn/add/remove edits live in that document, so the editor can present them as ordinary blueprint controls. This is procedural content policy, not a renderer: it depends on vng_content only, never on OpenGL or the editor.",
       ["examples/support/earth_assets.hpp", "examples/support/earth_clouds.hpp", "examples/support/earth_edit.cpp", "tests/examples/earth_assets_tests.cpp"], ["vng_content"], { kind: "App library" }),
@@ -153,6 +156,62 @@
   ];
   // One private link to another mapped application target, not an external package.
   applications.find(node => node.component.target === "vng_sun_support").component.dependencies.push({ target: "vng_example_presentation", visibility: "PRIVATE" });
+  // Offline scene authoring and saved-scene playback. Generators return ordinary
+  // editor documents; the tools save them and the editor and demos load files.
+  const scenes = [
+    component("vng_earth_scene", "Earth scene authoring", "Explicit steps that author the Earth scene and reshape its skyway network into saved documents.",
+      "author_scene builds the Earth blueprint scene. author_tunnel_network, redesign_infrastructure and expand_global_infrastructure are deliberate authoring operations on the Earth mesh document; none runs when a scene loads. vng_make_earth is the command-line entry point, and the editor and demos only load its output.",
+      ["examples/scenes/earth_scene.hpp", "examples/scenes/earth_scene.cpp", "examples/scenes/earth_network.cpp", "examples/tools/make_earth.cpp", "tests/examples/earth_assets_tests.cpp"],
+      ["vng_editor_project"], { kind: "App library" }),
+    component("vng_fleet_scene", "Fleet reveal authoring", "Authors the 34-second fleet reveal as an ordinary editor document: instances, blueprints and timeline keys.",
+      "example::fleet::author_scene returns an editor State with the Kestrel, the sun, a sixteen-ship formation and the scene camera. vng_make_fleet_scene saves it to the .vscene path it is given (the bundled file is fleet_reveal.vscene), which vng_fleet_reveal_demo and the editor load; no motion callbacks survive into runtime. The belt scene starts from this one.",
+      ["examples/scenes/fleet_scene.hpp", "examples/scenes/fleet_scene.cpp", "examples/tools/make_fleet_scene.cpp", "tests/examples/fleet_scene_tests.cpp", "docs/fleet_reveal.md"],
+      ["vng_editor_project"], { kind: "App library" }),
+    component("vng_asteroid_scene", "Asteroid belt authoring", "Authors the Shattered Reach shot: 600 tumbling rocks from three generated rock blueprints, and a 40-ship fleet.",
+      "author_scene starts from the fleet scene, then adds the belt and a larger fleet beyond it. asteroid_assets.cpp generates the original rock meshes, which the saved scene embeds as shared blueprints. vng_make_asteroid_scene saves it; the bundled file is asteroid_fleet.vscene. The tunnel voyage and the solar-system shot link this library for the same rock recipes.",
+      ["examples/scenes/asteroid_scene.hpp", "examples/scenes/asteroid_scene.cpp", "examples/support/asteroid_assets.hpp", "examples/tools/make_asteroid_scene.cpp", "tests/examples/asteroid_scene_tests.cpp"],
+      ["vng_fleet_scene"], { kind: "App library" }),
+    component("vng_tunnel_scene", "Tunnel & departure authoring", "Authors the skyway tunnel study and the departure voyage; KeyBatch commits thousands of baked keys in one step.",
+      "tunnel_scene.cpp authors the interior study in kilometre units and shares its shell and collar meshes with the departure cinematic. tunnel_departure.cpp and departure_voyage.cpp follow the courier out of the Earth tunnel and on past the Moon, the belt and the fleet. vng_make_tunnel_scene and vng_make_tunnel_departure save the two scenes (tunnel_interior.vscene and tunnel_departure.vscene).",
+      ["examples/scenes/tunnel_scene.hpp", "examples/scenes/tunnel_departure.hpp", "examples/scenes/departure_voyage.hpp", "examples/scenes/key_batch.hpp", "examples/support/space_assets.hpp", "tests/examples/tunnel_scene_tests.cpp", "docs/tunnel.md"],
+      ["vng_asteroid_scene"], { kind: "App library" }),
+    component("vng_solar_system_scene", "Solar-system establishing shot", "Authors one editable starting frame, Earth, sun, Kestrel, fleet and belt, left for the editor to animate.",
+      "author_scene places Earth beside the camera, the fleet about 210 units out and the belt at 300, and keys only the starting frame. vng_make_solar_system_scene saves it; the bundled file is solar_system.vscene. vng_solar_system_demo links this library for its instance identities as well as the shared scene-demo runner.",
+      ["examples/scenes/solar_system_scene.hpp", "examples/scenes/solar_system_scene.cpp", "examples/tools/make_solar_system_scene.cpp", "examples/solar_system.cpp", "tests/examples/solar_system_scene_tests.cpp"],
+      ["vng_asteroid_scene"], { kind: "App library" }),
+    component("vng_scene_demo_support", "Saved-scene demo runner", "One playback shell for the Earth, fleet, belt, tunnel and solar-system demos: load a .vscene and play it.",
+      "run_scene_demo loads an ordinary saved scene, views it through the scene's own camera and renders its timeline with the editor Runtime in a GLFW window. Each demo passes only a SceneDemo record: name, scene path, title, capture time and evidence subjects. Scene content stays in the .vscene files.",
+      ["examples/scenes/scene_demo.hpp", "examples/scenes/scene_demo.cpp", "examples/scenes/fleet_inspection.hpp", "examples/fleet_reveal.cpp", "examples/tunnel.cpp"],
+      ["vng_editor_runtime", "vng_example_support"], { kind: "App library" }),
+    component("vng_spaceflight_support", "Spaceflight demo support", "Scene settings, ship renderer, star backdrop and diagnostics export for the spaceflight and solar flyby shots.",
+      "spaceflight_scene reads this example's camera, flight path, sun, star and bloom settings from a small scene document; they are example conventions, not an engine schema. ShipRenderer and SpaceBackground are concrete renderers for one shot. vng_spaceflight_demo and vng_solar_flyby_demo both link it.",
+      ["examples/support/spaceflight_scene.hpp", "examples/support/spaceship_renderer.hpp", "examples/support/space_background.hpp", "examples/support/spaceflight_inspection.hpp", "examples/spaceflight.cpp"],
+      ["vng_content", "vng_render_opengl", "vng_example_presentation"], { kind: "App library", external: external("vng_glad_dependency", "PNG::PNG") })
+  ];
+  // Non-test executables without a card. Their direct links, with the cards',
+  // make Used by complete; tests compare both with CMakeLists.txt. PRIVATE links.
+  const programs = [
+    ["vng_review", "vng_review_file", "vng_editor_runtime", "vng_ui_opengl", "vng_example_support", "vng_example_presentation"],
+    ["vng_make_spaceship", "vng_content"], ["vng_make_fleet", "vng_content"], ["vng_document_demo", "vng_content"],
+    ["vng_make_earth", "vng_earth_scene"], ["vng_make_fleet_scene", "vng_fleet_scene"],
+    ["vng_make_asteroid_scene", "vng_asteroid_scene"], ["vng_make_tunnel_scene", "vng_tunnel_scene"],
+    ["vng_make_tunnel_departure", "vng_tunnel_scene"], ["vng_make_solar_system_scene", "vng_solar_system_scene"],
+    ["vng_scene_frames", "vng_editor_runtime", "vng_glfw_opengl"], ["vng_scene_probe", "vng_editor_project"],
+    ["vng_earth_demo", "vng_scene_demo_support"], ["vng_fleet_reveal_demo", "vng_scene_demo_support"],
+    ["vng_asteroid_fleet_demo", "vng_scene_demo_support"], ["vng_tunnel_demo", "vng_scene_demo_support"],
+    ["vng_solar_system_demo", "vng_scene_demo_support", "vng_solar_system_scene"],
+    ["vng_spaceflight_demo", "vng_spaceflight_support", "vng_sun_support", "vng_bloom_opengl", "vng_example_support"],
+    ["vng_solar_flyby_demo", "vng_spaceflight_support", "vng_sun_support", "vng_bloom_opengl", "vng_example_support"],
+    ["vng_sun_demo", "vng_sun_support", "vng_example_presentation", "vng_bloom_opengl", "vng_example_support"],
+    ["vng_rigging_demo", "vng_rig_opengl", "vng_example_support"],
+    ["vng_glow_demo", "vng_resources_opengl", "vng_bloom_opengl", "vng_example_support", "vng_text_opengl"],
+    ["vng_text_demo", "vng_text_opengl", "vng_example_support"],
+    ["vng_ui_demo", "vng_ui_opengl", "vng_example_support", "vng_example_presentation"],
+    ["vng_triangle_demo", "vng_content", "vng_render_opengl", "vng_glfw_opengl", "vng_example_support"],
+    ["vng_advanced_instanced_streams_demo", "vng_shader", "vng_glsl", "vng_opengl", "vng_glfw_opengl", "vng_example_support"],
+    ["vng_file_mesh_demo", "vng_content", "vng_render_opengl", "vng_glfw_opengl", "vng_example_support"],
+    ["vng_file_mesh_direct_demo", "vng_content", "vng_opengl", "vng_glfw_opengl", "vng_example_support"]
+  ].map(([target, ...links]) => ({ target, links }));
 
   window.VNG_GUIDE.splice(1, 0, {
     id: "codebase", title: "Codebase", kind: "Source map",
@@ -173,10 +232,12 @@
         summary: "Open a component to see what it needs and which mapped components use it.",
         description: ["Each card names a real CMake target and links to its API, implementation and relevant tests. Depends on means a direct target_link_libraries entry; Used by is derived from the same entries, so the arrows cannot disagree.", "PUBLIC exposes a linked dependency to consumers; INTERFACE exposes it from a header-only target; PRIVATE records an implementation link. These labels are CMake usage requirements, not promises that static-library consumers need no transitive linker inputs. Build-after is ordering only, not a linked dependency."],
         links: [source("CMakeLists.txt"), source("cmake/Dependencies.cmake")],
+        programs,
         children: [
           { id: "code-neutral", title: "Backend-neutral libraries", kind: "Build map", summary: "Values, contracts and CPU work do not require an OpenGL context.", description: ["Neutral does not mean dependency-free: text uses font libraries, content decodes PNG, and Linux preview transport manages processes. It means these components do not make OpenGL their core data model."], children: neutral },
           { id: "code-backends", title: "Backends & integrations", kind: "Build map", summary: "Concrete implementations depend on contracts; bridges explicitly know both sides.", description: ["GLSL emission, OpenGL execution and GLFW windowing are distinct boundaries. Higher-level rendering integrations choose the pieces they need rather than making the neutral Renderer base depend on every feature."], children: backends },
-          { id: "code-applications", title: "Editor & supporting application targets", kind: "Build map", summary: "The UI process and worker link different pieces of the same engine.", description: ["These targets package application code for reuse and testing. They are not all public engine libraries. The editor application has a build-after requirement for its worker executable but does not link that executable into the UI process."], children: applications }
+          { id: "code-applications", title: "Editor & supporting application targets", kind: "Build map", summary: "The UI process and worker link different pieces of the same engine.", description: ["These targets package application code for reuse and testing. They are not all public engine libraries. The editor application has a build-after requirement for its worker executable but does not link that executable into the UI process."], children: applications },
+          { id: "code-scenes", title: "Scenes & demo support", kind: "Build map", summary: "Offline generators write the cinematic scenes; shared runners play saved scenes and example shots.", description: ["A generator such as vng_fleet_scene returns an ordinary editor State, its vng_make_* tool saves it as a .vscene file, and the editor and demos only load files. Generators build on each other: the belt starts from the fleet, and the tunnel voyage and the solar-system shot reuse the belt."], children: scenes }
         ]
       },
       {

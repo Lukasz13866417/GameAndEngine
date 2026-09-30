@@ -677,6 +677,28 @@ TEST_CASE("vmesh text preserves every finite f32 bit pattern tested",
     }
 }
 
+TEST_CASE("vmesh writes each float as the shortest text that reads back exactly",
+          "[content][vmesh][write]")
+{
+    const std::vector<vng::f32> values{0.1F, 0.0858F, 1.0F, -2.5F, 1.0e-5F, 1.0F / 3.0F};
+    vm::Document document{
+        .metadata = {},
+        .vertex_count = values.size(),
+        .vertex_fields = {float_field("value", 1, values)},
+        .faces = {},
+        .edges = std::nullopt,
+    };
+    const auto text = vm::write_vmesh(document);
+    REQUIRE(text.has_value());
+    for (const auto* expected : {"[0.1];", "[0.0858];", "[1];", "[-2.5];", "[1e-05];", "[0.33333334];"}) {
+        INFO(expected);
+        CHECK(text->find(expected) != std::string::npos);
+    }
+    const auto reparsed = vm::parse_vmesh(*text);
+    REQUIRE(reparsed.has_value());
+    CHECK(*reparsed == document);
+}
+
 TEST_CASE("vmesh preserves absent and explicitly empty edge sections",
           "[content][vmesh][edges]")
 {

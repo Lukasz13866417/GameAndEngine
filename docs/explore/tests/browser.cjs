@@ -36,7 +36,7 @@ const routes = data.window.VNG_TOPIC_ROUTES;
     await visit("index.html");
     assert.equal(await page.locator("details, #tree, .node").count(), 0);
     assert.equal(await page.locator(".overview-grid article").count(), 12);
-    assert.equal(await page.locator("#navigation a").count(), 5);
+    assert.equal(await page.locator("#navigation a").count(), 6);
     assert.match(await page.locator("#navigation a[aria-current='page']").innerText(), /^01\s*Start here$/);
     await page.screenshot({ path: path.join(output, "start-desktop.png"), fullPage: true });
     await page.locator("#navigation a[href='editor.html']").click();
@@ -165,6 +165,8 @@ const routes = data.window.VNG_TOPIC_ROUTES;
     assert.equal(await page.locator("#diagnostics").isVisible(), true);
     await page.screenshot({ path: path.join(output, "demo-desktop.png"), fullPage: true });
 
+    await require("./architecture-browser.cjs")(page, url, output);
+
     for (const width of [375, 768, 1440]) {
       await page.setViewportSize({ width, height: 950 });
       for (const document of pages) {
@@ -205,7 +207,7 @@ const routes = data.window.VNG_TOPIC_ROUTES;
     assert.equal(await plain.locator("#demo-shaders").isVisible(), true);
     await noJs.close();
 
-    console.log("PASS: five pages; plain overview/demo with JS disabled; " + nodes.length +
+    console.log("PASS: six pages, including interactive architecture map; plain overview/demo with JS disabled; " + nodes.length +
       " legacy bookmarks; cross-page history; dependencies/users; keyboard/search; 375/768/1440px; offline/no page errors.");
     console.log("Screenshots: " + output);
   } finally { await browser.close(); }

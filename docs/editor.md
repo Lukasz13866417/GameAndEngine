@@ -246,7 +246,9 @@ metadata and **Logs → Interaction timing** measurements/export.
   **Middle-mouse drag** orbits, **Shift + middle drag** pans, and the **wheel** or
   **Ctrl + middle drag** moves the camera forward/backward by default: eye and
   pivot translate together, preserving zoom. Turn off **Scroll moves camera**
-  in Camera settings for optical zoom instead (1 = the original 43-degree lens).
+  in the camera gizmo's corner menu for optical zoom instead (1 = the original 43-degree lens).
+  The wheel uses the same sensitivity as the matching drag: **Forward / back**'s
+  multiplier when it moves the camera, **Optical zoom**'s when it zooms.
   Hold **Left Alt** for **4×** faster panning and forward/backward movement or
   optical zoom (wheel and Ctrl+middle-drag). Rotation is unaffected; Right Alt
   does not enable the boost.
@@ -264,29 +266,49 @@ metadata and **Logs → Interaction timing** measurements/export.
   keyframes; older settings files automatically use the wider defaults. The camera
   adjusts near/far clipping with orbit distance. These limits do not restrict
   forward travel or optical zoom; the separate **Zoom** field accepts 0.05–1000.
-  **Walk camera** enables keyboard navigation: **W/S** forward/back along the
+  The **Camera modes** menu in the viewport's bottom-right corner is a compact,
+  scrollable parent gizmo. It becomes the visible camera target, and unfolds,
+  when no object gizmo is active; it folds when an object gizmo takes over.
+  Its heading only folds or unfolds it. Pick **Orbit**, **Look**, **Pan**, **Forward / back**, **Optical
+  zoom** or **Walk** to explicitly operate the camera with LMB drag. Look turns
+  in place; Orbit rotates around the current reference point. **Ctrl+Left/Right**
+  cycles camera children when this gizmo is active (either Control key).
+  **Object tools / selection (Esc)** releases LMB back to editing, without
+  clearing the object selection; so does selecting an instance or anything that
+  hides the corner menu (a docked **Camera settings** flyout, **Logs**, a dialog
+  or Play). Escape first ends what claimed it: a focused text field, an open
+  dropdown, flyout or menu. Only an Escape that nothing else claimed leaves the
+  chosen camera mode. Normal navigation shortcuts remain available
+  during object edits without changing the chosen object gizmo.
+  **Walk** enables keyboard navigation: **W/S** forward/back along the
   camera's direction (including pitch), **A/D** sideways relative to the camera,
   **E/Q** world up/down. **Shift** increases speed; **middle-drag** looks around
-  in place. **Stop walking** or **Escape** exits. Typing in a field, opening a
-  dialog, or losing focus releases held movement keys. Speeds are scene units
-  per second, not per frame. Settings has separate forward, sideways, vertical
-  speeds and a Shift multiplier. Walking the private camera never edits the scene,
+  in place. **Object tools / selection** or **Escape** exits. Typing in a field or
+  losing focus releases held movement keys and camera drags without leaving the
+  chosen mode; a dialog hides the corner menu and so also ends it. Speeds are scene units
+  per second, not per frame. Its local options show separate forward, sideways,
+  vertical speeds and a Shift multiplier **only while Walk is selected**.
+  Other camera children show their own sensitivity instead. Sliders change it
+  live and save on release; typed values save on Enter. Walking never edits the scene,
   even inside an entered scene camera; only **Save this camera** authors the view.
   **Settings → Maximum viewing distance** sets the far clipping plane in the
   embedded preview and independent Play, including diagnostics. It does not
   restrict camera travel or change the world bounds. Default: 10,000 units.
   Very large distances can reduce depth-buffer precision.
   Open **Camera settings** in the second toolbar for a flyout below the button,
-  available regardless of the selected sidebar tab. It groups pose, zoom, animation-camera mode, walking, viewing
-  distance, orbit limits and explicitly labeled **Walk** speeds. It also provides
-  independent **Shift + middle drag** pan and **Ctrl + middle drag** speed
-  multipliers (default 1), plus rotation in degrees per logical pixel (default
-  0.3). Ctrl-drag sensitivity also applies when optical zoom is selected.
+  available regardless of the selected sidebar tab. It groups numeric pose,
+  zoom, viewing distance and orbit limits. Navigation modes and speeds belong
+  to the camera gizmo instead: independent pan, forward and optical-zoom
+  multipliers (default 1), and rotation in degrees per logical pixel (default
+  0.3, shared by Orbit and Look). Settings saved by older editors keep their
+  Ctrl + middle drag optical-zoom speed: the new optical-zoom multiplier starts
+  from their single Ctrl-drag multiplier. The wheel now follows the same
+  multiplier, so a non-default value also changes the wheel step.
   Pose controls remain live.
   Camera settings stay open while navigating the viewport; use **Close camera settings**
   (or Escape) to dismiss them. Navigation preferences have sliders plus typed fields;
   sliders cover everyday speeds, while fields accept larger supported values.
-  **Save camera preferences** persists navigation preferences without changing
+  **Save camera preferences** persists the viewing-distance and orbit-limit preferences without changing
   the scene. Close with the same toolbar button, **Close camera settings**,
   or Escape. The flyout scrolls on smaller windows.
   **Play (in editor) / Pause (in editor)** controls preview animation;
@@ -1153,8 +1175,11 @@ not zero-copy GPU sharing. A later GPU-sharing transport can replace that bounda
 IPC uses bounded, nonblocking Unix messages (64 MiB logical message, fragmented;
 64 MiB outgoing queue). Schema/event codecs are deterministic and versioned.
 The project reserves envelope space within that scene limit. Individual meshes
-accept at most 131,072 vertices, 32 MiB source text and 32 MiB decoded data;
-the bundled spaceship fits these limits. Imported-asset vertex patches carry
+accept at most 196,608 vertices, 32 MiB source text and 32 MiB decoded data;
+the bundled spaceship fits these limits. Save, Save As and every scene snapshot
+check a scene against the limits it is read with: a mesh needing more than
+32 MiB of text, or a scene decoding to more than 64 MiB, is refused with an
+error rather than written as a file the editor could not open. Imported-asset vertex patches carry
 their blueprint identity, so updates and rollback address the correct GPU buffer.
 Scene revisions reject stale edits; worker generations reject events
 from obsolete code. Rendering and callbacks happen between frames. Dirty edits

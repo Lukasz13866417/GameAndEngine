@@ -4,11 +4,11 @@ namespace editor_example {
 using namespace vng;
 
 ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputContext& context) {
-    auto& tools=interaction();
+    auto& tools=interaction_child();
     tools.begin_step();
-    auto& blueprint=blueprint_panel();
-    auto& gizmos=gizmo_selector();
-    auto& pivot=rotation_pivot();
+    auto& blueprint=blueprint_panel_child();
+    auto& gizmos=gizmo_selector_child();
+    auto& pivot=rotation_pivot_child();
     const auto& state=editing_.state();
     auto& view=editing_.viewport();
     const auto& presented=context.presented;
@@ -48,8 +48,8 @@ ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputCont
     // Navigation is a sibling input consumer, not a replacement for an active
     // edit transaction. The manipulation remains captured while the view moves.
     reply.previous_camera=preview_camera_pose(state,view.time);
-    reply.navigation_was_dragging=tools.camera_navigation().pointer().dragging();
-    const auto& walk=tools.camera_navigation().walking();
+    reply.navigation_was_dragging=tools.camera_gizmo().dragging();
+    const auto& walk=tools.camera_gizmo().walking();
     const auto mesh_origin=walk.active()?std::nullopt:mesh_camera_origin();
     const auto* instance=find_instance(state,view.selected_object);
     const bool free_object=view.mode==ViewMode::scene&&editing_.can_edit_scene_pose()&&!eligibility.components&&
@@ -61,16 +61,19 @@ ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputCont
         .raw=input.raw,.unhandled=input.unhandled,.seconds=input.seconds,
         .drag_speeds=context.navigation.drag_speeds,.walk_speeds=context.navigation.walk_speeds,
         .move_forward=context.navigation.move_forward,.orbit_enabled=!(free_object||free_mesh||tools.regions.free_rotation_selected()),
-        .keyboard_enabled=input.keyboard_enabled,.controls_have_focus=context.navigation.controls_have_focus,
+        .keyboard_enabled=input.keyboard_enabled,.escape_claimed=context.navigation.escape_claimed,
         .origin=mesh_origin,.mesh=mesh_origin?editable_mesh(state):nullptr,
         .mesh_to_world=mesh_origin?editor_example::mesh_transform(state):Mat4::identity()},
         .enabled=eligibility.enabled&&context.navigation.enabled&&!context.navigation.numeric_active});
     view.smooth_zoom=reply.navigation.smooth_zoom;
     if(reply.navigation.changed)view.editor_camera=reply.navigation.pose;
     if(editing_.active(EditGesture::camera)&&
-        (reply.navigation.cancelled||(!tools.camera_navigation().pointer().dragging()&&!walk.moving()&&!context.navigation.numeric_active)))
+        (reply.navigation.cancelled||(!tools.camera_gizmo().dragging()&&!walk.moving()&&!context.navigation.numeric_active)))
         finish_pose(ViewportTool::navigation,reply.navigation.cancelled,"Camera");
-    tools.gizmo_input.route(tools.transforming(),reply.navigation_was_dragging||tools.camera_navigation().pointer().handledPointer(),
+    // Explicitly selecting a camera child borrows the viewport, not the scene
+    // selection. Keep object captures and pickers from competing with its LMB.
+    if(tools.object_tools_suspended())return reply;
+    tools.gizmo_input.route(tools.transforming(),reply.navigation_was_dragging||tools.camera_gizmo().handledPointer(),
         input.tool_menu,input.raw.pointer,input.raw.events,input.unhandled,static_cast<float>(input.frame_seconds),
         eligibility.enabled&&input.raw.focused&&!walk.active()&&input.keyboard_enabled&&
         (tools.transforming()||viewport.contains(input.raw.pointer)),
@@ -265,6 +268,11 @@ ViewportInputReply EditingWorkspaceUI::interact_viewport(const ViewportInputCont
         if(!changed)error(changed.error());else reply.geometry_changed|=*changed;
     }
     reply.gizmo_changed=gizmos.value()!=previous_gizmo;
+    if(reply.geometry_changed)refresh_vertex();
+    if(reply.bounds_changed)sync_bounds();
+    if(reply.scale)reset_inspector_scale(reply.scale->value);
+    if(reply.pose_finished)refresh_after_pose();
+    if(reply.overlay_changed)invalidate_gizmos();
     return reply;
 }
 
@@ -273,7 +281,7 @@ void EditingWorkspaceUI::refresh_viewport_gizmos(const ViewportInputContext& con
     const auto& presented=context.presented;
     const auto snapshot=presented.camera.snapshot(presented.extent);
     if(!snapshot)return;
-    auto& tools=interaction();auto& gizmos=gizmo_selector();auto& pivot=rotation_pivot();
+    auto& tools=interaction_child();auto& gizmos=gizmo_selector_child();auto& pivot=rotation_pivot_child();
     const auto* instance=find_instance(state,view.selected_object);
     const bool enabled=context.tools.enabled&&!context.tools.components&&editing_.can_edit_scene_pose()&&
         presented.time_current&&view.mode==ViewMode::scene&&!context.tools.diagnostic;

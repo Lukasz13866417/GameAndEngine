@@ -5,7 +5,7 @@
 namespace editor_example {
 // Multipliers of the distance-aware drag response; rotation is degrees/pixel.
 struct CameraDragSpeeds {
-    float pan{1}, forward{1}, rotation{.3F};
+    float pan{1}, forward{1}, rotation{.3F}, zoom{1};
     friend bool operator==(const CameraDragSpeeds&, const CameraDragSpeeds&) = default;
 };
 struct WalkSpeeds {

@@ -23,7 +23,7 @@ Names distinguish control-only behavior from components responsible for UI:
 
 | Role | Naming | Examples |
 | --- | --- | --- |
-| Control/input/delivery behavior without UI ownership | `Logic` suffix | `CameraNavigationLogic`, `CameraPointerLogic`, `CameraWalkLogic`, `SelectionInputLogic`, `PreviewLogic`, `PreviewDeliveryLogic` |
+| Control/input/delivery behavior without UI ownership | `Logic` suffix | `CameraPointerLogic`, `CameraWalkLogic`, `SelectionInputLogic`, `PreviewLogic`, `PreviewDeliveryLogic` |
 | An owning UI branch whose role would otherwise be ambiguous | `UI` suffix | `EditingWorkspaceUI`, `EditingViewportUI`, `MeshEditingUI`, `MeshToolsUI`, `TimelineEditingUI`, `ViewportToolsUI` |
 | Visible interaction or controls | A specific UI noun | `SceneMoveGizmo`, `InstanceTransformGizmo`, `InstanceRotationGizmo`, `MeshTransformGizmo`, `MeshOperationControls`, `GizmoControls` |
 
@@ -46,6 +46,8 @@ Application run() [host controller]
 ├── EditingWorkspaceUI [UI owner + coordination]
 │   ├── EditingSession [domain]    document, drafts, transactions, history, files
 │   ├── WorkspaceSelection [state] shared scene-instance selection authority
+│   ├── WorkspacePanels [UI]       sidebar widgets, splitters, tabs, inspector
+│   ├── WorldBoundsPanel [UI]      toolbar toggle and numeric boundary controls
 │   ├── EditingViewportUI
 │   │   │                         [UI owner: viewport authoring branch]
 │   │   ├── MeshEditingUI [UI owner + local edit coordination]
@@ -53,11 +55,17 @@ Application run() [host controller]
 │   │   │   │   └── MeshMenu [UI]  vertices / edges / faces / inactive
 │   │   │   └── MeshOperationControls [UI + local operation-options state]
 │   │   ├── MeshNavigationControls [UI] centered-camera / bake controls
+│   │   ├── ViewportCameraUI [UI]   camera menu, camera actions and private visit
+│   │   │   ├── CameraPreferences [UI] editable settings draft
+│   │   │   └── CameraPanel [UI]   Enter / Inspect / Back / Save / Set active
 │   │   ├── ToolPanel [UI]         retained active-tool options
 │   │   ├── GizmoSelector / RotationPivotControls [UI + local tool choices]
 │   │   ├── BlueprintMeshPanel [controller + UI + owned CPU job]
-│   │   └── ViewportToolsUI [UI tools + input arbitration]
-│   │       ├── CameraNavigationLogic [logic: CameraPointerLogic + CameraWalkLogic]
+│   │   └── ViewportToolsUI [UI tools + input arbitration, incl. camera vs object tools]
+│   │       ├── CameraGizmo [UI + camera-child input arbitration]
+│   │       │   ├── CameraPointerGizmo × 5 [Orbit / Look / Pan / Forward / Zoom]
+│   │       │   │   └── CameraPointerLogic [gesture math + capture]
+│   │       │   └── CameraWalkGizmo [Walk controls + CameraWalkLogic]
 │   │       ├── GizmoControls [UI + sensitivity / held-key state]
 │   │       ├── SelectionInputLogic [logic: deferred clicks]
 │   │       ├── SceneMoveGizmo [interaction + gizmo graphics]
@@ -83,15 +91,61 @@ local interaction; domain means authoring rules/data; platform means windows,
 workers or rendering realization. A gizmo naturally combines behavior and
 graphics and need not be split into artificial controller/view classes.
 
-`EditingWorkspaceUI` constructs its session before the UI children. `initialize`
-attaches the panel hosts, `attach_viewport_tools` constructs the viewport's
-interaction and blueprint tools, and `attach_manipulation` supplies the gizmo
-selector/pivot hosts. Child tools receive `const EditingSession&`
+`EditingWorkspaceUI` constructs its session before the UI children.
+`create_panels` constructs the sidebar; `initialize_panels` wires its children
+and toolbar slots once those slots exist. `initialize_camera` creates the
+viewport-owned menu and camera overlay in their respective screens. The
+lower-level attachment methods also allow isolated component tests.
+Child tools receive `const EditingSession&`
 for explicit observation; they do not receive a mutable session or a generic
 mutation callback. Workspace operations and parent-side proposal executors are
 the authoring boundary. The host schedules ordered input steps and supplies
 window/preview facts; the workspace coordinates navigation, tools and picking.
 This is not a hidden node registry.
+
+### What the application calls
+
+The host supplies window/preview facts, not per-widget instructions:
+
+```cpp
+workspace.layout_panels(layout, screen_size);
+// Once per frame, from frame-start facts: a gesture that begins during this
+// input frame changes panel availability from the next frame.
+workspace.present_panels({modal, pending_play, playing, inspector_ready, gesture});
+workspace.present_pose_controls(frame); // later in the frame, after selection/schema changes
+
+// These calls also coordinate the dependent panels and tools.
+workspace.select_scene_instance(id, SelectionMode::replace);
+auto result = workspace.shortcut(EditShortcut::paste);
+auto cancelled = workspace.cancel_interaction();
+
+// Read-only observations for rendering and automation, not mutation handles.
+const auto& tools = workspace.interaction();
+```
+
+The workspace owns selection consequences: labels, timeline focus, keyboard
+action target, stale-inspector invalidation and gizmo refresh. It also owns
+copy/paste/delete/undo consequences and gesture completion/rollback. Its replies
+flag a finished gesture (`pose_finished`); the host then shows the worker's latest
+schema, since schemas that arrive during a capture are deliberately not shown. Camera
+visits, menu drafts and restoring the pre-visit view live below the viewport.
+Saving preferences to disk and forwarding accepted worker schemas remain
+application responsibilities.
+
+Implementation is split by responsibility, not by fragments of the host loop:
+
+- `workspace_panels.*`: widget construction, layout, tabs and reversible splitter drafts.
+- `viewport_camera_ui.*`: camera widgets, preference drafts and local visit state.
+- `workspace_ui_panels.cpp`: panel eligibility, selection presentation and inspector polling.
+- `workspace_ui_camera.cpp`: camera visits and authoring camera-panel actions.
+- `workspace_ui_tools.cpp`: tool lifecycle, options and overlay composition.
+- `workspace_ui_commands.cpp`: selection/view commands, clipboard, deletion and history consequences.
+- `workspace_ui_viewport.cpp` / `workspace_ui_picking.cpp`: ordered input arbitration and picking.
+
+`app.cpp` still schedules windows, UI input frames, preview delivery, file
+dialogs and GPU presentation. It can inspect live children through **const**
+accessors, but cannot cancel a child tool, change its gizmo selection or modify
+its widgets directly. There is no parallel mutable ownership tree.
 
 SceneLists owns both docked lists and flyouts. `WorkspaceSelection` is the shared
 scene-instance selection authority, not a second selection inside each list.
@@ -162,16 +216,39 @@ Only `MeshToolsUI` can call `menu.handle(...)`. It does not construct a menu var
 just to unpack it again. Other internal children likewise friend their immediate
 owner: EditingViewportUI friends EditingWorkspaceUI; MeshEditingUI, camera controls
 and tool options friend EditingViewportUI; lists and timeline friend
-EditingWorkspaceUI; CameraNavigationLogic friends ViewportToolsUI. They neither
+EditingWorkspaceUI. They neither
 include their parents nor retain parent pointers. Their private handlers cannot
 be reached via the generic dispatcher either.
 
 Already-resolved situations flow downward by ordinary overload resolution;
 descendants do not repeat the root's mode switch. Parents branch only on facts
 they own or receive, including narrow read-only observations such as whether
-walk navigation is armed. The navigation owner chooses Walking, Orbiting or
-Unavailable; the workspace chooses timeline availability; the viewport chooses
+walk navigation is armed. The workspace chooses timeline availability; the viewport chooses
 new tool options versus updating the current options.
+
+Gizmos do not need that internal-UI handler boilerplate. `CameraGizmo` exposes
+`present`, `poll` and `update`. Its parent, `ViewportToolsUI`, supplies the
+target pose, input and eligibility (`Navigate`) and the presentation, to which it
+adds whether one of its own object gizmos is shown. The gizmo returns a proposed
+pose and preference edits. `EditingWorkspaceUI` never holds the gizmo: it passes
+facts it owns (target label, camera-action overlay, settings) through that
+parent's narrow API — `present_camera`, `poll_camera`, `select_camera`,
+`resume_object_tools`, `object_tools_suspended` and a const `camera_gizmo()`
+observation. It owns five
+`CameraPointerGizmo` children and one `CameraWalkGizmo`. Children own their
+capture/motion helpers and mode-local widgets; they do not find or message other
+components. The gizmo routes a captured occurrence to its owner, or chooses a
+child from the active mode/shortcut. Menu input never reaches navigation.
+
+The camera gizmo is the fallback when no object gizmo is visible. Explicit mode
+selection borrows LMB from object tools; `ViewportToolsUI` then suspends them in
+`accepts()`, and the workspace skips object input, picking and overlays. It lasts
+until an Escape nothing else claimed, **Object tools**, an explicit selection, or
+anything hiding the menu. The host decides whether a text field, popup or flyout
+claimed this frame's Escape (`escape_claimed`). Ordinary camera shortcuts
+can temporarily borrow input during object transforms. Editor and entered scene
+cameras share the same `NavigationFrame` pose contract. Camera visits, explicit
+Save and document authority remain at their existing parent boundary.
 
 Use `dispatch` where a runtime alternative actually needs unpacking, as at the
 workspace entry. Its concrete overload also remains available at the existing
@@ -270,9 +347,10 @@ document snapshots.
   does the child reveal/focus the row. It never stores obsolete widget geometry.
 - Viewport presentation does not refresh list catalogs or timeline rows.
   Catalog synchronization and selection-only changes are explicit separate work.
-- CameraNavigationLogic returns a proposed pose. It does not author a simulation
-  camera or increment document revisions. Blocking input releases held keys;
-  popout focus transfer preserves armed walk mode but not held keys.
+- CameraGizmo returns a proposed pose. It does not author a simulation
+  camera or increment document revisions. Blocking input, focus loss and any
+  Escape release held keys and drags. Of these, only an unclaimed Escape also
+  ends an explicitly chosen mode.
 - PreviewLogic keeps reliable document/visibility packets separate from
   replaceable viewport requests. It never waits for a frame or ACK. Failed
   sends preserve/reset the appropriate delivery state for retry.
@@ -340,11 +418,51 @@ cannot accidentally be overwritten by an earlier native-edit acknowledgement.
 
 ## Gizmos and typed movement bindings
 
-A gizmo is an editor interaction component bound to an editable target. Its
-presentation may be arrows, rings, markers, an anchored UI menu, or a composition
-of these. A blueprint defines the editing behavior; an editing owner owns the
-live interaction and applies its proposals. A marker is not a scene instance.
-Custom gizmos are not required to implement movement merely to be hosted.
+### Definition and ownership
+
+A **gizmo is a target-specific editing interaction, including its presentation
+and controls**. It is not just an arrow or ring. It may draw handles, vertex
+markers, an anchored UI menu, a corner panel, or a composition of these. The
+intent is that scene content and editor-only targets can expose appropriate
+editing interactions through this same idea.
+
+A blueprint defines how its content can be edited, including custom behavior
+for its instances and subparts. This is not restricted to an editor-defined
+list of position/rotation/scale capabilities. Earth cloud formations, tunnel
+endpoints and tunnel sockets can have their own interactions and menus. A
+subpart or vertex marker does not need to become a separate blueprint instance
+just to be editable. Editor-only targets such as the editor camera and world
+bounds likewise do not need fake persisted scene instances.
+
+The editing owner binds the live interaction to the appropriate target or
+compatible selection and applies its edit proposals. Selecting several objects
+does not require running several competing gizmos: one interaction can operate
+on their selection. Blueprint-defined editing behavior and ownership of the
+live editor interaction are distinct responsibilities.
+
+**A gizmo can own other gizmos.** `CameraGizmo` is a concrete example: it owns
+Orbit, Look, Pan, Forward/back, Optical zoom and Walk children, plus a small
+mode-selection menu. Each child owns its local controls; walk-speed controls
+appear while walking. The same navigation interface operates on the editor
+camera or an entered scene camera. The camera gizmo is the fallback when no
+object gizmo is visible, and familiar camera shortcuts can temporarily borrow
+input while another gizmo remains displayed. This composition does not require
+a universal gizmo base class or a generic gizmo registry.
+
+The parent chooses which gizmo is active and supplies its target, context and
+input. Ordinary gizmo authors implement the active interaction through normal
+methods, not mandatory `Active`/`Inactive` situations, visitors or dispatcher
+friends. When switching targets or tools, the parent cancels any unfinished
+gesture. Local idle/dragging state still belongs to the gizmo. A child exposes
+results for its parent to inspect; it does not reach into siblings to mutate
+the document or other UI.
+
+### Reuse through a local binding
+
+The editor can supply drawing/input helpers or whole reusable gizmos. A typed
+binding between a particular gizmo and target defines what a property such as
+"position" means for that pairing. Custom menu-only or surface-editing gizmos
+are not required to invent a position property merely to be hosted.
 
 The reusable axis gizmo is `MoveGizmo<Movement>`, in
 `examples/editor/move_gizmo.hpp`. It is a plain `template<class Movement>`;

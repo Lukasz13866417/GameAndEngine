@@ -1,6 +1,6 @@
 #pragma once
 
-#include "camera_navigation_logic.hpp"
+#include "camera_gizmo.hpp"
 #include "mesh_editing_ui.hpp"
 #include "workspace_selection.hpp"
 
@@ -26,7 +26,8 @@ struct ViewportInputContext {
     struct Navigation {
         CameraDragSpeeds drag_speeds;
         WalkSpeeds walk_speeds;
-        bool move_forward{}, enabled{true}, controls_have_focus{}, numeric_active{};
+        // escape_claimed: a text edit, popup or open flyout had this frame's Escape.
+        bool move_forward{}, enabled{true}, escape_claimed{}, numeric_active{};
     } navigation{};
     struct Tools {
         bool enabled{}, ready{}, components{}, diagnostic{}, worker_busy{}, toolbar_blocked{};

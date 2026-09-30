@@ -156,7 +156,6 @@ class Builder {
         const auto size=settings.structure_size*part.size*scale*tunnel_width_coefficient(part.tunnel_class);
         const auto range=tunnel_body_range(part,*curve);
         const auto begin=range.x,end=range.y;
-        const auto sample_at=[&](f32 t){return curve->sample(begin+t*(end-begin));};
         // Orbital sampling of the same shell; close-up routes supply denser
         // samples without changing its profile, materials or construction.
         const unsigned segments=part.bezier_controls?part.curve_segments:24;
@@ -166,10 +165,8 @@ class Builder {
             path[i]={curve->sample(t),curve->size(t)};
         }
         append(detail::tunnel_shell(path,settings.light_strength),2);
-        for(unsigned i=0;i<=6;++i) {
-            const auto t=begin+f32(i)/6*(end-begin);
-            append(detail::tunnel_collar(sample_at(f32(i)/6),curve->size(t)),2);
-        }
+        for(const auto k:detail::collar_sections(segments))
+            append(detail::tunnel_collar(path[k].frame,path[k].size),2);
         if(part.scaffold) {
             auto parameters=tunnel_support_positions(part,*curve);
             if(!parameters)return std::unexpected(parameters.error());

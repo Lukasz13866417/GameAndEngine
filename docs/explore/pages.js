@@ -10,7 +10,8 @@
     { id: "codebase", file: "codebase.html", title: "Codebase", roots: ["codebase", "engine"], staticIds: [] },
     { id: "walkthrough", file: "walkthrough.html", title: "Code walkthrough", roots: ["code-walkthrough"], staticIds: [] },
     { id: "demo", file: "demo.html", title: "Demo walkthrough", roots: [],
-      staticIds: ["follow-the-data", "draw-a-frame", "demo-load", "demo-resources", "demo-shaders", "demo-submit", "diagnostics", "demo-try"] }
+      staticIds: ["follow-the-data", "draw-a-frame", "demo-load", "demo-resources", "demo-shaders", "demo-submit", "diagnostics", "demo-try"] },
+    { id: "architecture", file: "architecture.html", title: "Architecture map", roots: [], staticIds: [] }
   ];
   const routes = new Map();
   for (const page of pages) {

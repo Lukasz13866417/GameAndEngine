@@ -13,6 +13,75 @@ more detail:
 3. [Codebase](codebase.html): components, responsibilities, ownership and dependencies.
 4. [Code walkthrough](walkthrough.html): real C++ classes, their APIs and lifetimes, along a draw/edit path.
 5. [Demo walkthrough](demo.html): the actual file-backed cube demo, from load to diagnostics.
+6. [Architecture map](architecture.html): a full-window, pan-and-zoom tree of the actual components.
+
+## Architecture map
+
+Open [`architecture.html`](architecture.html) for the spatial viewer, rather than
+the guide's expandable article cards. It works directly from disk, offline.
+
+- Switch between **Editor**, **Preview worker**, and **Engine modules**.
+- Click a node for its purpose, concrete type, ownership boundaries and source links.
+  Use its **+/−** button to expand or collapse a branch. **Focus branch** isolates a
+  subtree; **Whole map** returns without losing the other expanded branches.
+- Drag the background to pan; scroll/pinch or use **+/−** to zoom. **Fit** (`F`)
+  frames the visible tree; **Overview** restores the starting view. **Expand all**
+  exposes the whole tree. The desktop minimap shows the visible area.
+- Search (`/`) spans all three maps, including collapsed nodes and source paths.
+  Arrow down/Enter chooses a result. Tree arrow keys navigate/expand/collapse;
+  Home/End jump to the first/last visible node. Details can be hidden for more space.
+- The selected component has a bookmark, e.g. `architecture.html#editor/navigation`.
+  Clicks, search results and links add a history entry, so reload and browser
+  Back/Forward restore the selection and reveal its ancestors. Arrow-key steps and
+  expand/collapse update the bookmark in place instead of adding entries.
+- Solid edges mean ownership; dashed edges mean an explicitly labelled grouping.
+  The module view groups every library in `CMakeLists.txt` and the editor's two
+  executables. **Direct dependencies** and **Used by** list CMake links separately;
+  the map does not claim that they form a tree. Used by names every non-test target
+  that links the module; executables without a card appear as text.
+- On short screens, such as a phone in landscape or a laptop at 200% zoom, the
+  chrome is compact and the inspector sits beside the canvas.
+
+This is a curated source-backed map, **not live component diagnostics** or an
+exhaustive member listing. Role tags distinguish UI, logic, authored/derived data,
+GPU resources, platform integrations and conceptual groups. Widget storage, UI
+drawing and the toolbar/dialog group sit directly under **Editor application**;
+there is no invented ApplicationShell ownership layer.
+Source files open in a separate tab; how C++ is displayed depends on the browser.
+
+`architecture-data.js` owns the runtime map. Its `declarations` table gives every
+editor and worker node a *witness*, the head of its class (or host function)
+definition in its first source, and the *member* its owner declares; a dashed group
+lists the members it groups. When a member moves to another owner, edit that entry
+and the node's place in the tree. The module view reuses the CMake catalog in
+`codebase.js`, including `programs`, the non-test executables without a card.
+`architecture-model.js` is pure tree/navigation/layout logic;
+`architecture.js` owns only the viewer's UI state and events. Pan/zoom updates a
+single transform, not the tree. `architecture.css` is independent of guide layout.
+
+`node --test docs/explore/tests/*.test.cjs` runs `architecture.test.cjs`, which checks:
+
+- that every source exists, and that each class node's witness defines a class
+  or struct named by its symbol;
+- every editor and worker parent link: the member must be declared at the top
+  level of the owner's class or function body. Comments, literals and method
+  locals do not count;
+- that every library in `CMakeLists.txt` is on the module map, and every other
+  non-test executable is a card or a listed program with its exact links. Used by
+  must equal the non-test targets that link each module (`content.test.cjs` checks
+  Direct dependencies), and module source links under `include/vng` and `src` must
+  belong to that module's target in `tests/layering/layering.test.cjs`;
+- deterministic, non-overlapping layouts, fit and zoom, search, bookmark reveal,
+  and offline assets without fetch, `innerHTML` or `eval`.
+
+The optional browser test below drives the map from `file://` in headless Chromium,
+with expected paths and counts taken from the data: search, bookmarks and
+Back/Forward; keyboard navigation and its history replacement; focus after
+inspector links, breadcrumbs and **Whole map**; pan and zoom, with only button/key
+zoom announced; Used by rows; edge contrast; widths of 375, 768 and 1440 px; and
+683×384, 640×360, 568×320 and 844×390, where the canvas and inspector must not
+overlap or scroll and every map control, the inspector title and the selected card
+must be on screen.
 
 The Editor and Codebase trees are **learning maps**. Component cards name real CMake
 targets and expose expandable **Depends on** and **Used by** lists; the separate
@@ -124,17 +193,19 @@ passing CMake checks does not prove ownership or include-layer correctness.
 Run the dependency-free content checks with Node.js 18 or newer:
 
 ```sh
-node --test docs/explore/tests/content.test.cjs
+node --test docs/explore/tests/*.test.cjs
 node --check docs/explore/codebase.js
 node --check docs/explore/codebase-details.js
 node --check docs/explore/walkthrough.js
 node --check docs/explore/pages.js
 node --check docs/explore/app.js
+node --check docs/explore/architecture.js
 ```
 
 These check IDs, links, cross-references, required content, offline assets,
 direct CMake dependencies, page routes, non-tree overview structure,
-source-matched walkthrough snippets and selected boundary regressions.
+source-matched walkthrough snippets, selected boundary regressions and the
+architecture map (see above).
 They are documentation-only checks and do not add a Node requirement to CMake.
 For browser smoke testing, check expansion by keyboard, search/clear/no results,
 deep links and Back/Forward, collapse/reset, and narrow-screen overflow.
@@ -148,6 +219,6 @@ node docs/explore/tests/browser.cjs /absolute/path/to/playwright
 ```
 
 It opens every old topic bookmark and checks canonical redirects, cross-page
-links/history, overview/demo with JavaScript disabled, and interactions at
-desktop/tablet/mobile widths. It rejects page errors and external requests and saves screenshots to a
+links/history, overview/demo with JavaScript disabled, interactions at
+desktop/tablet/mobile widths, and the architecture map as described above. It rejects page errors and external requests and saves screenshots to a
 new temporary directory. It never opens a personal browser profile.

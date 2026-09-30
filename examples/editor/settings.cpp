@@ -21,7 +21,7 @@ auto invalid(std::string message) {
 }
 }
 vng::content::Result<void> validate_settings(const Settings& value) {
-    for (auto speed : {value.camera_drag.pan, value.camera_drag.forward, value.camera_drag.rotation})
+    for (auto speed : {value.camera_drag.pan, value.camera_drag.forward, value.camera_drag.rotation, value.camera_drag.zoom})
         if (!std::isfinite(speed) || speed < .001F || speed > 100.F)
             return invalid("Camera drag speeds must be 0.001..100.");
     if (value.ui_scale_percent < 75 || value.ui_scale_percent > 150)
@@ -55,7 +55,7 @@ std::string encode_settings(const Settings& s) {
     std::ostringstream out;
     out.imbue(std::locale::classic());
     out << std::setprecision(std::numeric_limits<float>::max_digits10)
-        << "vng-editor-settings 8\n" << s.ui_fps << ' ' << s.preview_fps << ' '
+        << "vng-editor-settings 9\n" << s.ui_fps << ' ' << s.preview_fps << ' '
         << s.play_fps << ' ' << s.debug_fps << ' ' << s.preview_percent << '\n'
         << s.orbit_distance.minimum << ' ' << s.orbit_distance.maximum << '\n'
         << s.timeline_track_limit << '\n' << s.instance_limit << '\n'
@@ -63,7 +63,7 @@ std::string encode_settings(const Settings& s) {
         << s.maximum_viewing_distance << ' ' << s.walk.forward << ' ' << s.walk.sideways << ' '
         << s.walk.vertical << ' ' << s.walk.fast_multiplier << '\n' << s.ui_scale_percent << '\n'
         << s.camera_drag.pan << ' ' << s.camera_drag.forward << ' ' << s.camera_drag.rotation << ' '
-        << (s.scroll_moves_camera ? 1 : 0) << '\n';
+        << (s.scroll_moves_camera ? 1 : 0) << '\n' << s.camera_drag.zoom << '\n';
     return out.str();
 }
 vng::content::Result<Settings> decode_settings(std::string_view text) {
@@ -72,7 +72,8 @@ vng::content::Result<Settings> decode_settings(std::string_view text) {
     const bool version3 = text.starts_with("vng-editor-settings 3\n");
     const bool version4 = text.starts_with("vng-editor-settings 4\n");
     const bool version6 = text.starts_with("vng-editor-settings 6\n");
-    const bool version8 = text.starts_with("vng-editor-settings 8\n");
+    const bool version9 = text.starts_with("vng-editor-settings 9\n");
+    const bool version8 = version9 || text.starts_with("vng-editor-settings 8\n");
     const bool version7 = version8 || text.starts_with("vng-editor-settings 7\n");
     const bool version5 = text.starts_with("vng-editor-settings 5\n");
     if (text.size() > 256 || (!version7 && !version6 && !version5 && !version4 && !version3 && !version2 && !text.starts_with(header)))
@@ -165,6 +166,10 @@ vng::content::Result<Settings> decode_settings(std::string_view text) {
         if (!read(result.camera_drag.pan) || !read(result.camera_drag.forward) || !read(result.camera_drag.rotation) || !read(moves) || moves > 1)
             return invalid("Invalid camera navigation preferences");
         result.scroll_moves_camera = moves != 0;
+        // Version 8 had one multiplier for Ctrl+middle drag, including optical
+        // zoom. Its own optical-zoom speed starts from that value.
+        if (!version9) result.camera_drag.zoom = result.camera_drag.forward;
+        else if (!read(result.camera_drag.zoom)) return invalid("Invalid optical zoom speed");
     }
     if (text.find_first_not_of(" \r\n") != std::string_view::npos)
         return invalid("Unexpected data after editor settings");

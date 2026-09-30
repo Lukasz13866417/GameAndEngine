@@ -3,6 +3,22 @@
 #include "region_editor.hpp"
 
 namespace editor_example {
+
+MeshEditingReply EditingWorkspaceUI::poll_blueprint_controls(bool enabled) {
+    auto& panel=blueprint_panel_child();
+    const auto before=panel.selected_part();
+    (void)panel.poll(enabled);
+    const auto result=apply_pending(panel);
+    MeshEditingReply reply;
+    if(!result)reply.message=result.error().message;
+    else if(*result){reply.authored=true;refresh_vertex();}
+    if((panel.selected_part()!=before&&panel.selected_part())||panel.placing())
+        merge(reply,dispatch(*this,workspace_situation(viewport()),WorkspaceContext{.mesh=MeshInput{.mode=MeshSelectMode::surface}}).mesh);
+    if(!panel.status().empty()&&panel.status()!=last_blueprint_status_) {
+        last_blueprint_status_=panel.status();reply.message=last_blueprint_status_;
+    }
+    return reply;
+}
 vng::content::Result<bool> EditingWorkspaceUI::apply_pending(BlueprintMeshPanel& panel) {
     bool changed{};
     std::optional<vng::content::Diagnostic> error;

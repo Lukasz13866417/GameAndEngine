@@ -47,7 +47,7 @@ vm::Document shell(bool exit_frame) {
         const bool detailed=exit_frame?s>route_length-156:s<120;
         s=std::min(route_length,s+(detailed?1.5F:24.F));
     }
-    return document(earth::detail::tunnel_shell(path,1),"SKYWAY / local / 6 km hexagonal bore / 1000 km route");
+    return document(earth::detail::tunnel_shell(path,1),"SKYWAY / local / 6 km octagonal bore / 1000 km route");
 }
 vm::Document rib() {
     return document(earth::detail::tunnel_collar({{0,0,0},{0,0,1},{1,0,0},{0,1,0}},tunnel_size),

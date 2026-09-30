@@ -33,7 +33,7 @@ struct PickingFixture {
     ViewportSelectionReply send(std::initializer_list<input::Event> events,bool available=true,bool components=false,bool defer=false) {
         raw.events=events;
         sequence.identify(raw.events);
-        workspace.interaction().begin_step();
+        workspace.begin_viewport_frame();
         const ViewportInputContext context{
             .input={.raw=raw,.unhandled=available?std::span<const input::Event>{raw.events}:std::span<const input::Event>{}},
             .presented={.camera=camera,.extent={800,600},.bounds=bounds,.generation=1,
@@ -68,8 +68,12 @@ TEST_CASE("Workspace selection owns gizmo capabilities without resetting unchang
     CHECK_FALSE(f.workspace.gizmo_selector().common().empty());
     const auto snapshot=f.camera.snapshot({800,600});REQUIRE(snapshot);
     auto& movement=f.workspace.interaction().translation;
-    (void)dispatch(movement,SceneMoveGizmo::Instance{{3,{-2,0,0}}},MoveGizmoContext{
-        {3,1,f.workspace.state().document.revision},*snapshot,f.bounds});
+    f.workspace.select_keyframe(0);
+    f.workspace.refresh_viewport_gizmos({
+        .input={.raw=f.raw},
+        .presented={.camera=f.camera,.extent={800,600},.bounds=f.bounds,.generation=1,
+            .revision=f.workspace.state().document.revision,.time_current=true},
+        .tools={.enabled=true}});
     REQUIRE(movement.visible());
     f.workspace.reconcile_selection();
     CHECK(movement.visible()); // Presentation refresh is not deselection.
@@ -98,6 +102,22 @@ TEST_CASE("Captured scene rectangle uses its frozen projection and accepts a rel
     CHECK(f.workspace.selected_instances().contains(3));CHECK(f.workspace.selected_instances().contains(7));
     CHECK_FALSE(f.workspace.interaction().selection_box.active());
     CHECK(f.workspace.state().document.revision==1);CHECK_FALSE(f.workspace.dirty());
+}
+TEST_CASE("Explicit camera navigation borrows the viewport without changing workspace selection", "[editor][workspace-picking][camera_gizmo]") {
+    PickingFixture f;f.workspace.select_instance(3);
+    auto& camera=f.workspace.interaction().camera_gizmo();
+    f.workspace.choose_camera_gizmo(CameraGizmoMode::pan);
+    f.workspace.reconcile_selection();CHECK(camera.exclusive());
+    CHECK_FALSE(f.send({{.kind=input::EventKind::pointer_down,.position={550,300}},
+        {.kind=input::EventKind::pointer_up,.position={550,300}}}).selection);
+    CHECK(f.workspace.selected_instances().active()==3);
+    CHECK_FALSE(f.workspace.interaction().selection_box.active());
+    f.workspace.select_instance(3); // Clicking even the same list entry returns to that object.
+    CHECK_FALSE(camera.exclusive());
+    CHECK(f.workspace.selected_instances().active()==3);
+    CHECK(f.send({{.kind=input::EventKind::pointer_down,.position={550,300}}}).selection);
+    CHECK(f.workspace.selected_instances().active()==7);
+    CHECK_FALSE(f.workspace.dirty());CHECK_FALSE(f.workspace.can_undo());
 }
 TEST_CASE("Viewport rectangle extends its initial selection rather than its press result", "[editor][workspace-picking]") {
     PickingFixture f;f.workspace.select_instance(3);

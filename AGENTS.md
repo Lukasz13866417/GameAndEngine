@@ -120,7 +120,7 @@ cmake --build build --target <target> -j 12
 - **Outputs.** PNG writers open with `"wbx"`, so render into a new directory. Scene generators need `--replace` to
   overwrite. `vng_make_fleet` and `vng_make_spaceship` overwrite silently. See [assets.md](docs/agents/assets.md).
 - **Scene budgets.** Document file ≤ 64 MiB − 256 B, decoded ≤ 64 MiB; timeline ≤ 16,384 keys, ≤ 4,096 per track;
-  mesh ≤ 131,072 vertices. Measure with `./build/vng_scene_probe <scene.vscene> --size`. All limits, and what does
+  mesh ≤ 196,608 vertices (Earth authoring ≤ 180,224). Measure with `./build/vng_scene_probe <scene.vscene> --size`. All limits, and what does
   not exist (no mesh transparency, no textures in scenes, no MSAA, no motion blur, no camera roll):
   [limits-and-non-features.md](docs/agents/limits-and-non-features.md).
 - **Honest docs.** Never describe planned work as implemented. Never change runtime code to make a doc true; report

@@ -1,5 +1,34 @@
 # Documentation maintenance handoff
 
+## PR integration checks · 2026-09-30
+
+Reconciled the agent guides, review app and architecture-map changes together.
+Added `vng_review_file` and `vng_review` to the component/dependency catalog, with
+source-linked explanations of review persistence and candidate rendering. Updated
+the evergreen mesh budgets and map-maintenance rules against their source constants
+and completeness tests. The historical measurements below remain dated snapshots.
+
+Validation: all 34 layering, guide-content and architecture-data tests pass. The
+combined C++ build and hidden-window regression suite are checked separately during
+PR integration; no browser interaction/layout changes were made in this pass.
+
+## Architecture map checks · 2026-09-29
+
+`architecture.html` is the sixth page. What keeps its data honest:
+
+- **Editor and worker maps.** `declarations` in `architecture-data.js` gives each
+  class node a witness (the head of its definition) and each link the member its
+  owner declares. When a member moves to another owner, move the node in the tree
+  and edit its entry; `architecture.test.cjs` names any stale witness or member.
+- **Module map.** Add a new CMake library to the catalog in `codebase.js`, with
+  guide sections in `codebase-details.js`. Give a new non-test executable a card or
+  list it in `programs` with its links. Tests compare Direct dependencies, Used by
+  and module source ownership with `CMakeLists.txt` and `tests/layering`.
+- **Browser coverage.** `tests/architecture-browser.cjs` runs inside `browser.cjs`
+  and takes expected paths and counts from the data. It also checks short
+  viewports (683×384, 640×360, 568×320, 844×390), focus after re-rendering,
+  history replacement for arrow keys and which zooms are announced.
+
 ## Class-by-class walkthrough · 2026-09-19
 
 Added a separate fifth page, `walkthrough.html`, titled **Code walkthrough**.

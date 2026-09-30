@@ -9,11 +9,12 @@ int main(int argc,char** argv) {
     const bool savannah=argc==4&&std::string_view(argv[3])=="--savannah";
     const bool redesign=argc>=4&&std::string_view(argv[3])=="--redesign-infrastructure";
     const bool global=argc>=4&&std::string_view(argv[3])=="--global-infrastructure";
+    const bool tunnels=argc>=4&&std::string_view(argv[3])=="--refresh-tunnels";
     const bool retune=global||redesign||(argc>=4&&std::string_view(argv[3])=="--tunnel-classes");
-    const bool replace=retune&&argc==5&&std::string_view(argv[4])=="--replace";
-    const bool refresh=retune||(argc==4&&std::string_view(argv[3])=="--refresh-future");
+    const bool replace=(retune||tunnels)&&argc==5&&std::string_view(argv[4])=="--replace";
+    const bool refresh=retune||tunnels||(argc==4&&std::string_view(argv[3])=="--refresh-future");
     const bool future=refresh||(argc==4&&std::string_view(argv[3])=="--future");
-    if((argc!=3&&!savannah&&!future)||argc>5||(argc==5&&!replace)) {std::cerr<<"Usage: vng_make_earth SOURCE_ASSET_DIRECTORY OUTPUT_DIRECTORY [--savannah|--future|--refresh-future|--tunnel-classes [--replace]|--redesign-infrastructure [--replace]|--global-infrastructure [--replace]]\n";return 2;}
+    if((argc!=3&&!savannah&&!future)||argc>5||(argc==5&&!replace)) {std::cerr<<"Usage: vng_make_earth SOURCE_ASSET_DIRECTORY OUTPUT_DIRECTORY [--savannah|--future|--refresh-future|--refresh-tunnels [--replace]|--tunnel-classes [--replace]|--redesign-infrastructure [--replace]|--global-infrastructure [--replace]]\n";return 2;}
     const std::filesystem::path output=argv[2];
     const auto stem=future?"earth_future":savannah?"earth_savannah":"earth";
     const auto mesh_path=output/(std::string(stem)+".vmesh"),scene_path=output/(std::string(stem)+".vscene");
@@ -25,8 +26,23 @@ int main(int argc,char** argv) {
         const std::filesystem::path input=argv[1];
         auto mesh=vng::content::vmesh::read_vmesh(input/(refresh?"earth_future.vmesh":"earth.vmesh"));
         if(!mesh){std::cerr<<mesh.error().message<<'\n';return 1;}
-        const auto change=[future,refresh,retune,redesign,global](const vng::content::vmesh::Document& source) {
+        const auto change=[future,refresh,retune,redesign,global,tunnels](const vng::content::vmesh::Document& source) {
             if(!future)return example::earth::make_savannah_variant(source);
+            if(tunnels) {
+                // Preserve authored terrain, clouds, cities and other addons;
+                // regenerate only tunnels and their fittings (freestanding
+                // terminals, joiners) from their recipes, retaining placement.
+                // Hand edits to those parts' vertices are replaced.
+                using Kind=example::earth::InfrastructureKind;
+                auto parts=example::earth::infrastructure_parts(source);
+                if(!parts)return vng::content::Result<vng::content::vmesh::Document>{std::unexpected(parts.error())};
+                vng::content::Result<vng::content::vmesh::Document> result{source};
+                for(const auto& part:*parts)if(part.kind==Kind::skyway||part.kind==Kind::terminal||part.kind==Kind::joiner) {
+                    result=example::earth::rebuild_infrastructure_part(*result,part.id);
+                    if(!result)return result;
+                }
+                return result;
+            }
             if(global)return example::earth::expand_global_infrastructure(source);
             if(redesign)return example::earth::redesign_infrastructure(source);
             if(retune)return example::earth::author_tunnel_network(source);
@@ -82,16 +98,15 @@ int main(int argc,char** argv) {
             scene->document.environment.bloom_threshold=1.6F;
             scene->document.environment.bloom_strength=.16F;
         }
-        if(auto saved=vng::content::vmesh::write_vmesh(mesh_path,*variant);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
-        if(auto saved=file.save_as(scene_path,*scene,replace);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
+        // Checks both outputs before writing either; never a new mesh beside the old scene.
+        if(auto saved=file.save_as_with_mesh(scene_path,*scene,mesh_path,*variant,replace);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
         std::cout<<"Copied Earth to "<<mesh_path<<" and "<<scene_path<<" (original terrain/clouds retained)\n";
         return 0;
     }
     auto scene=example::earth::author_scene(argv[1]);
     if(!scene){std::cerr<<scene.error().message<<'\n';return 1;}
     const auto& mesh=editor_example::mesh_geometry(*scene,example::earth::blueprint_id)->document();
-    if(auto saved=vng::content::vmesh::write_vmesh(mesh_path,mesh);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
     editor_example::SceneFile file;
-    if(auto saved=file.save_as(scene_path,*scene);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
+    if(auto saved=file.save_as_with_mesh(scene_path,*scene,mesh_path,mesh);!saved){std::cerr<<saved.error().message<<'\n';return 1;}
     std::cout<<"Earth: "<<mesh.vertex_count<<" vertices / "<<mesh.faces.size()<<" triangles\n";
 }
