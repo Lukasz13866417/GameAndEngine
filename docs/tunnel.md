@@ -153,10 +153,11 @@ courier is in frame through every act. The demo plays the camera through
 uses its own **Settings → Maximum viewing distance** instead; raise it to at
 least 1,200,000 to see the sun, Earth and Moon from the other locations.
 
-**Budgets.** The generated scene is about 47 MB, about 56 MiB decoded against
-the editor's 64 MiB document limit, and uses about 11,500 of the timeline's
+**Budgets.** The generated scene is about 48 MB, about 56 MiB decoded against
+the editor's 64 MiB document limit, and uses about 10,100 of the timeline's
 16,384 keys: collinear camera and courier keys (static shots, holds, straight
-runs) are simplified away, which pays for dense keys on fast moves.
+runs) are simplified away, which pays for dense keys on fast moves. Measure
+with `./build/vng_scene_probe examples/assets/tunnel_departure.vscene --size`.
 
 ## One tunnel, viewed from either side
 
@@ -178,7 +179,7 @@ This is one passage, not yet a tessellated bundle of smaller passages.
 
 The departure author reads the actual Earth route and samples its curve and
 terminal for ship, traffic and camera tracks. Open Earth's blueprint mesh editor
-and select **Pacific express / cinematic local** to edit it just like any tunnel.
+and select **Arabian express / cinematic local** to edit it just like any tunnel.
 After reshaping the route, regenerate the cinematic to refit its baked timeline;
 existing animation keys do not automatically become a live path constraint.
 

@@ -118,8 +118,11 @@ content::Result<void> KeyBatch::commit(project::State& state) {
                     return invalid("Rotation of object " + std::to_string(object) + " component " + std::to_string(c) +
                                    " turns more than twice around;" + trace);
                 }
-                // The whole turns that fit [low, high] inside [-360, 360].
-                const auto shift = 360.F * std::ceil((high - 360.F) / 360.F);
+                // The fewest whole turns that fit [low, high] inside [-360, 360]:
+                // none when it already fits. A camera's pitch is clamped rather
+                // than wrapped, so a needless turn would point it straight up.
+                const auto shift = high > 360.F ? 360.F * std::ceil((high - 360.F) / 360.F)
+                                 : low < -360.F ? -360.F * std::ceil((-360.F - low) / 360.F) : 0.F;
                 if (low - shift < -360.F) {
                     std::string trace;
                     for (std::size_t i = 1; i < existing->keys.size() && trace.size() < 700; ++i) {
