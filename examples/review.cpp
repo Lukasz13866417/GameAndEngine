@@ -319,6 +319,8 @@ public:
     // Pin a note as a click at a normalized point of a candidate's view would.
     bool pin(std::string_view candidate, Vec2 view, std::string_view text) {
         if (!review_.find(candidate) || !(view.x >= 0 && view.x <= 1 && view.y >= 0 && view.y <= 1)) return false;
+        const auto& slot = slots_[candidate_index(candidate)];
+        if (!slot.view || !slot.view->shown_time()) return false;
         const auto b = images_[candidate_index(candidate)].bounds();
         click({b.x + view.x * b.width, b.y + view.y * b.height}, true);
         if (auto* note = selected_note()) {
@@ -734,6 +736,7 @@ private:
         for (std::size_t i = 0; i < images_.size(); ++i) {
             const auto b = images_[i].bounds();
             if (!b.contains(position)) continue;
+            if (!slots_[i].view || !slots_[i].view->shown_time()) return;
             playing_ = false;
             select_candidate(i);
             // A click on a visible marker selects its note rather than pinning a new one.
@@ -946,7 +949,7 @@ int main(int argc, char** argv) {
         // Scripted pins land once every view shows the start time.
         if (!pinned && app->frame_ready()) {
             for (const auto& p : options->pins)
-                if (!app->pin(p.candidate, p.view, p.text)) return fail("--note names no candidate or has a point outside 0..1");
+                if (!app->pin(p.candidate, p.view, p.text)) return fail("--note needs a loaded candidate and a point inside 0..1");
             pinned = true;
         }
         if (!started_playing && app->frame_ready()) {
