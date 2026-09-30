@@ -124,7 +124,10 @@ scenes twice a second:
 - **A file that stops reading as a review makes the app wait.** This happens,
   for example, when the app catches a slow writer halfway through. If you quit
   before the file reads again, the app writes its copy and keeps the
-  unreadable one beside it as `NAME.vreview.unreadable`.
+  unreadable one beside it as `NAME.vreview.unreadable`. If that backup already
+  exists or cannot be written, neither file is replaced, the app reports the
+  save failure, and exits with a nonzero status. Save failures are never reported
+  as successful scripted runs.
 - **A scene that does not load shows why in its view.** The other candidates
   still open.
 

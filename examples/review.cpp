@@ -407,22 +407,21 @@ public:
     // written to the file elsewhere, so that nothing written there is lost.
     // Leaving (now), it also writes over a file that no longer reads as a
     // review, keeping that file beside it.
-    void autosave(bool now) {
-        if (!now && (!dirty_ || Clock::now() - edited_ < std::chrono::milliseconds(700))) return;
+    bool autosave(bool now) {
+        if (!now && (!dirty_ || Clock::now() - edited_ < std::chrono::milliseconds(700))) return true;
         const bool readable = pull();
-        if (reopen_ && !now) return; // the reopened app saves the merge
-        if (readable && !dirty_) return;
+        if (reopen_ && !now) return true; // the reopened app saves the merge
+        if (readable && !dirty_) return true;
+        std::optional<std::filesystem::path> backup;
         if (!readable) {
-            if (!now) return; // until whoever is writing it is done
-            auto copy = file_;
-            copy += ".unreadable";
-            std::error_code error;
-            std::filesystem::copy_file(file_, copy, std::filesystem::copy_options::overwrite_existing, error);
-            std::cerr << "The review file was not readable; " << (error ? "it could not be kept" : "kept it as " + copy.string()) << '\n';
+            if (!now) return false; // until whoever is writing it is done
+            backup = file_;
+            *backup += ".unreadable";
         }
         auto& edits = reopen_ ? reopen_->review : review_;
-        auto saved = review::save_review(file_, edits);
-        if (!saved) return say("Not saved: " + saved.error().message);
+        auto saved = review::save_review(file_, edits, backup);
+        if (!saved) { say("Not saved: " + saved.error().message); return false; }
+        if (backup) std::cerr << "The review file was not readable; kept it as " << backup->string() << '\n';
         if (reopen_) {
             reopen_->disk = reopen_->review;
             reopen_->stamp = *saved;
@@ -432,6 +431,7 @@ public:
         }
         dirty_ = false;
         say("Saved " + review::timestamp().substr(11, 8) + " UTC");
+        return true;
     }
 
 private:
@@ -749,6 +749,12 @@ private:
             note.id = review_.next_note_id();
             note.candidate = review_.candidates[i].id;
             note.time = time_;
+            // Pick and timestamp the image the reviewer actually clicked,
+            // rather than a playhead whose frame may still be rendering.
+            if (slots_[i].view)
+                if (const auto shown = slots_[i].view->shown_time())
+                    note.time = std::clamp(*shown - review_.candidates[i].offset, range_[0], range_[1]);
+            at(note.time);
             note.view = normalized;
             note.created = review::timestamp();
             if (const auto hit = slots_[i].view ? slots_[i].view->pick(normalized) : std::nullopt) {
@@ -970,18 +976,18 @@ int main(int argc, char** argv) {
                     {reinterpret_cast<const u8*>(pixels->pixels.data()), pixels->pixels.size()}); !written)
                 return fail(written.error().message);
             std::cout << "Saved " << options->screenshot->string() << '\n';
-            app->autosave(true);
+            const bool saved = app->autosave(true);
             if (!app->status().empty()) std::cout << app->status() << '\n';
-            return 0;
+            return saved ? 0 : 1;
         }
         if (auto presented = loop.present(); !presented) return fail(presented.error().message);
     }
-    app->autosave(true);
+    const bool saved = app->autosave(true);
     if (!app->status().empty()) std::cout << app->status() << '\n';
     if (options->frames) {
         const auto seconds = std::chrono::duration<double>(Clock::now() - started).count();
         std::cout << std::format("{} frames in {:.1f} s ({:.1f} fps); views showed {}\n", frames, seconds,
             static_cast<double>(frames) / seconds, app->shown_frames());
     }
-    return 0;
+    return saved ? 0 : 1;
 }

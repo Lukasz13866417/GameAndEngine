@@ -70,7 +70,10 @@ struct FileStamp {
 // Replaces the file atomically (temporary file in the same directory, then
 // rename), keeping its permissions, and returns the stamp of what it wrote.
 // A symbolic link stays a link: the file it names is replaced.
-[[nodiscard]] vng::content::Result<FileStamp> save_review(const std::filesystem::path& file, const Review&);
+// If backup is supplied, first preserve the existing bytes there. Never
+// overwrite a backup; if preservation fails, leave the review untouched.
+[[nodiscard]] vng::content::Result<FileStamp> save_review(const std::filesystem::path& file, const Review&,
+    const std::optional<std::filesystem::path>& backup = {});
 [[nodiscard]] vng::content::Result<void> validate(const Review&);
 // Folds the edits someone else made to the file (theirs: an agent's replies,
 // say) into the edits made here (mine) since both last matched (base). Each

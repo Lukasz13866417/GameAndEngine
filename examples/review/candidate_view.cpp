@@ -71,13 +71,8 @@ resources::Result<void> CandidateView::update(opengl::Device& device, f32 time, 
 std::optional<project::Pick> CandidateView::pick(Vec2 normalized) {
     if (!shown_) return {};
     state_->viewport.time = shown_->time;
-    auto hit = project::pick(*state_, normalized, shown_->extent, &shown_->camera);
-    // Camera glyphs are editor furniture; a played shot never draws them.
-    if (hit)
-        if (const auto* instance = project::find_instance(*state_, hit->object);
-            instance && std::holds_alternative<project::CameraSettings>(instance->settings))
-            return {};
-    return hit;
+    return project::pick(*state_, normalized, shown_->extent, &shown_->camera,
+                         nullptr, {.camera_glyphs = false});
 }
 
 std::optional<Vec2> CandidateView::project(Vec3 point) const {

@@ -278,10 +278,14 @@ std::optional<FileStamp> stamp_of(const std::filesystem::path& file) {
     return stamp(status);
 }
 
-content::Result<FileStamp> save_review(const std::filesystem::path& file, const Review& r) {
+content::Result<FileStamp> save_review(const std::filesystem::path& file, const Review& r,
+                                      const std::optional<std::filesystem::path>& backup) {
     auto bytes = encode_review(r, file);
     if (!bytes) return std::unexpected(bytes.error());
     std::error_code error;
+    if (backup && !std::filesystem::copy_file(file, *backup, std::filesystem::copy_options::none, error))
+        return std::unexpected(diagnostic(content::ErrorCode::io_error,
+            "Cannot preserve the existing review as " + backup->string() + ": " + error.message(), file));
     auto target = std::filesystem::weakly_canonical(std::filesystem::absolute(file), error);
     if (error) target = std::filesystem::absolute(file);
     struct stat existing{};

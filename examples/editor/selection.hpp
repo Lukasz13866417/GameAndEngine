@@ -21,8 +21,13 @@ struct Pick {
     vng::u32 object{};
     vng::Vec3 point{};
 };
+struct PickOptions {
+    // Played scenes do not draw editor camera glyphs. Exclude them before
+    // finding the nearest hit, not afterwards (they could hide a real mesh).
+    bool camera_glyphs{true};
+};
 [[nodiscard]] std::optional<Pick> pick(const State&, vng::Vec2, vng::Extent2D,
-    const vng::gfx::Camera* = nullptr, PickStats* = nullptr);
+    const vng::gfx::Camera* = nullptr, PickStats* = nullptr, PickOptions = {});
 // Visible instance origins, normalized top-left coordinates. This remains O(n)
 // in instances, independent of triangle count, for box selection/selection marks.
 struct InstancePoint {

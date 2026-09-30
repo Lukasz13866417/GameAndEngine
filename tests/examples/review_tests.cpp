@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <regex>
 #include <sys/stat.h>
@@ -215,6 +216,35 @@ TEST_CASE("Saving through a symbolic link replaces the file it names", "[review]
     CHECK(review::read_review(real)->summary == "Through the link");
 }
 
+TEST_CASE("Recovering an unreadable review preserves it before replacing anything", "[review][file]") {
+    Scratch dir;
+    const auto file = dir.path / "r.vreview", backup = dir.path / "r.vreview.unreadable";
+    const auto read_bytes = [](const fs::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>{in}, std::istreambuf_iterator<char>{}};
+    };
+    const std::string interrupted = "vreview 1.0\ntitle = \"a writer was interrupted";
+    { std::ofstream out(file); out << interrupted; }
+    auto r = sample(dir.path);
+    SECTION("a successful recovery keeps the exact unreadable bytes") {
+        REQUIRE(review::save_review(file, r, backup));
+        CHECK(read_bytes(backup) == interrupted);
+        CHECK(review::read_review(file) == r);
+    }
+    SECTION("a previous backup is never overwritten") {
+        { std::ofstream out(backup); out << "older recovery"; }
+        CHECK_FALSE(review::save_review(file, r, backup));
+        CHECK(read_bytes(file) == interrupted);
+        CHECK(read_bytes(backup) == "older recovery");
+    }
+    SECTION("a failed backup leaves the original file alone") {
+        fs::create_directory(backup);
+        CHECK_FALSE(review::save_review(file, r, backup));
+        CHECK(read_bytes(file) == interrupted);
+        CHECK(fs::is_directory(backup));
+    }
+}
+
 TEST_CASE("Merging keeps both sides' edits, and mine where both edited one field", "[review][merge]") {
     Scratch dir;
     const auto base = sample(dir.path);
@@ -355,4 +385,18 @@ TEST_CASE("Picking finds where the view ray meets the entity", "[review][pick]")
     }
     CHECK_FALSE(pick(state, projected(state, {.9F, .9F, 0}), extent));
     CHECK_FALSE(pick(state, {.02F, .02F}, extent));
+}
+
+TEST_CASE("Invisible editor camera glyphs do not intercept review pins", "[review][pick]") {
+    auto state = triangle();
+    const auto id = instantiate(state, BlueprintId::camera);
+    REQUIRE(id);
+    instance_transform(state, *id)->position = {0, 0, 4};
+    const auto editor_hit = pick(state, {.5F, .5F}, extent);
+    REQUIRE(editor_hit);
+    CHECK(editor_hit->object == *id);
+    const auto scene_hit = pick(state, {.5F, .5F}, extent, nullptr, nullptr, {.camera_glyphs = false});
+    REQUIRE(scene_hit);
+    CHECK(scene_hit->object == 1);
+    CHECK(scene_hit->point.z == Catch::Approx(0).margin(1e-3));
 }
