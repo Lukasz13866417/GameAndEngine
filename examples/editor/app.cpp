@@ -1265,6 +1265,7 @@ int run(const Options& options) {
             !inspecting() && (!viewport_gesture || camera_numeric_active))
             feedback(workspace.poll_camera_pose(settings));
         mesh_reply(workspace.poll_blueprint_controls(!dialog_was_open&&!modal_visible()&&!viewport_gesture&&!mode_pending&&!editing.busy()));
+        feedback(workspace.poll_animation_controls(!dialog_was_open&&!modal_visible()&&!playing&&!mode_pending&&!editing.awaiting_remote(),input->unhandled()));
         if(!dialog_was_open && !modal_visible() && !editing.awaiting_remote() &&
            (!viewport_gesture || (editing.active(EditGesture::scale) && !scaling.dragging() && !instance_transform.active()))) {
             auto result=workspace.poll_inspector(!playing&&!scale_cancelled);

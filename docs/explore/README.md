@@ -20,14 +20,14 @@ more detail:
 Open [`architecture.html`](architecture.html) for the spatial viewer, rather than
 the guide's expandable article cards. It works directly from disk, offline.
 
-- Switch between **Editor**, **Preview worker**, and **Engine modules**.
+- Switch between **Editor**, **Preview worker**, **Engine modules**, and **Animation forest**.
 - Click a node for its purpose, concrete type, ownership boundaries and source links.
   Use its **+/−** button to expand or collapse a branch. **Focus branch** isolates a
   subtree; **Whole map** returns without losing the other expanded branches.
 - Drag the background to pan; scroll/pinch or use **+/−** to zoom. **Fit** (`F`)
   frames the visible tree; **Overview** restores the starting view. **Expand all**
   exposes the whole tree. The desktop minimap shows the visible area.
-- Search (`/`) spans all three maps, including collapsed nodes and source paths.
+- Search (`/`) spans all maps, including collapsed nodes and source paths.
   Arrow down/Enter chooses a result. Tree arrow keys navigate/expand/collapse;
   Home/End jump to the first/last visible node. Details can be hidden for more space.
 - The selected component has a bookmark, e.g. `architecture.html#editor/navigation`.

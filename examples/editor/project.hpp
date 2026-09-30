@@ -5,6 +5,7 @@
 #include "world_bounds.hpp"
 #include "regions.hpp"
 #include "document_changes.hpp"
+#include "scene_animation.hpp"
 
 #include <vng/editor/mesh.hpp>
 #include <vng/gfx/camera.hpp>
@@ -52,9 +53,9 @@ struct CameraSettings {
     friend bool operator==(const CameraSettings&, const CameraSettings&) = default;
 };
 // Reserved builtin identities do not steal ID 3 from existing imported assets.
-enum class BlueprintId : vng::u32 { mesh = 1, sun = 2, camera = 0xfffffffdU, region = 0xfffffffeU };
-inline constexpr vng::u32 first_reserved_blueprint = static_cast<vng::u32>(BlueprintId::camera);
-enum class BlueprintKind { mesh, sun, region, camera };
+enum class BlueprintId : vng::u32 { mesh = 1, sun = 2, spin = 0xfffffffbU, departure = 0xfffffffcU, camera = 0xfffffffdU, region = 0xfffffffeU };
+inline constexpr vng::u32 first_reserved_blueprint = static_cast<vng::u32>(BlueprintId::spin);
+enum class BlueprintKind { mesh, sun, region, camera, animation };
 struct Blueprint {
     BlueprintId id;
     std::string_view name;
@@ -78,10 +79,17 @@ struct SceneInstance {
     vng::u32 id{};
     BlueprintId blueprint{BlueprintId::mesh};
     std::string name;
-    std::variant<MeshSettings, SunSettings, RegionSettings, CameraSettings> settings;
+    std::variant<MeshSettings, SunSettings, RegionSettings, CameraSettings, AnimationSettings> settings;
     InstanceTransform transform{};
     friend bool operator==(const SceneInstance&, const SceneInstance&) = default;
 };
+// Non-rendering instances expose controls, not fictitious geometry or visibility.
+inline bool instance_visible(const SceneInstance& instance) {
+    return std::visit([](const auto& value) {
+        if constexpr (std::is_same_v<std::decay_t<decltype(value)>, AnimationSettings>) return false;
+        else return value.visible;
+    }, instance.settings);
+}
 struct CameraPose {
     vng::f32 yaw{15}, pitch{12}, distance{8};
     vng::Vec3 target{};

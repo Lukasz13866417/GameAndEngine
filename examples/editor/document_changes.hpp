@@ -29,14 +29,16 @@ struct DocumentChanges {
     std::set<vng::f32> markers{};
     std::map<vng::u32,vng::editor::MeshChanges> meshes{};
     std::set<vng::u32> mesh_placements{};
+    std::set<vng::u32> animations{};
     [[nodiscard]] bool empty() const {
-        return !full && !duration && !world_bounds && regions.empty() && vertices.empty() && properties.empty() && markers.empty() && meshes.empty() && mesh_placements.empty();
+        return !full && !duration && !world_bounds && regions.empty() && vertices.empty() && properties.empty() && markers.empty() && meshes.empty() && mesh_placements.empty() && animations.empty();
     }
     void merge(const DocumentChanges& other) {
         if (full || other.full) { *this = {.full = true}; return; }
         duration |= other.duration;
         world_bounds |= other.world_bounds;
         mesh_placements.insert(other.mesh_placements.begin(), other.mesh_placements.end());
+        animations.insert(other.animations.begin(),other.animations.end());
         for (const auto& [instance, changes] : other.regions) regions[instance].merge(changes);
         properties.insert(other.properties.begin(), other.properties.end());
         markers.insert(other.markers.begin(), other.markers.end());

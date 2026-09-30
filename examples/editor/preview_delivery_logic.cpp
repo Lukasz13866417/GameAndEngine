@@ -8,7 +8,7 @@ namespace {
 bool single_vertex_batch_only(const DocumentPatch& patch) {
     // A compact packet must cover the entire patch before we acknowledge its
     // revision. Never discard another category merely because vertices exist.
-    return patch.mesh_placements.empty() && patch.meshes.empty() && patch.vertices.size() == 1 && patch.properties.empty() &&
+    return patch.animations.empty() && patch.mesh_placements.empty() && patch.meshes.empty() && patch.vertices.size() == 1 && patch.properties.empty() &&
         !patch.duration && !patch.world_bounds && patch.regions.empty() && patch.markers.empty();
 }
 }
@@ -117,7 +117,7 @@ vng::content::Result<std::optional<std::string>> PreviewDeliveryLogic::next(vng:
             changes.properties.insert({camera_animation_object, std::string(property)});
         // Keep the tiny single-property encodings. A mixed dirty set is a
         // versioned patch, never a reason to serialize scene geometry.
-        if (!peer.camera && changes.mesh_placements.empty() && changes.meshes.empty() && changes.vertices.empty() && !changes.duration && !changes.world_bounds && changes.regions.empty() && changes.markers.empty() && changes.properties.size() == 1 &&
+        if (!peer.camera && changes.animations.empty() && changes.mesh_placements.empty() && changes.meshes.empty() && changes.vertices.empty() && !changes.duration && !changes.world_bounds && changes.regions.empty() && changes.markers.empty() && changes.properties.size() == 1 &&
             changes.properties.begin()->object <= UINT32_MAX) {
             const auto& target = *changes.properties.begin();
             const auto object = static_cast<vng::u32>(target.object);

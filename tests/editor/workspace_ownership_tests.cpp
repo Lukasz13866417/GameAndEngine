@@ -38,7 +38,22 @@ struct WorkspaceFixture {
     }
     bool text_contains(std::string_view value) {
         pump();auto tree=screen.inspect();REQUIRE(tree);
-        return std::ranges::any_of(tree->widgets,[&](const auto& widget){return widget.text.find(value)!=std::string::npos;});
+        return std::ranges::any_of(tree->widgets,[&](const auto& widget){return widget.text.find(value)!=std::string::npos||widget.label.find(value)!=std::string::npos;});
+    }
+    WorkspaceFeedback animation_input(std::initializer_list<input::Event> events={}) {
+        raw.events=events;
+        for(const auto& e:events)if(e.kind==input::EventKind::pointer_down||e.kind==input::EventKind::pointer_up)raw.pointer=e.position;
+        workspace.present_panels({});workspace.sync_sidebar();
+        auto input=screen.update(raw,.016);REQUIRE(input);REQUIRE(popups.update(raw,.016));
+        auto result=workspace.poll_animation_controls(true,input->unhandled());
+        (void)workspace.take_changes();return result;
+    }
+    WorkspaceFeedback animation_click(std::string_view text) {
+        animation_input();auto tree=screen.inspect();REQUIRE(tree);
+        auto found=std::ranges::find_if(tree->widgets,[&](const auto& w){return w.visible&&w.text==text;});
+        INFO(text);REQUIRE(found!=tree->widgets.end());
+        const auto r=found->bounds;const Vec2 p{r.x+r.width*.5F,r.y+r.height*.5F};
+        return animation_input({{.kind=input::EventKind::pointer_down,.position=p},{.kind=input::EventKind::pointer_up,.position=p}});
     }
     bool enabled(ui::WidgetRole role,std::string_view label) {
         pump();auto tree=screen.inspect();REQUIRE(tree);
@@ -52,6 +67,30 @@ static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().blueprin
 static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().gizmo_selector()),const GizmoSelector&>);
 static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().rotation_pivot()),const RotationPivotControls&>);
 static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().camera_ui()),const ViewportCameraUI&>);
+static_assert(std::same_as<decltype(std::declval<EditingWorkspaceUI&>().animation_gizmo()),const AnimationGizmo&>);
+}
+
+TEST_CASE("Workspace animation gizmo creates previews exposes child controls and cancels cleanly","[editor][ui][animation-forest]") {
+    WorkspaceFixture f;f.workspace.select_instance(1);
+    f.workspace.create_animation_controls(BlueprintId::departure);
+    auto preview=f.animation_click("Preview animation");INFO(preview.message);REQUIRE(preview.authored);
+    const auto id=f.workspace.viewport().selected_object;REQUIRE(scene_animation(f.workspace.state(),id));
+    REQUIRE(f.workspace.animation_gizmo().visible());
+    f.animation_click("    Speed profile");
+    CHECK(f.text_contains("Start speed weight"));
+    auto cancelled=f.animation_click("Cancel");INFO(cancelled.message);REQUIRE(cancelled.authored);
+    CHECK_FALSE(scene_animation(f.workspace.state(),id));CHECK_FALSE(f.workspace.dirty());
+    CHECK(f.workspace.viewport().selected_object==1);
+    f.workspace.create_animation_controls(BlueprintId::departure);
+    REQUIRE(f.animation_click("Preview animation").authored);
+    const auto kept=f.workspace.viewport().selected_object;
+    REQUIRE(f.animation_click("Create animation").authored);
+    CHECK(f.workspace.dirty());
+    REQUIRE(f.workspace.shortcut(EditShortcut::undo).changed);CHECK_FALSE(scene_animation(f.workspace.state(),kept));
+    REQUIRE(f.workspace.shortcut(EditShortcut::redo).changed);CHECK(scene_animation(f.workspace.state(),kept));
+    f.animation_input();
+    REQUIRE(f.animation_click("Remove animation (restore underlying keys)").authored);
+    CHECK_FALSE(scene_animation(f.workspace.state(),kept));
 }
 
 TEST_CASE("Workspace selection owns sidebar focus and inspector invalidation without app glue","[editor][workspace-ownership]") {
@@ -70,6 +109,36 @@ TEST_CASE("Workspace selection owns sidebar focus and inspector invalidation wit
     CHECK(f.text_contains("No instance selected"));
     CHECK(f.workspace.state().document.revision==revision);
     CHECK_FALSE(f.workspace.dirty());
+}
+TEST_CASE("Animation child sliders and numeric fields author one gesture without a selected keyframe","[editor][ui][animation-forest]") {
+    WorkspaceFixture f;f.workspace.select_instance(1);
+    CHECK_FALSE(f.workspace.can_edit_scene_pose());
+    f.workspace.create_animation_controls(BlueprintId::departure);
+    REQUIRE(f.animation_click("Preview animation").authored);
+    const auto id=f.workspace.viewport().selected_object;
+    REQUIRE(f.animation_click("Create animation").authored);
+    f.animation_click("    Speed profile");f.animation_input();
+    auto tree=f.screen.inspect();REQUIRE(tree);
+    auto slider=std::ranges::find_if(tree->widgets,[](const auto& w){return w.role==ui::WidgetRole::slider&&w.label=="Start speed weight";});
+    REQUIRE(slider!=tree->widgets.end());REQUIRE(slider->visible);
+    const Vec2 p{slider->bounds.x+slider->bounds.width*.6F,slider->bounds.y+slider->bounds.height*.5F};
+    REQUIRE(f.animation_input({{.kind=input::EventKind::pointer_down,.position=p}}).authored);
+    CHECK(f.workspace.busy());
+    f.animation_input({{.kind=input::EventKind::pointer_up,.position=p}});
+    CHECK_FALSE(f.workspace.busy());
+    CHECK(std::get<DepartureSequence>(scene_animation(f.workspace.state(),id)->root).motion.speed.initial>100.F);
+    REQUIRE(f.workspace.shortcut(EditShortcut::undo).changed);
+    REQUIRE(scene_animation(f.workspace.state(),id));
+    CHECK(std::get<DepartureSequence>(scene_animation(f.workspace.state(),id)->root).motion.speed.initial==1.F);
+    f.animation_input();tree=f.screen.inspect();REQUIRE(tree);
+    const auto field=std::ranges::find_if(tree->widgets,[](const auto& w){return w.role==ui::WidgetRole::text_field&&w.label=="Start speed weight";});
+    REQUIRE(field!=tree->widgets.end());REQUIRE(field->visible);
+    const Vec2 q{field->bounds.x+field->bounds.width*.5F,field->bounds.y+field->bounds.height*.5F};
+    f.animation_input({{.kind=input::EventKind::pointer_down,.position=q},{.kind=input::EventKind::pointer_up,.position=q}});
+    REQUIRE(f.animation_input({{.kind=input::EventKind::key_down,.key=input::Key::a,.modifiers={.control=true}},
+        {.kind=input::EventKind::text,.text="2.5"},{.kind=input::EventKind::key_down,.key=input::Key::enter}}).authored);
+    CHECK(std::get<DepartureSequence>(scene_animation(f.workspace.state(),id)->root).motion.speed.initial==2.5F);
+    CHECK_FALSE(f.workspace.busy());
 }
 TEST_CASE("Workspace clipboard and deletion update selection tools and panels together","[editor][workspace-ownership]") {
     WorkspaceFixture f;f.keyframe();f.workspace.select_instance(1);

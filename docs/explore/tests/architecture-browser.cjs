@@ -199,4 +199,19 @@ module.exports = async function architectureBrowser(page, url, output) {
   assert.equal(await selected().getAttribute("data-id"), walk);
   await page.reload();
   assert.equal(await selected().getAttribute("data-id"), editor.scope.root.id);
+
+  await page.locator("#scopes").getByRole("button", {name:"Animation forest",exact:true}).click();
+  assert.equal(await page.locator(".node").count(),8);
+  await page.locator("#map-node-follow").click();
+  assert.match(await page.locator("#details").innerText(),/dependency is an ordinary function argument/);
+  await page.locator("#map-node-speed").click();
+  assert.match(await page.locator("#details").innerText(),/interval duration controls overall speed/);
+  await page.reload();
+  assert.equal(await selected().getAttribute("data-id"),"speed");
+  for (const width of [360,736,1440]) {
+    await page.setViewportSize({width,height:1000});
+    await page.locator("#fit").click();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+    await page.screenshot({path:path.join(output,`animation-forest-${width}.png`),fullPage:true});
+  }
 };

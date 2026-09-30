@@ -37,9 +37,12 @@ struct SceneValues {
 [[nodiscard]] std::vector<AnimationProperty> animation_properties(const State&);
 // Sampling does not copy the mesh, mutate authored values, or change revision.
 [[nodiscard]] SceneValues evaluate_scene(const State&, vng::f32 time);
-[[nodiscard]] SceneInstance evaluate_instance(const State&, const SceneInstance&, vng::f32 time);
+// Bulk callers share a pre-evaluated forest; isolated queries can omit it.
+[[nodiscard]] SceneInstance evaluate_instance(const State&, const SceneInstance&, vng::f32 time,
+                                             const AnimationFrame* = nullptr);
 // Placement queries must not copy an instance's editable boundary or settings.
-[[nodiscard]] InstanceTransform evaluate_transform(const State&, const SceneInstance&, vng::f32 time);
+[[nodiscard]] InstanceTransform evaluate_transform(const State&, const SceneInstance&, vng::f32 time,
+                                                  const AnimationFrame* = nullptr);
 [[nodiscard]] bool evaluate_visibility(const State&, const SceneInstance&, vng::f32 time);
 // The simulation camera: the active scene camera instance when the scene has
 // cameras, otherwise the legacy document shot kept for older scenes.

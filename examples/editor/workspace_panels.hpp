@@ -21,9 +21,10 @@ private:
     friend class EditingWorkspaceUI;
     void layout(EditorLayout&);
     bool resize(const EditorLayout&);
-    void show(bool custom_inspector);
+    void show(bool custom_inspector,bool animation=false);
     vng::ui::Container scene_panel,scene_list,region_list,blueprint_list,manipulation_panel;
     vng::ui::Container gizmo_host,pivot_host,properties_panel,region_inspector,blueprint_panel_host;
+    vng::ui::Container animation_inspector;
     vng::ui::Container vertex_tools,xyz,nudges,inspector_tabs,keyframe_inspector,keyframe_list,timeline_host;
     std::array<vng::ui::Container,SidebarSizing::section_count> sidebar_sections;
     std::array<vng::ui::Splitter,SidebarSizing::section_count-1> section_splitters;

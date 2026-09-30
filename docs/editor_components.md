@@ -61,6 +61,7 @@ Application run() [host controller]
 │   │   ├── ToolPanel [UI]         retained active-tool options
 │   │   ├── GizmoSelector / RotationPivotControls [UI + local tool choices]
 │   │   ├── BlueprintMeshPanel [controller + UI + owned CPU job]
+│   │   ├── AnimationGizmo [UI]    animation-instance creation and child controls
 │   │   └── ViewportToolsUI [UI tools + input arbitration, incl. camera vs object tools]
 │   │       ├── CameraGizmo [UI + camera-child input arbitration]
 │   │       │   ├── CameraPointerGizmo × 5 [Orbit / Look / Pan / Forward / Zoom]
@@ -569,6 +570,96 @@ This implements the movement contract, not a mandatory universal gizmo base.
 Rotation/scale, cloud surface dragging, menu-only tools and other custom behaviors
 retain their existing implementations; they can reuse components without being
 forced through a fictitious position property.
+
+## Scene animation forests
+
+Open the architecture map's **Animation forest** view for a clickable example
+of the concrete ownership tree and evaluation order. This is a source-backed
+architecture view, not a live inspector of an open scene.
+
+**Animation / Departure** and **Animation / Spin** are normal builtin blueprints.
+Their instances live in `Document::instances`, with `AnimationSettings` in the
+same settings variant as meshes, cameras and regions. They have no rendered
+geometry and expose no meaningless transform controls. Their target IDs,
+inclusive time interval, enabled state and complete typed tree are saved in the
+scene. The gizmo is a separate, transient editor interaction.
+
+### Editing workflow
+
+Select a ship or other target, then press **+** beside an animation blueprint.
+Choose the target, optional scene camera, and start/end times. **Preview
+animation** initializes a complete root from the scene evaluated at the start
+time. Scrub the timeline and edit the root's child controls; **Create animation**
+accepts the whole creation as one undoable operation, while **Cancel** restores
+the original scene. Nothing is authored just by opening the target picker.
+
+Select an existing animation instance in the scene list to reopen its gizmo in
+**Instance properties**. The departure tree exposes Route, Speed profile,
+Turbulence and Camera follow controls. Each slider drag is one undo entry;
+numeric fields are also supported. Target pickers can retarget a root while
+retaining its authored route/parameters; they do not silently reinitialize it.
+Spin exposes angular speed per axis. These controls edit a declared time range,
+so unlike ordinary pose editing they do not require selecting one keyframe.
+
+Departure's cubic route begins at the captured ship position and initially
+follows its forward direction. Its speed controls are relative weights:
+route length and interval duration determine overall speed. Camera follow
+captures the existing world-space offset and rotation, with optional look-at.
+Disabling **Orient ship along route** frees the rotation channel for another root.
+
+### Evaluation and authority
+
+`DepartureBlueprint::instantiate` and `SpinBlueprint::instantiate` are factories,
+not editor services. They validate targets and initialize parameters without
+mutating target instances. The parent owns evaluation explicitly:
+
+```cpp
+DepartureSequence::Result DepartureSequence::evaluate(float seconds,float duration) const {
+    const auto moving=motion.evaluate(seconds,duration);
+    return {moving,follow.evaluate(moving)};
+}
+```
+
+`ShipMotion` owns `RouteCurve`, `SpeedProfile` and `Turbulence`. Its children
+return values; CameraFollow receives the ship result through its parent.
+There is no shared mutable scene access, visitor protocol, virtual node base,
+global scheduler or arbitrary sibling lookup. New compiled behavior can use
+ordinary child types and explicit parent calls; the editor is not a generic
+drag-and-drop node-programming system.
+
+The forest overlays ordinary timeline sampling only inside enabled roots'
+intervals. Endpoints are inclusive: two writers sharing an endpoint conflict.
+`animation_outputs` declares each root's target/property outputs, and
+`validate_scene_animations` rejects overlapping writers, missing targets,
+root-to-root targets and invalid parameters. Underlying keys are retained, not
+overwritten on every edit. Direct writes to a controlled pose are rejected;
+edit its animation gizmo, disable the root, or bake it first. Independent roots
+can control different properties of the same target.
+
+`EditingSession` owns creation previews, gesture commit/cancel and undo/redo.
+Only affected root parameters travel in `DocumentPatch::animations` (wire v10;
+older packets remain readable). `SceneSamples` invalidates changed roots and
+their old/new targets without regenerating geometry or unrelated root outputs.
+Its cached `AnimationFrame` evaluates each active root once per timestamp (or
+parameter change) and shares those results across targets. This avoids scanning
+the forest separately for every rendered instance; unchanged independent roots
+retain their samples when another root's parameters change.
+The same evaluation functions drive editor placement, cameras and playback.
+
+**Remove animation** reveals the underlying keyframes. **Bake / detach** samples
+the output into ordinary keys and removes the root, as one undoable operation.
+Baking is an approximation between its 121 samples; guards preserve the original
+timeline outside the range. Unsafe Euler-wrap baking is rejected rather than
+silently producing a reverse spin. Deleting a referenced target requires first
+deleting/detaching its roots (deleting them together is supported). Copy/paste
+remaps references when roots and their targets are copied together; duplicating
+only a competing enabled root is rejected.
+
+Implementation: `scene_animation.hpp/.cpp` (typed model, factories, validation,
+evaluation, bake), `scene_animation_io.cpp` (persistence),
+`session_animations.cpp` (authoring), `animation_gizmo.*` (controls), and
+`workspace_ui_animations.cpp` (parent coordination). `animation_debug_string`
+reports the root's owned tree, interval and declared outputs.
 
 ## Diagnostics
 

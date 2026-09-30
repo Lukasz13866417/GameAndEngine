@@ -55,6 +55,8 @@ content::Result<void> apply_keyframe_range(State& state, f32 first, f32 last,
     std::vector<timeline::Track> tracks(original.tracks().begin(), original.tracks().end());
     std::set<std::pair<u64, std::string>> seen;
     for (const auto& change : changes) {
+        for(auto time:times)if(const auto owner=animation_owner(state,change.target,time))
+            return invalid("Property controlled by animation #"+std::to_string(*owner)+"; edit its gizmo or Bake / detach first");
         if (!change.value && !change.keyed && !change.incoming)
             return invalid("Empty keyframe property change");
         if (change.keyed == false && times.front() == 0)
@@ -165,6 +167,7 @@ content::Result<void> add_keyframe(State& state, f32 time) {
     // Sample before making any changes: insertion records the visible pose,
     // rather than snapping it back to the preceding timestamp.
     auto values = keyframe_values(state, time);
+    std::erase_if(values,[&](const auto& value){return animation_owner(state,value.target,time).has_value();});
     for (auto& field : values) {
         field.keyed = true;
         if (const auto* track = state.document.timeline.find(field.target)) {

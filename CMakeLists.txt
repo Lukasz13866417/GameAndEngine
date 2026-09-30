@@ -114,6 +114,7 @@ if(VNG_BUILD_EDITOR)
         examples/editor/preview_delivery_logic.cpp examples/editor/camera_edits.cpp
         examples/editor/camera_pointer_logic.cpp examples/editor/selection.cpp examples/editor/blueprint_gizmos.cpp examples/editor/vertex_drag.cpp
         examples/editor/scene_file.cpp examples/editor/animation.cpp examples/editor/playback.cpp
+        examples/editor/scene_animation.cpp examples/editor/scene_animation_io.cpp examples/editor/session_animations.cpp
         examples/editor/keyframes.cpp examples/editor/settings.cpp examples/editor/position_edits.cpp
         examples/editor/rotation_edits.cpp examples/editor/scale_edits.cpp examples/editor/transform_pivot.cpp examples/editor/edit_clipboard.cpp
         examples/editor/selection_edits.cpp examples/editor/document_patch.cpp)
@@ -129,6 +130,7 @@ if(VNG_BUILD_EDITOR)
         # draws through vng_ui without a GL context. The app and the UI tests
         # both link this; neither lists these sources again.
         add_library(vng_editor_ui STATIC
+            examples/editor/animation_gizmo.cpp examples/editor/workspace_ui_animations.cpp
             examples/editor/inspector_panel.cpp examples/editor/timeline_panel.cpp examples/editor/tool_panel.cpp
             examples/editor/blueprint_mesh_panel.cpp examples/editor/mesh_tools_ui.cpp examples/editor/mesh_menu.cpp
             examples/editor/mesh_editing_ui.cpp
@@ -301,6 +303,7 @@ if(VNG_BUILD_TESTS)
             tests/editor/navigation_tests.cpp tests/editor/selection_tests.cpp tests/editor/vertex_drag_tests.cpp
             tests/editor/viewport_shortcut_tests.cpp tests/editor/file_shortcut_tests.cpp
             tests/editor/scene_file_tests.cpp tests/editor/animation_tests.cpp tests/editor/playback_tests.cpp
+            tests/editor/scene_animation_tests.cpp
             tests/editor/keyframe_tests.cpp tests/editor/preview_viewport_tests.cpp
             tests/editor/settings_tests.cpp tests/editor/camera_instance_tests.cpp)
         target_sources(vng_editor_tests PRIVATE tests/editor/mesh_import_view_tests.cpp)
@@ -963,6 +966,8 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
             add_dependencies(vng_editor_worker_tests vng_editor_worker)
             vng_target_defaults(vng_editor_worker_tests)
             add_test(NAME vng_editor_worker_tests COMMAND vng_editor_worker_tests)
+            add_test(NAME vng_editor_animation_worker_tests COMMAND vng_editor_worker_tests --animation-only)
+            set_tests_properties(vng_editor_animation_worker_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180 LABELS "editor;opengl")
             set_tests_properties(vng_editor_worker_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 360 LABELS "editor;opengl")
         endif()
         if(VNG_BUILD_UI)
