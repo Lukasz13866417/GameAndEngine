@@ -240,6 +240,7 @@ private:
     u32 pasted_instance_{};
     u64 fleet_revision_{};
     std::vector<project::SceneInstance> group_before_;
+    std::vector<project::BlueprintId> group_blueprints_before_;
     std::vector<u64> keyframe_widget_ids_;
     project::SceneValues insertion_pose_;
     project::CameraPose insertion_camera_;
@@ -1716,6 +1717,9 @@ void Driver::multiselect_workflow() {
         if(!ready(o)) return false;
         require(o.state.document.instances.size()==2,"Wrong multi-selection fixture");
         group_before_=o.state.document.instances;fleet_revision_=o.state.document.revision;
+        group_blueprints_before_.clear();
+        for (const auto& blueprint : project::blueprint_catalog(o.state))
+            group_blueprints_before_.push_back(blueprint.id);
         imported_=2;
         key(input::Key::v,{.control=true}); // Empty authoring clipboard.
         return true;
@@ -1764,7 +1768,10 @@ void Driver::multiselect_workflow() {
     });
     wait("Delete removes only selected copies and retains blueprints",[this](const Observation& o) {
         if(!ready(o)) return false;
-        require(o.state.document.instances==group_before_ && project::blueprint_catalog(o.state).size()==4,"Batch delete damaged originals or blueprints");
+        require(o.state.document.instances==group_before_,"Batch delete damaged original instances");
+        require(std::ranges::equal(project::blueprint_catalog(o.state), group_blueprints_before_,
+                                  {}, &project::Blueprint::id),
+                "Batch delete damaged the blueprint catalog");
         key(input::Key::z,{.control=true});return true;
     });
     wait("Undo restores deleted group",[this](const Observation& o) {
