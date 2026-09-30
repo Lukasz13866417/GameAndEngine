@@ -1,4 +1,5 @@
 #include "departure_voyage.hpp"
+#include "../editor/scene_animation.hpp"
 #include "../support/asteroid_assets.hpp"
 #include "../support/space_assets.hpp"
 #include <algorithm>
@@ -258,6 +259,36 @@ struct Voyage {
     const Cast& cast;
     V earth_center{}, moon_center{};
     u32 flash{}, spark{}; // glowing spheres of radius 1 km (the far drive glow) and 0.1 km (sparks)
+    // Append controllers after all visible actors so existing actor IDs stay
+    // stable. These are ordinary serialized animation instances, not callbacks
+    // installed by the demo. The keyed version remains underneath for detach.
+    std::vector<std::pair<std::string,project::AnimationSettings>> animations{};
+    void spin(std::string name, u32 target, project::AnimationInterval interval, Vec3 initial, Vec3 rate) {
+        for (unsigned axis=0;axis<3;++axis) initial[axis]=std::remainder(initial[axis],360.F);
+        animations.emplace_back(std::move(name),project::AnimationSettings{
+            interval,true,project::SpinAnimation{target,initial,rate}});
+    }
+    void traffic_motion(std::string name, u32 target, V start, V finish) {
+        project::DepartureSequence departure;
+        departure.ship=target;
+        departure.motion.orient_to_path=false; // preserve the authored bank
+        departure.motion.speed={1,1,.5F};       // constant transit speed
+        departure.motion.initial_rotation=project::find_instance(state,target)->transform.rotation;
+        for (unsigned i=0;i<4;++i)
+            departure.motion.route.points[i]=to(lerp(start,finish,static_cast<double>(i)/3));
+        animations.emplace_back(std::move(name),project::AnimationSettings{
+            {handoff.time,moon_cut},true,departure});
+    }
+    void publish_animations() {
+        for (auto& [name,settings] : animations) {
+            const auto blueprint=std::holds_alternative<project::DepartureSequence>(settings.root)
+                ? project::BlueprintId::departure : project::BlueprintId::spin;
+            state.document.instances.push_back({state.document.next_instance_id++,blueprint,
+                "ANIMATION / "+name,std::move(settings),{}});
+        }
+        if (auto valid=project::validate_scene_animations(state);!valid)
+            throw std::runtime_error(valid.error().message);
+    }
     u32 add_blueprint(std::string name, content::vmesh::Document mesh) {
         const auto id=state.document.next_blueprint_id++;
         state.document.mesh_assets.push_back({static_cast<project::BlueprintId>(id),std::move(name),
@@ -369,6 +400,9 @@ Location earth_orbit(Voyage& v) {
         v.turn(ring_id,t,spun,Interpolation::linear);
         if (t>=moon_cut) break;
     }
+    auto ring_start=station_rotation;
+    ring_start.x+=static_cast<f32>(45+2.3*(t_h-ring_time));
+    v.spin("Gateway / habitat rotation",ring_id,{v.handoff.time,moon_cut},ring_start,{2.3F,0,0});
     // Station traffic uses the gateway like the skyway: through the ring,
     // each crossing it midway between two spokes.
     struct Traffic { u32 blueprint; const char* name; V from, to; f32 scale; };
@@ -382,6 +416,7 @@ Location earth_orbit(Voyage& v) {
         const auto id=v.add(craft.blueprint,craft.name,a,orientation(to(unit(b-a)),to(sy)),craft.scale);
         v.place(id,t_h,a);
         v.place(id,moon_cut,b,Interpolation::linear);
+        v.traffic_motion("Gateway / "+std::string(craft.name),id,a,b);
         parts.push_back(id);
     }
     // A freighter crossing close in front of the wide shot of the gateway,
@@ -394,6 +429,7 @@ Location earth_orbit(Voyage& v) {
         const auto id=v.add(static_cast<u32>(v.cast.transport),"Freighter / crossing",a,orientation(to(across),to(sy)),.9F);
         v.place(id,t_h,a);
         v.place(id,moon_cut,b,Interpolation::linear);
+        v.traffic_motion("Gateway / Freighter crossing",id,a,b);
         parts.push_back(id);
     }
     for (const auto id : parts) v.show(id,moon_cut,false);
@@ -911,6 +947,11 @@ Location belt(Voyage& v) {
         for (const auto u : {0.,.5,1.})
             v.turn(id,belt_cut+span*u,{static_cast<f32>(spin.x+rate*span*u),static_cast<f32>(spin.y+.6*rate*span*u),spin.z},
                    u>0 ? Interpolation::linear : Interpolation::hold);
+        // The four story obstacles get individual controls. Keep the hundreds
+        // of background fragments keyed instead of exhausting the root budget.
+        if (i<heroes.size())
+            v.spin("Belt / obstacle "+std::to_string(i+1)+" tumble",id,{belt_cut,duration},spin,
+                   {static_cast<f32>(rate),static_cast<f32>(.6*rate),0});
         v.show(id,belt_cut,true);
     }
 
@@ -1258,6 +1299,7 @@ content::Result<void> author(project::State& state, KeyBatch& keys, const Handof
     names[static_cast<f32>(jump_time)]="23 / The jump";
     names[static_cast<f32>(jump_time+4.6)]="24 / Home";
     state.document.timeline_duration=duration;
+    v.publish_animations();
     return {};
 } catch (const std::exception& error) {
     content::Diagnostic diagnostic;

@@ -577,6 +577,11 @@ Open the architecture map's **Animation forest** view for a clickable example
 of the concrete ownership tree and evaluation order. This is a source-backed
 architecture view, not a live inspector of an open scene.
 
+The [departure cinematic](tunnel.md#editing-the-cinematics-animation-instances)
+uses this system for five gateway traffic routes, its rotating habitat ring,
+and four asteroid obstacles. Select its `ANIMATION / …` instances to edit
+them; the courier's detailed flight and camera choreography remain keyed.
+
 **Animation / Departure** and **Animation / Spin** are normal builtin blueprints.
 Their instances live in `Document::instances`, with `AnimationSettings` in the
 same settings variant as meshes, cameras and regions. They have no rendered

@@ -57,10 +57,12 @@ moves, not cuts or crossfades, and never pass through the ship.
 | 17.07–19.39 s | Closer side-offset exit approach; the surge from 18 s; clear the mouth at ~18.59 s |
 | 19.39 s– | The voyage: pull up into the sky (below) |
 
-Positions, headings, lenses and visibility are serialized timeline tracks;
-there are no playback callbacks hidden in the demo. Keyframe names mark story
-beats; intermediate motion samples remain editable. The geometry recipes and
-shot-authoring helpers live in `examples/scenes/tunnel_departure.cpp`.
+The courier's positions, headings, camera shots and visibility are serialized
+timeline tracks; there are no playback callbacks hidden in the demo. Gateway
+traffic and selected rotating objects also have editable animation instances
+(below). Keyframe names mark story beats; intermediate motion samples remain
+editable. The geometry recipes and shot-authoring helpers live in
+`examples/scenes/tunnel_departure.cpp`.
 
 The original slow interior study is preserved:
 
@@ -75,7 +77,38 @@ In the slow study the shell and collars remain separate demonstration meshes.
 In the departure cinematic, the tunnel, collars and exit are part of the Earth
 blueprint itself: **Arabian express / cinematic local**. There is no separate
 cinematic shell or terminal instance. Camera and craft movement use normal
-timeline tracks. Select a keyframe before editing animated instance transforms.
+timeline tracks. Select a keyframe before editing keyed instance transforms.
+
+## Editing the cinematic's animation instances
+
+The scene contains ten ordinary instances named **ANIMATION / …**, using the
+[animation forest](editor_components.md#scene-animation-forests). Select one
+in **Scene instances** to open its animation gizmo:
+
+| Instance name | Live controls | Active interval |
+| --- | --- | --- |
+| `ANIMATION / Gateway / …`: `Freighter / inbound`, `Shuttle / outbound`, `Tug / pod racks`, `Patrol / picket`, `Freighter crossing` | Route control points, speed profile, turbulence, interval, targets | ~19.39–50.3 s |
+| `ANIMATION / Gateway / habitat rotation` | Rotation rate in degrees/second, interval, target | ~19.39–50.3 s |
+| `ANIMATION / Belt / obstacle 1 tumble` through `obstacle 4 tumble` | Rotation rate, interval, target | 72.5–116 s |
+
+For example, scrub to **31.4 s**, select **ANIMATION / Gateway / Freighter
+crossing**, then choose **Speed profile** or **Ship motion / Route**. Changing
+the parameters updates that ship without rewriting the camera or courier's
+keys. **Route length / interval duration** sets the overall speed; the start
+and end speed weights control its distribution. Defaults preserve the original
+constant-speed crossing, with zero turbulence and the authored ship orientation.
+
+Each controller overlays its target's original keys only during its enabled
+interval. **Enabled** off or **Remove animation** restores those keys;
+**Bake / detach to keyframes** commits the evaluated motion for direct keyframe
+editing. Visibility remains keyed independently, so extending an interval does
+not automatically extend the time an object is shown.
+
+The courier and camera still use their detailed authored tracks: the generic
+four-point Departure route cannot faithfully replace the curved tunnel,
+multi-stage flight, camera cuts and synchronized drive effects. The hundreds
+of background rocks also remain keyed, reserving the animation-root budget
+for useful individual controls rather than consuming it with filler objects.
 
 ## The voyage
 

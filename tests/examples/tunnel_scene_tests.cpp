@@ -3,6 +3,7 @@
 #include "scenes/key_batch.hpp"
 #include "editor/animation.hpp"
 #include "editor/rotation_math.hpp"
+#include "editor/scene_animation.hpp"
 #include "support/earth_assets.hpp"
 #include "support/earth_structures.hpp"
 #include "support/earth_placement.hpp"
@@ -426,6 +427,89 @@ TEST_CASE("Express departure has a continuous close camera and clears the low te
     const auto restored=p::decode(*encoded);REQUIRE(restored);
     CHECK(p::active_camera(*restored,40)->id==d::camera_id);
     CHECK(p::evaluate_camera(*restored,40)==p::evaluate_camera(*scene,40));
+}
+
+TEST_CASE("Departure uses editable animation roots without changing its choreography", "[example][tunnel][departure][animation]") {
+    using namespace vng;
+    namespace d=example::tunnel::departure;
+    namespace p=editor_example;
+    auto scene=d::author_scene(VNG_TUNNEL_ASSETS);
+    REQUIRE(scene);
+    REQUIRE(p::validate_scene_animations(*scene));
+    unsigned departures{},spins{};
+    const auto distance=[](Vec3 a,Vec3 b){return std::hypot(a.x-b.x,a.y-b.y,a.z-b.z);};
+    for (const auto& instance:scene->document.instances) {
+        const auto* animation=std::get_if<p::AnimationSettings>(&instance.settings);
+        if (!animation) continue;
+        INFO(instance.name);
+        CHECK(instance.name.starts_with("ANIMATION / "));
+        if (const auto* departure=std::get_if<p::DepartureSequence>(&animation->root)) {
+            ++departures;
+            CHECK(departure->camera==0);
+            CHECK_FALSE(departure->motion.orient_to_path);
+        } else ++spins;
+        // The original keys are a reversible fallback, not a second active
+        // writer. Check dense samples and both exact interval boundaries.
+        std::vector<f32> times{animation->interval.first,animation->interval.last};
+        for (f32 t=0;t<=d::duration;t+=.25F) times.push_back(t);
+        for (const auto& output:p::animation_outputs(*animation)) {
+            CHECK(output.object!=d::hero);
+            CHECK(output.object!=d::camera_id);
+            const auto* target=p::find_instance(*scene,static_cast<u32>(output.object));
+            REQUIRE(target);
+            REQUIRE(scene->document.timeline.find(output));
+            for (const auto time:times) {
+                INFO(time);
+                const auto raw=scene->document.timeline.sample(output,time);
+                REQUIRE(raw);
+                const auto authored=std::get<Vec3>(*raw);
+                const auto pose=p::evaluate_transform(*scene,*target,time);
+                const auto actual=output.property=="position"?pose.position:pose.rotation;
+                if (!animation->interval.contains(time)) CHECK(actual==authored);
+                else if (output.property=="position") CHECK(distance(actual,authored)<.001F); // <1 m in km units
+                else for (const Vec3 axis:{Vec3{1,0,0},Vec3{0,1,0},Vec3{0,0,1}})
+                    CHECK(distance(p::rotation_math::direction(actual,axis),p::rotation_math::direction(authored,axis))<.00001F);
+                p::InstanceTransform bulk=target->transform;
+                p::AnimationFrame frame(scene->document.instances,time);
+                frame.apply(target->id,bulk);
+                if (animation->interval.contains(time))
+                    CHECK((output.property=="position"?bulk.position:bulk.rotation)==actual);
+            }
+        }
+    }
+    CHECK(departures==5);
+    CHECK(spins==5); // habitat ring and four story-critical belt obstacles
+
+    auto root=std::ranges::find(scene->document.instances,std::string("ANIMATION / Gateway / Freighter crossing"),&p::SceneInstance::name);
+    REQUIRE(root!=scene->document.instances.end());
+    auto& settings=std::get<p::AnimationSettings>(root->settings);
+    const auto original=settings;
+    auto& motion=std::get<p::DepartureSequence>(settings.root).motion;
+    const auto* target=p::find_instance(*scene,std::get<p::DepartureSequence>(settings.root).ship);
+    REQUIRE(target);
+    const auto before=p::evaluate_transform(*scene,*target,31.4F).position;
+    const auto camera_before=p::evaluate_transform(*scene,*p::find_instance(*scene,d::camera_id),31.4F);
+    const auto hero_before=p::evaluate_transform(*scene,*p::find_instance(*scene,d::hero),31.4F);
+    motion.speed.final=3;
+    REQUIRE(p::validate_scene_animations(*scene));
+    CHECK(distance(before,p::evaluate_transform(*scene,*target,31.4F).position)>1);
+    CHECK(p::evaluate_transform(*scene,*p::find_instance(*scene,d::camera_id),31.4F)==camera_before);
+    CHECK(p::evaluate_transform(*scene,*p::find_instance(*scene,d::hero),31.4F)==hero_before);
+    settings.enabled=false;
+    const auto raw=scene->document.timeline.sample({target->id,"position"},31.4F);
+    REQUIRE(raw);
+    CHECK(p::evaluate_transform(*scene,*target,31.4F).position==std::get<Vec3>(*raw));
+    settings=original;
+
+    const auto encoded=p::encode(*scene);REQUIRE(encoded);
+    const auto restored=p::decode(*encoded);REQUIRE(restored);
+    for (const auto& instance:scene->document.instances)
+        if (const auto* animation=std::get_if<p::AnimationSettings>(&instance.settings)) {
+            const auto* copy=p::scene_animation(*restored,instance.id);
+            REQUIRE(copy);
+            CHECK(*copy==*animation);
+            CHECK(p::animation_debug_string(*copy).find("writes #")!=std::string::npos);
+        }
 }
 
 TEST_CASE("The departure keeps a margin under the editor's 64 MiB decoded limit", "[example][tunnel][departure]") {

@@ -11,7 +11,7 @@
 // sub-centimetre 32-bit precision; bodies that appear in several locations
 // jump to their next stage at the camera cuts between locations. The sun is
 // placed along one fixed direction in every stage, as if infinitely far.
-// Everything is ordinary instances and timeline keys, in kilometres.
+// Everything is ordinary instances, animation roots and timeline keys, in kilometres.
 namespace example::tunnel::voyage {
 // What the skyway act hands over once the courier has cleared the terminal.
 struct Handoff {
