@@ -99,10 +99,10 @@ console.log([...new Set(s)].sort().join("\n"))'
 
 ## 4. CMake links of guide-mapped targets
 
-- The guide maps every engine library, the editor libraries and executables, and some example support libraries.
-  List them with `grep -o 'component("vng_[a-z0-9_]*"' docs/explore/codebase.js`. The scene libraries (such as
-  `vng_tunnel_scene` and `vng_earth_scene`), `vng_spaceflight_support` and `vng_scene_demo_support` are unmapped, so
-  the test does not check their links.
+- The guide maps every CMake library, including scene authoring, review documents and example support.
+  List them with `grep -o 'component("vng_[a-z0-9_]*"' docs/explore/codebase.js`. Non-test executables
+  either have a component card or an entry in `programs`. `architecture.test.cjs` checks completeness,
+  direct links and reverse Used by links against CMake; include it in documentation checks.
 - When you change `target_link_libraries` of a mapped target, update its `component(target, title, summary,
   description, files, dependencies, options)` entry in `docs/explore/codebase.js`:
   - `dependencies`: the mapped targets it links. They share `options.visibility`, which defaults to `PUBLIC`. A
@@ -114,7 +114,7 @@ console.log([...new Set(s)].sort().join("\n"))'
   first `)`. A generator expression containing `)` in a mapped target's link list breaks the parse. Links inside
   `if()` branches are merged. `add_library(<target>` (or `add_executable(<target>`) must be followed by whitespace.
 - For a new engine module (a directory under `include/vng` and `src`), `tests/layering/layering.test.cjs`
-  (`moduleTargets`) requires a mapping. No test forces the target into the guide, but add it by convention: a
+  (`moduleTargets`) requires a mapping. The architecture test also requires the library in the guide: a
   `component(...)` entry in `codebase.js` and a `describe("vng_<dir>", [...])` in `codebase-details.js`. Once the entry
   exists, the test requires ≥ 2 sections totalling ≥ 450 characters. Then mention the module in `docs/codebase.md`.
 

@@ -112,6 +112,9 @@
       ["vng_ui", "vng_text_opengl"], { kind: "Integration", external: external("vng_glad_dependency") })
   ];
   const applications = [
+    component("vng_review_file", "Scene review documents", "Read, merge and atomically save review notes and candidate scene references without a renderer.",
+      "Review holds candidate scenes, timestamps, pinned notes and verdicts in a .vreview document. Its codec resolves scene paths relative to the review file. Field-wise three-way merging preserves independent reviewer and author edits; it does not change the scene files being reviewed.",
+      ["examples/review/review_file.hpp", "examples/review/review_file.cpp", "tests/examples/review_tests.cpp", "docs/review.md"], ["vng_content"], { kind: "App library" }),
     component("vng_earth_assets", "Earth asset authoring", "Generate the stylized Earth mesh and edit its named cloud formations on the CPU.",
       "make_mesh builds the Earth blueprint offline as an ordinary .vmesh document. Cloud settings, formation identities and move/turn/add/remove edits live in that document, so the editor can present them as ordinary blueprint controls. This is procedural content policy, not a renderer: it depends on vng_content only, never on OpenGL or the editor.",
       ["examples/support/earth_assets.hpp", "examples/support/earth_clouds.hpp", "examples/support/earth_edit.cpp", "tests/examples/earth_assets_tests.cpp"], ["vng_content"], { kind: "App library" }),
@@ -188,6 +191,7 @@
   // Non-test executables without a card. Their direct links, with the cards',
   // make Used by complete; tests compare both with CMakeLists.txt. PRIVATE links.
   const programs = [
+    ["vng_review", "vng_review_file", "vng_editor_runtime", "vng_ui_opengl", "vng_example_support", "vng_example_presentation"],
     ["vng_make_spaceship", "vng_content"], ["vng_make_fleet", "vng_content"], ["vng_document_demo", "vng_content"],
     ["vng_make_earth", "vng_earth_scene"], ["vng_make_fleet_scene", "vng_fleet_scene"],
     ["vng_make_asteroid_scene", "vng_asteroid_scene"], ["vng_make_tunnel_scene", "vng_tunnel_scene"],

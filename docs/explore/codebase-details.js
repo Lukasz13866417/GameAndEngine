@@ -11,6 +11,11 @@
   });
   const describe = (target, sections) => { byTarget.get(target).sections = sections; };
 
+  describe("vng_review_file", [
+    section("Reviews refer to scenes; they do not author them", "review::Review contains one to four Candidate records, Note records with a time and optional world-space click point, and the reviewer's summary and verdict. read_review and encode_review use the engine document format, resolve scene paths relative to the review file, and validate identities, text and limits. This library needs neither editor state nor a graphics context.", "examples/review/review_file.hpp"),
+    section("File changes and rendering have separate owners", "save_review stages a sibling file, flushes it and renames it over the destination while preserving permissions and symbolic links. merge(base, mine, theirs) combines independent field edits, with local changes winning same-field conflicts. The vng_review executable watches these files and owns its UI; each CandidateView separately owns one loaded scene and Runtime with asynchronous image readback. Scene files themselves are never rewritten by reviewing them.", "examples/review/candidate_view.hpp")
+  ]);
+
   describe("vng_core", [
     section("Values, not engine services", "i32, u32 and f32 name the widths used by records and shader contracts. Vec2/3/4 and Mat3/4 are small value types; matrices store columns. A CPU Vec3 is ordinary data, whereas dsl::Float3 records a shader calculation. Sharing the logical type does not make their execution or storage interchangeable.", "include/vng/core/types.hpp"),
     section("Units and clocks stay explicit", "Use degrees(...) or radians(...) for angle intent rather than guessing an unlabelled float's unit. The monotonic clock is for elapsed intervals, not dates or serialized timeline identity. This target has no application, scene, renderer or global resource owner to initialize.", "include/vng/core/monotonic_clock.hpp")

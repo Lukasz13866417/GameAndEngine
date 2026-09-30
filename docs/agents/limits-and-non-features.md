@@ -5,7 +5,7 @@ grows a scene, or before you go looking for a feature (transparency, textures, c
 
 **TL;DR**
 - The limits that bite first are **64 MiB per `.vscene`**, which applies both on disk and decoded, and **16,384 timeline
-  keys** in total, with **4,096 per track**. Meshes cap at **131,072 vertices**.
+  keys** in total, with **4,096 per track**. Meshes cap at **196,608 vertices**.
 - Measure a scene with `./build/vng_scene_probe SCENE --size` (~20 s). Current usage is in [status.md](status.md).
 - Value ranges are checked when a file is loaded, not just when it is edited. One bad value fails the whole scene. Editor
   preferences are the exception: they only block growth.
@@ -116,10 +116,10 @@ When exceeded:
 
 | Limit | Value | Source | When exceeded |
 |---|---|---|---|
-| Vertices per editor mesh | 131,072 | `include/vng/editor/mesh.hpp` `max_mesh_vertices` | `Vertex count exceeds the configured limit` on import, load or embed |
+| Vertices per editor mesh | 196,608 | `include/vng/editor/mesh.hpp` `max_mesh_vertices` | `Vertex count exceeds the configured limit` on import, load or embed |
 | Faces / edges / scalar values | 262,144 / 524,288 / 4 Mi | `src/editor/mesh.cpp` `mesh_limits` | `Face count ...` / `Edge count ...` / `Vertex scalar count exceeds ...` |
 | `.vmesh` source text / decoded | 32 MiB / 32 MiB | `mesh_limits` | `.vmesh source exceeds the configured byte limit` / `... exceeds the configured decoded-byte budget` |
-| Earth vertices (terrain + clouds + infrastructure) | 131,072 | `examples/support/earth_infrastructure.hpp` `max_earth_vertices` | `Earth mesh vertex budget exceeded (N / 131072); ...` |
+| Earth vertices (terrain + clouds + infrastructure) | 180,224 | `examples/support/earth_infrastructure.hpp` `max_earth_vertices` | `Earth mesh vertex budget exceeded (N / 180224); ...` |
 | Earth infrastructure parts | 256 | `examples/support/earth_infrastructure_edit.cpp` | `At most 256 infrastructure parts are supported` |
 | Part fields | name ≤ 128 chars; `curve_segments` 8–256; ≤ 14 Bézier controls; ≤ 64 scaffold positions; terminal incline 0–60° | `earth_infrastructure_edit.cpp` `valid()` | Part rejected |
 | Skyway endpoints | 0.1°–150° apart | `examples/support/earth_skyway.hpp` | `Tunnel endpoints must be 0.1–150 degrees apart` |

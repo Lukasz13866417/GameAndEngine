@@ -56,7 +56,7 @@ Read this when you add, regenerate, replace or hand-edit anything in `examples/a
 
 ```sh
 ls -lS examples/assets                                         # sizes
-grep -m1 '^vertices' examples/assets/earth_future.vmesh        # vertex count of one mesh (limit 131,072)
+grep -m1 '^vertices' examples/assets/earth_future.vmesh        # Earth authoring limit 180,224; editor limit 196,608
 grep -o 'vertices [0-9]* {\|name = \\"[^\\]*\\"' examples/assets/earth_future.vscene | paste - -   # meshes embedded in a scene
 ./build/vng_scene_probe examples/assets/fleet_reveal.vscene --list                 # id, kind, instance, blueprint (~1 s)
 ./build/vng_scene_probe examples/assets/tunnel_departure.vscene --size             # budgets (~20 s in Debug)
@@ -194,7 +194,10 @@ geometry is baked into the same mesh. Two per-vertex fields record which part ow
   named "Arabian express / cinematic local" (whether that fits the vertex budget is unverified). Check the marker
   first: `grep 'network-revision' examples/assets/earth_future.vmesh`.
 
-### Vertex budget: 131,072 per mesh (`max_earth_vertices`, equal to the editor's `max_mesh_vertices`)
+### Vertex budget
+
+Earth authoring allows 180,224 vertices (`max_earth_vertices`), below the editor's
+196,608 per-mesh limit (`max_mesh_vertices`). Byte budgets still apply independently.
 ```sh
 grep -m1 '^vertices' examples/assets/earth_future.vmesh              # total
 grep -o '^    earth/infrastructure/part/[0-9]* = "[0-9]' examples/assets/earth_future.vmesh \
@@ -215,7 +218,7 @@ awk '/^vertices /{v=1} /^faces /{v=0} v && /^ *\[/{split($0,f,/[][]/); n[f[12]]+
        <(awk '/^vertices /{v=1} /^faces /{v=0} v && /^ *\[/{split($0,f,/[][]/); n[f[14]]++} END{for(k in n) print k, n[k]}' $F \
            | sort -k1,1) | sort -n
   ```
-- An edit over budget fails with `Earth mesh vertex budget exceeded (N / 131072)...`. Single-part edits patch
+- An edit over budget fails with `Earth mesh vertex budget exceeded (N / 180224)...`. Single-part edits patch
   vertices in place only when the part's topology is unchanged.
 
 ### Recipe 4: change Earth's infrastructure by hand and carry it into the cinematic

@@ -60,7 +60,7 @@ Orientation reads: [docs/codebase.md](../codebase.md) sections "Editor ownership
 | Authoring boundary | `editing_session.*`, `session_operations.cpp`, `instance_movement.hpp` (typed move edit) | `vng_editor_project` | stable; new operations get added | `vng_editor_tests "[session]"` |
 | Transport | `preview_delivery_logic.*`, `viewport_session.hpp`, `preview_logic.hpp`, `preview_mailbox.hpp`, `include/vng/editor/preview.hpp`, `src/editor/preview.cpp`, `examples/editor_worker.cpp` | `vng_editor_project`, `vng_editor_preview`, worker (`preview_logic.hpp` is header-only) | stable | `vng_editor_tests` (`update_tests.cpp`), `vng_editor_preview_tests`, `vng_editor_worker_tests` |
 | Rendering | `runtime.cpp`, `mesh_shading.hpp`, `blueprint_mesh_renderer.cpp`, `mesh_programs.cpp`, `scene_annotations.cpp` | `vng_editor_runtime` | stable | `vng_editor_runtime_tests`, scene `*_render_tests` |
-| UI components | `workspace_ui.hpp` + `workspace_ui_{interaction,picking,proposals,viewport}.cpp`, `workspace_{selection,situation}.hpp`, `viewport_{tools_ui,input,context,picking}.hpp`, `mesh_{editing_ui,tools_ui,menu}.*`, `timeline_editing_ui.*`, `scene_lists.*`, `move_gizmo.hpp`, `*_gizmo.hpp`, `camera_{navigation,walk}_logic.hpp`, `*_tool.*`, `*_panel.*`, `*_dialog.*`, `component_dispatch.hpp` | `vng_editor_ui` (many header-only) | rules stable (section 6); names and context fields still change | `vng_editor_ui_tests`, e2e |
+| UI components | `workspace_ui.hpp` + `workspace_ui_*.cpp`, `workspace_{selection,situation}.hpp`, `viewport_{tools_ui,input,context,picking}.hpp`, `mesh_{editing_ui,tools_ui,menu}.*`, `timeline_editing_ui.*`, `scene_lists.*`, `move_gizmo.hpp`, `camera_gizmo.*`, `camera_walk_logic.hpp`, `*_tool.*`, `*_panel.*`, `*_dialog.*`, `component_dispatch.hpp` | `vng_editor_ui` (many header-only) | rules stable (section 6); names and context fields still change | `vng_editor_ui_tests`, e2e |
 | Composition root | `app.cpp`, `mesh_overlay.cpp`, `viewport_window.cpp` | `vng_editor_app` (static library) | churns with the UI layer | `vng_editor_overlay_tests` (`mesh_overlay.cpp`), e2e |
 
 `camera_pointer_logic.cpp` is in `vng_editor_project`, not `vng_editor_ui`, because the worker also uses it.
@@ -333,7 +333,7 @@ run() in app.cpp: host (windows, Screens, toolbars, host panels and dialogs, sho
 │   ├── EditingViewportUI     MeshEditingUI (MeshToolsUI → MeshMenu, MeshOperationControls),
 │   │   │                     MeshNavigationControls, ToolPanel, GizmoSelector, RotationPivotControls,
 │   │   │                     BlueprintMeshPanel
-│   │   └── ViewportToolsUI   input priority; CameraNavigationLogic, GizmoControls, SelectionInputLogic,
+│   │   └── ViewportToolsUI   input priority; CameraGizmo, GizmoControls, SelectionInputLogic,
 │   │                         SceneMoveGizmo, Instance{Transform,Rotation}Gizmo, MeshTransformGizmo,
 │   │                         RegionEditor, SurfacePartTool, ...
 │   ├── SceneLists

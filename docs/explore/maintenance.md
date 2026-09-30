@@ -1,5 +1,17 @@
 # Documentation maintenance handoff
 
+## PR integration checks · 2026-09-30
+
+Reconciled the agent guides, review app and architecture-map changes together.
+Added `vng_review_file` and `vng_review` to the component/dependency catalog, with
+source-linked explanations of review persistence and candidate rendering. Updated
+the evergreen mesh budgets and map-maintenance rules against their source constants
+and completeness tests. The historical measurements below remain dated snapshots.
+
+Validation: all 34 layering, guide-content and architecture-data tests pass. The
+combined C++ build and hidden-window regression suite are checked separately during
+PR integration; no browser interaction/layout changes were made in this pass.
+
 ## Architecture map checks · 2026-09-29
 
 `architecture.html` is the sixth page. What keeps its data honest:
