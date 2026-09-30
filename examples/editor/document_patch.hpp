@@ -38,6 +38,7 @@ struct DocumentPatch {
     };
     std::vector<MeshDraft> meshes{};
     std::map<BlueprintId, std::optional<MeshPlacement>> mesh_placements{};
+    std::map<vng::u32, AnimationSettings> animations{};
     friend bool operator==(const DocumentPatch&, const DocumentPatch&) = default;
 };
 [[nodiscard]] DocumentChanges changes_of(const DocumentPatch&);

@@ -30,9 +30,14 @@ Read this when you change anything in `examples/editor/`, `examples/editor.cpp`,
     `pilot_camera` and the view toggles go only to the worker (`encode`; `include_editor_view` in `project.cpp`),
     not to disk. The reader still accepts them from older files.
 - **Content** is blueprints (shared geometry or effect defaults) plus instances. An instance has an id, a blueprint, a
-  name, a transform and its own `settings` variant: `MeshSettings | SunSettings | RegionSettings | CameraSettings`.
+  name, a transform and its own `settings` variant: `MeshSettings | SunSettings | RegionSettings | CameraSettings | AnimationSettings`.
 - **Animation** is a neutral `vng::timeline::Timeline` addressed by `(instance id, property name)`. `animation.*` maps
   it onto instances. Evaluation never mutates the document.
+  Scene-owned animation instances (`scene_animation.*`) additionally override explicitly claimed properties
+  during their intervals. Their typed children evaluate first; the parent combines results. Enabled roots may
+  share targets only when their property/time scopes do not overlap. `AnimationFrame` shares sampled results;
+  parameter edits use `DocumentChanges::animations` and root-only document patches. See
+  [animation forests](../editor_components.md#scene-animation-forests).
 - **Edits flow** as follows. `EditingSession` publishes an `EditNotice` (revision + `DocumentChanges`) through
   `take_changes()`. The host passes the changes to `PreviewLogic`, whose `PreviewDeliveryLogic`
   (`preview_delivery_logic.*`) turns them into narrow patches for the worker. Structural edits (import, create/delete
@@ -131,7 +136,7 @@ cmake --build build --target vng_editor_tests vng_editor_ui_tests -j 12
 | 1 | `./build/vng_editor_tests` | ~6 s | always (model, session, files, shortcuts, settings, delivery) |
 | 2 | `./build/vng_editor_ui_tests` | ~16 s | panels, tools, workspace, gizmos, input (`"[workspace]"`, `"[parent-coordination]"`, `"[movement-binding]"`, `"[workspace-picking]"`, `"[input-routing]"`, `"[dispatch]"`) |
 | 3 | `./build/vng_editor_preview_tests` | ~2 s | `src/editor/preview.cpp` |
-| 4 | `./build/vng_editor_worker_tests` | ~24 s | protocol, worker, runtime. Not Catch2, so no filter. Starts Independent Play (section 3) |
+| 4 | `./build/vng_editor_worker_tests` | ~24 s | protocol, worker, runtime. Not Catch2. Starts Independent Play (section 3); `--animation-only` runs only the hidden animation-patch check |
 | 5 | `./build/vng_editor_runtime_tests` | **~90 s** | `runtime.cpp`, `mesh_shading.hpp`, renderers. Set a tool timeout |
 | 6 | `./build/vng_editor_e2e_tests [--popout\|--multi] --artifacts "$S/e2e"` | ~8 s each; main run (no flag) ~47 s | any UI or `app.cpp` change. Not Catch2 |
 | 7 | `./build/vng_editor_e2e_tests --fleet\|--earth --artifacts "$S/e2e"` | ~34 s and ~38 s | scene generators, big-scene UI paths |

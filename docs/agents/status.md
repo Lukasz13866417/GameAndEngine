@@ -8,9 +8,12 @@ The 2026-09-28 branch/checkouts/budget records below are historical, not current
 instructions. Re-check merge status with `gh pr list --state open` and fetch
 `origin/main` before choosing a base.
 
-The main checkout is on `feature/scene-animation-forest` with substantial
-uncommitted animation work. It was deliberately left untouched by this review;
-do not discard or switch it to main to catch up with the merged PRs.
+The animation-forest feature was isolated from the old checkout and integrated
+on `feature/scene-animation-forest-merge`, based on the merged PRs above. Check
+`git log origin/main -- examples/editor/scene_animation.cpp` for its merge.
+The main checkout remains on `feature/scene-animation-forest` with its original
+uncommitted files; this integration deliberately leaves those files and its
+index untouched. Do not discard or switch it merely to catch up with main.
 
 Current source limits are 196,608 editor-mesh vertices and 180,224 Earth-authoring
 vertices. The scene decoded-byte budget remains 64 MiB. The architecture catalog

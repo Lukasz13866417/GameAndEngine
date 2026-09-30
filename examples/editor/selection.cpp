@@ -113,10 +113,11 @@ std::optional<Pick> pick(const State& state, vng::Vec2 pixel, vng::Extent2D exte
     // render camera's clipping planes even near the viewport's corners.
     double nearest = std::numeric_limits<double>::infinity();
     std::optional<u32> selected;
+    const AnimationFrame animations{state.document.instances,state.viewport.time};
     for (const auto& source : state.document.instances) {
         if(state.viewport.hides_surface(source.id))continue;
         if (!std::holds_alternative<SunSettings>(source.settings) || !instance_in_view(state, source)) continue;
-        const auto instance = evaluate_instance(state, source, state.viewport.time);
+        const auto instance = evaluate_instance(state, source, state.viewport.time, &animations);
         const auto* sun = std::get_if<SunSettings>(&instance.settings);
         if (!sun->visible) continue;
         // sun_shaders.cpp: |height| <= .5*.013 + .5*.004 + .001.
@@ -138,7 +139,7 @@ std::optional<Pick> pick(const State& state, vng::Vec2 pixel, vng::Extent2D exte
             !evaluate_visibility(state, source, state.viewport.time)) continue;
         // Reuse the exact displayed geometry, including the protruding grip and
         // handle. Empty space around the body and the wire frustum isn't a hit.
-        const auto glyph = camera_glyph(evaluate_instance(state, source, state.viewport.time));
+        const auto glyph = camera_glyph(evaluate_instance(state, source, state.viewport.time, &animations));
         Mat4 model{};
         for(unsigned c=0;c<3;++c) {
             model[0][c]=glyph.right[c]*glyph.body;model[1][c]=glyph.up[c]*glyph.body;
@@ -158,7 +159,7 @@ std::optional<Pick> pick(const State& state, vng::Vec2 pixel, vng::Extent2D exte
         if (!settings || !instance_in_view(state, instance) || !evaluate_visibility(state, instance, state.viewport.time)) continue;
         const auto* geometry = mesh_geometry(state, instance.blueprint);
         if (!geometry) continue;
-        const auto model = mesh_transform(state,instance.blueprint,evaluate_transform(state, instance, state.viewport.time));
+        const auto model = mesh_transform(state,instance.blueprint,evaluate_transform(state, instance, state.viewport.time, &animations));
         if(statistics)++statistics->mesh_instances;
         const auto local=local_ray(ray,model,nearest);if(!local)continue;
         const auto hit=geometry->picking_index().intersect(*local,statistics?&statistics->geometry:nullptr);
@@ -179,7 +180,7 @@ vng::editor::Schema local_position_gizmo(const State& state, vng::u64 generation
     const auto* instance = find_instance(state, state.viewport.selected_object);
     if (!instance || state.viewport.mode != ViewMode::scene) return schema;
     const auto evaluated = evaluate_instance(state, *instance, state.viewport.time);
-    if (!std::visit([](const auto& value) { return value.visible; }, evaluated.settings))
+    if (!instance_visible(evaluated))
         return schema;
     const auto position = evaluated.transform.position;
     schema.controls.push_back({"position", "Position", editor::Kind::translation_gizmo,
@@ -194,11 +195,12 @@ std::vector<InstancePoint> project_instances(const State& state,const vng::gfx::
     if(state.viewport.mode==ViewMode::mesh) return points;
     points.reserve(state.document.instances.size());
     const auto& m=snapshot.view_projection;
+    const AnimationFrame animations{state.document.instances,state.viewport.time};
     for(const auto& source:state.document.instances) {
         // Marker projection needs neither names/materials nor per-instance
         // region boundaries. Do not clone those just to obtain an origin.
         if(!instance_in_view(state,source) || !evaluate_visibility(state,source,state.viewport.time)) continue;
-        const auto p=evaluate_transform(state,source,state.viewport.time).position;
+        const auto p=evaluate_transform(state,source,state.viewport.time,&animations).position;
         vng::Vec4 clip{};
         for(std::size_t r=0;r<4;++r) clip[r]=m[0][r]*p.x+m[1][r]*p.y+m[2][r]*p.z+m[3][r];
         if(clip.w<=1e-6F || std::abs(clip.z)>clip.w || std::abs(clip.x)>clip.w || std::abs(clip.y)>clip.w) continue;
@@ -230,7 +232,7 @@ vng::editor::Schema selection_gizmo_schema(const State& state,
     const auto* selected = find_instance(state, state.viewport.selected_object);
     const auto values = selected ? std::optional{evaluate_instance(state, *selected, state.viewport.time)}
                                  : std::nullopt;
-    const bool visible = values && std::visit([](const auto& value) { return value.visible; }, values->settings);
+    const bool visible = values && instance_visible(*values);
     if (!selected || !visible ||
         source.stamp.object != state.viewport.selected_object || source.stamp.revision != state.document.revision) {
         std::erase_if(result.controls, [](const auto& control) {
@@ -274,7 +276,7 @@ vng::content::Result<bool> apply_animated_translation(State& state,
         !std::holds_alternative<Vec3>(event.values.front().value))
         return invalid("Animated translation requires one applied position value");
     const auto values = evaluate_instance(state, *selected, state.viewport.time);
-    if (!std::visit([](const auto& value) { return value.visible; }, values.settings))
+    if (!instance_visible(values))
         return invalid("Cannot translate a hidden animated object");
     const auto position = std::get<Vec3>(event.values.front().value);
     const auto current = values.transform.position;

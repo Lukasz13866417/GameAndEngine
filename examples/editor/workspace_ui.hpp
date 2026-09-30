@@ -16,6 +16,7 @@
 #include "world_bounds_panel.hpp"
 #include "viewport_camera_ui.hpp"
 #include "edit_shortcuts.hpp"
+#include "animation_gizmo.hpp"
 #include <stdexcept>
 
 namespace editor_example {
@@ -70,6 +71,7 @@ public:
         if(gizmo_selector_)report.children.push_back(gizmo_selector_->debug_report());
         if(rotation_pivot_)report.children.push_back(rotation_pivot_->debug_report());
         if(camera_)report.children.push_back(camera_->debug_report());
+        if(animation_gizmo_)report.children.push_back(animation_gizmo_->debug_report());
         return report;
     }
     [[nodiscard]] std::string debug_string() const { return debug_report().string(); }
@@ -131,6 +133,7 @@ private:
     ToolPanel tools_;
     std::optional<BlueprintMeshPanel> blueprint_panel_;
     std::optional<ViewportCameraUI> camera_;
+    std::optional<AnimationGizmo> animation_gizmo_;
     std::optional<ViewportToolsUI> interaction_;
     std::optional<GizmoSelector> gizmo_selector_;
     std::optional<RotationPivotControls> rotation_pivot_;
@@ -185,6 +188,9 @@ public:
                                 bool playing,bool pending,bool visible,bool modal);
     // Active interaction lifecycle and its dependent presentation.
     MeshEditingReply poll_blueprint_controls(bool enabled);
+    void create_animation_controls(BlueprintId);
+    WorkspaceFeedback poll_animation_controls(bool enabled,std::span<const vng::input::Event> events={});
+    const AnimationGizmo& animation_gizmo() const {return *viewport_->animation_gizmo_;}
     WorkspaceFeedback finish_interaction(ViewportTool,bool cancelled);
     WorkspaceFeedback cancel_interaction();
     WorkspaceFeedback poll_gizmos(int cycle);

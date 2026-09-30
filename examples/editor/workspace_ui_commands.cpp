@@ -56,6 +56,7 @@ std::string EditingWorkspaceUI::select_scene_instance(u32 object,editor::Selecti
     viewport().mode=ViewMode::scene;select_instance(object,mode);
     if(panels_)interaction_mode(InteractionMode::objects);
     if(isolated)view_changed();
+    if(is_animation_blueprint(find_instance(state(),object)->blueprint))show_tab(SidebarTab::properties);
     return selection_message_;
 }
 std::string EditingWorkspaceUI::open_mesh(BlueprintId blueprint) {
@@ -89,6 +90,7 @@ WorkspaceFeedback EditingWorkspaceUI::poll_scene_lists(std::span<const input::Ev
     if(actions.blueprint) {
         const auto id=actions.blueprint->id;
         if(actions.blueprint->create_instance) {
+            if(is_animation_blueprint(id)) {create_animation_controls(id);return reply;}
             auto result=editing_.instantiate(id);
             if(!result)reply.message=result.error().message;
             else {
@@ -101,10 +103,11 @@ WorkspaceFeedback EditingWorkspaceUI::poll_scene_lists(std::span<const input::Ev
             const auto found=std::ranges::find(state().document.instances,id,&SceneInstance::blueprint);
             if(found==state().document.instances.end())reply.message="Add an instance (+) to inspect this effect's controls";
             else {
-                viewport().mode=(id==BlueprintId::region||id==BlueprintId::camera)?ViewMode::scene:ViewMode::sun;
+                viewport().mode=(id==BlueprintId::region||id==BlueprintId::camera||is_animation_blueprint(id))?ViewMode::scene:ViewMode::sun;
                 if(id!=BlueprintId::camera)(void)end_camera_visit(false);
                 select_instance(found->id);viewport().selected_vertex=0;interaction_mode(InteractionMode::objects);
                 view_changed();reply.message=selection_message_;
+                if(is_animation_blueprint(id))show_tab(SidebarTab::properties);
             }
         }
     }

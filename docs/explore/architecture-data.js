@@ -95,6 +95,8 @@
                     "Presents options supplied by the current tool. A gizmo can supply unusual controls; it does not have to be only a set of axis arrows.", "tool_panel.hpp"),
                   ui("gizmo-selector", "Gizmo chooser", "GizmoSelector", "Available gizmos and their shortcuts.",
                     "Displays the common editing capabilities of the selected targets. It does not own the scene instances being edited.", "gizmo_selector.hpp"),
+                  ui("animation-gizmo", "Animation tree gizmo", "AnimationGizmo", "Creation previews and controls for animation instances.",
+                    "Owns target pickers, interval controls and Route / Speed / Turbulence / Follow child controls. The workspace polls proposals and EditingSession applies them. Creation is a cancellable transaction; parameter gestures publish small root-only patches. The gizmo is not the persistent animation.", "animation_gizmo.hpp", { references: [{ scope: "animations", id: "forest", label: "Authored animation forest" }] }),
                   ui("pivot-controls", "Rotation pivot controls", "RotationPivotControls", "Selection center, individual centers or custom point.",
                     "A UI choice supplies pivot policy to the transform path. The actual movement of the custom origin uses a bound move gizmo.", "rotation_pivot_controls.hpp")
                 ] }),
@@ -189,6 +191,7 @@
       "camera-preferences": { witness: "class CameraPreferences", member: "CameraPreferences preferences_;" },
       "mesh-navigation": { witness: "class MeshNavigationControls", member: "MeshNavigationControls navigation_;" },
       "blueprint-panel": { witness: "class BlueprintMeshPanel final", member: "std::optional<BlueprintMeshPanel> blueprint_panel_;" },
+      "animation-gizmo": { witness: "class AnimationGizmo", member: "std::optional<AnimationGizmo> animation_gizmo_;" },
       interaction: { witness: "class ViewportToolsUI", member: "std::optional<ViewportToolsUI> interaction_;" },
       navigation: { witness: "class CameraGizmo", member: "CameraGizmo navigation_;" },
       "camera-pointer": { witness: "class CameraPointerGizmo", member: "std::array<CameraPointerGizmo,5> pointer_" },
@@ -268,10 +271,30 @@
         }))
       }))
     })) });
+  const animationNode = (id, title, symbol, summary, detail, children = []) =>
+    node(id, title, symbol, "Data", summary, detail, "examples/editor/scene_animation.hpp", { children });
+  const animations = node("forest", "Scene animation forest", "Document::instances", "Data",
+    "Ordinary non-rendering blueprint instances, each owning one typed tree.",
+    "This is an example forest using the two builtin blueprint types, not a live scene inspector. Each root declares target properties and an inclusive time interval. Enabled roots may share targets only when their property/time scopes do not overlap. Existing keyframes remain the underlying source outside each interval; roots do not imperatively mutate one another.", "examples/editor/project.hpp", { children: [
+      animationNode("departure", "Departure instance", "DepartureSequence", "Coordinates ship motion, then camera following.",
+        "DepartureBlueprint::instantiate captures the selected targets at the interval start. evaluate calls motion.evaluate first, then follow.evaluate with that exact result. No generic leaf scheduler, sibling lookup or side-effectful callbacks. Parent returns ship and camera poses together.", [
+          animationNode("motion", "1 · Ship motion", "ShipMotion", "Combines its three explicit children into one pose.",
+            "SpeedProfile produces normalized distance. A bounded arc-length lookup maps it onto the cubic route. Turbulence offsets the result; optional heading uses the route tangent. All evaluation is from authored parameters and time, never the previous frame.", [
+              animationNode("route", "Route", "RouteCurve", "Four world-space cubic Bézier control points.", "De Casteljau evaluation; the gizmo exposes all four points. Initial route starts at the current ship pose and follows its forward direction."),
+              animationNode("speed", "Speed profile", "SpeedProfile", "Smooth acceleration between relative speed weights.", "The integral is normalized so the route ends at the interval end. Route length / interval duration controls overall speed; the acceleration fraction controls when the ramp completes."),
+              animationNode("turbulence", "Turbulence", "Turbulence", "A bounded additive position modifier.", "Amplitude and frequency are explicit controls. Its envelope fades to zero at both interval endpoints; it never changes another child.")
+            ]),
+          animationNode("follow", "2 · Camera follow", "CameraFollow", "Consumes the ship pose supplied by its parent.",
+            "Stores the captured world-space offset and initial orientation. Optional Look at ship changes orientation. This dependency is an ordinary function argument, not an ownership edge to ShipMotion.")
+        ]),
+      animationNode("spin", "Independent spin instance", "SpinAnimation", "Rotates a different target, or an unclaimed rotation channel.",
+        "SpinBlueprint captures initial orientation and stores degrees per second. This root need not reevaluate when a departure root changes at the same timestamp. Root overlap is rejected with instance IDs and the conflicting property.")
+    ] });
   window.VNG_ARCHITECTURE_DECLARATIONS = declarations;
   window.VNG_ARCHITECTURE = [
     { id: "editor", title: "Editor", subtitle: "UI-process ownership", root: editor, expanded: ["editor-host", "workspace"], guide: "../editor_components.md" },
     { id: "worker", title: "Preview worker", subtitle: "Worker-process ownership", root: worker, expanded: ["worker-host", "worker"], guide: "../editor_boundaries.md" },
-    { id: "modules", title: "Engine modules", subtitle: "Grouped modules · not ownership", root: modules, expanded: ["modules-root"], guide: "codebase.html", programs: catalog.programs }
+    { id: "modules", title: "Engine modules", subtitle: "Grouped modules · not ownership", root: modules, expanded: ["modules-root"], guide: "codebase.html", programs: catalog.programs },
+    { id: "animations", title: "Animation forest", subtitle: "Authored ownership · parent-controlled evaluation", root: animations, expanded: ["forest", "departure", "motion"], guide: "../editor_components.md#scene-animation-forests" }
   ];
 })();

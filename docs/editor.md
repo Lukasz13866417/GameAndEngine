@@ -27,6 +27,18 @@ metadata and **Logs → Interaction timing** measurements/export.
 
 ## Using this slice
 
+- **Scene animation blueprints:** select a target, then use **Animation / Departure**
+  or **Animation / Spin** in the blueprint list. Choose targets and an interval,
+  then **Preview animation**. Scrub and adjust the Route, Speed, Turbulence or
+  Camera follow controls before **Create animation**; **Cancel** restores the
+  scene. These are ordinary non-rendering instances, selectable in the scene
+  list. Their parameters are saved with the scene and support undo/redo.
+  Controlled properties cannot be manually keyed during the animation interval;
+  other properties remain editable. Two enabled roots cannot write the same
+  property over overlapping intervals. **Remove animation** restores underlying
+  keys; **Bake / detach to keyframes** samples the motion and removes the root.
+  See [animation forests](editor_components.md#scene-animation-forests) and the
+  [interactive forest map](explore/architecture.html#animations/forest).
 - **Box selection:** hold LMB in the viewport, drag a rectangle, then release.
   In Scene view it selects instance origins inside the rectangle; selected
   origins have orange markers. In mesh view, start in empty space (dragging an

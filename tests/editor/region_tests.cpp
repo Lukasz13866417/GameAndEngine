@@ -148,7 +148,7 @@ TEST_CASE("Malformed region patches are atomic and legacy patch versions remain 
     // duration flag, world-bounds flag, region-presence flag. V6 removed the
     // registry allocator and added a per-region replacement flag.
     auto legacy=*bytes;
-    legacy.resize(legacy.size()-8); // V8/V9 append mesh-patch/placement counts.
+    legacy.resize(legacy.size()-12); // V8/V9/V10 append mesh/placement/animation counts.
     // V7 adds the wall flag after the two length-prefixed strings.
     legacy.erase(49+8+r.name.size()+r.note.size(),1);
     auto v6=legacy;v6[8]=6;REQUIRE(decode_patch(v6));
@@ -160,7 +160,7 @@ TEST_CASE("Malformed region patches are atomic and legacy patch versions remain 
     }
     patch.regions[0].replacement->id=0;CHECK_FALSE(apply_patch(state,patch));CHECK(state.document.revision==1);CHECK(region_snapshot(state).items.empty());
     patch.regions.clear();bytes=encode_patch(patch);REQUIRE(bytes);
-    auto v2=*bytes;v2[8]=2;v2.resize(v2.size()-9);REQUIRE(decode_patch(v2));
+    auto v2=*bytes;v2[8]=2;v2.resize(v2.size()-13);REQUIRE(decode_patch(v2));
     auto v1=v2;v1[8]=1;v1.pop_back();REQUIRE(decode_patch(v1));
 }
 TEST_CASE("Region topology preserves dents and allows open intermediate shapes", "[editor][region]") {

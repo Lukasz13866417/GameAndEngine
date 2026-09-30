@@ -12,7 +12,7 @@
 
 namespace editor_example {
 
-enum class EditGesture { none, move, rotation, scale, vertices, camera, world_bounds, region, mesh_draft, mesh_transform };
+enum class EditGesture { none, move, rotation, scale, vertices, camera, world_bounds, region, mesh_draft, mesh_transform, animation_tree };
 enum class MeshOperation { fill, subdivide, align };
 struct MeshOperationSettings {
     vng::u32 levels{1}; // Repeated midpoint subdivision of the selected patch.
@@ -108,6 +108,12 @@ public:
     [[nodiscard]] vng::content::Result<bool> camera(const CameraPose&);
     [[nodiscard]] vng::content::Result<bool> commit();
     [[nodiscard]] vng::content::Result<bool> cancel();
+    [[nodiscard]] vng::content::Result<vng::u32> create_animation(BlueprintId,AnimationTargets,AnimationInterval);
+    [[nodiscard]] vng::content::Result<vng::u32> preview_animation(BlueprintId,AnimationTargets,AnimationInterval);
+    [[nodiscard]] bool creating_animation() const {return active(EditGesture::animation_tree)&&gesture_->before.scope.full;}
+    [[nodiscard]] vng::content::Result<void> begin_animation(vng::u32);
+    [[nodiscard]] vng::content::Result<bool> animation(const AnimationSettings&);
+    [[nodiscard]] vng::content::Result<bool> bake_animation(vng::u32,vng::u32 samples=121);
 
     [[nodiscard]] vng::content::Result<vng::u32> import_mesh(const std::filesystem::path&);
     [[nodiscard]] vng::content::Result<vng::u32> import_asset(const std::filesystem::path&);

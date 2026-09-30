@@ -1,5 +1,16 @@
 # Documentation maintenance handoff
 
+## Animation forest integration · 2026-09-30
+
+Added the animation-tree example and `AnimationGizmo` ownership node to the
+current architecture viewer, preserving its complete dependency catalog and
+source-backed ownership checks. The forest is an example of the implemented
+types, not a live inspector of the user's scene.
+
+Validation: 35 layering, guide-content and architecture-data checks pass.
+Browser connection was unavailable, so browser/layout smoke tests were not run
+in this integration pass.
+
 ## PR integration checks · 2026-09-30
 
 Reconciled the agent guides, review app and architecture-map changes together.

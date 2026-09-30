@@ -31,6 +31,7 @@ WorkspacePanels::WorkspacePanels(ui::Screen& screen,const ViewportState& view_st
     pivot_host=manipulation_panel.column().padding(0).gap(0);
     properties_panel = screen.column().position({1032, 80}).width(312).height(580).padding(10).gap(8).scrollbar(ui::ScrollBar::automatic);
     region_inspector = screen.column().padding(10).gap(8).scrollbar(ui::ScrollBar::automatic).visible(false);
+    animation_inspector = screen.column().padding(10).gap(8).scrollbar(ui::ScrollBar::automatic).visible(false);
     object_title = properties_panel.label("INSTANCE / worker controls").height(26);
     blueprint_title = properties_panel.label("").height(24);
     transform_hint = properties_panel.label("").height(24);
@@ -87,6 +88,7 @@ void WorkspacePanels::layout(EditorLayout& geometry) {
     show_base.width(tab_width * .44F);
     place(properties_panel, geometry.inspector);
     place(region_inspector, geometry.inspector);
+    place(animation_inspector, geometry.inspector);
     for (auto* field : {&x, &y, &z})
         field->width(std::max(60.0F, (xyz.bounds().width - 8) / 3));
     place(keyframe_inspector, geometry.inspector);
@@ -110,14 +112,15 @@ bool WorkspacePanels::resize(const EditorLayout& geometry) {
     if (!resizing) sizing_before_drag.reset();
     return panel_height.has_value() || section_changed || resize_cancelled;
 }
-void WorkspacePanels::show(bool custom) {
+void WorkspacePanels::show(bool custom,bool animation) {
     const bool scene = sidebar_tab == SidebarTab::scene;
     const bool properties = sidebar_tab == SidebarTab::properties;
     scene_panel.visible(scene);
     keyframe_list.visible(scene);
     panels_splitter.visible(scene);
-    properties_panel.visible(properties && !custom);
-    region_inspector.visible(properties && custom);
+    properties_panel.visible(properties && !custom && !animation);
+    region_inspector.visible(properties && custom && !animation);
+    animation_inspector.visible(properties && animation);
     keyframe_inspector.visible(sidebar_tab == SidebarTab::keyframe);
     show_scene.selected(scene);
     show_keyframe.selected(sidebar_tab == SidebarTab::keyframe);

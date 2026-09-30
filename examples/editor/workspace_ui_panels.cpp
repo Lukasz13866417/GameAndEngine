@@ -17,6 +17,7 @@ void EditingWorkspaceUI::initialize_panels(ui::Screen& screen,ui::Screen& popups
         {p.timeline_host,p.keyframe_list,p.keyframe_inspector,keyframe_actions,screen.column()},popups.column());
     attach_viewport_tools(p.blueprint_panel_host,region_controls,p.sidebar_sections[4],p.region_inspector,popups.root());
     attach_manipulation(p.gizmo_host,p.pivot_host);
+    viewport_->animation_gizmo_.emplace(p.animation_inspector.column().padding(0).gap(3));
 }
 void EditingWorkspaceUI::layout_panels(EditorLayout& geometry,Vec2 size) {
     panels_->layout(geometry);
@@ -34,7 +35,8 @@ void EditingWorkspaceUI::reset_panel_scroll() {
 }
 void EditingWorkspaceUI::sync_sidebar() {
     if(!panels_)return;
-    panels_->show(viewport_&&viewport_->interaction_&&interaction_child().custom_inspector());
+    panels_->show(viewport_&&viewport_->interaction_&&interaction_child().custom_inspector(),
+        viewport_&&viewport_->animation_gizmo_&&(viewport_->animation_gizmo_->creating()||scene_animation(state(),viewport().selected_object)));
     (void)dispatch(*this,workspace_situation(viewport()),WorkspaceContext{
         .timeline=TimelineContext{.input={.inspector_visible=sidebar_tab()==SidebarTab::keyframe}}});
 }
@@ -191,7 +193,7 @@ void EditingWorkspaceUI::present_panels(const WorkspacePanelFrame& f) {
     p.timeline_host.enabled(timeline_enabled);p.keyframe_list.enabled(timeline_enabled);p.keyframe_inspector.enabled(timeline_enabled);
     (void)dispatch(*this,workspace_situation(view),WorkspaceContext{.timeline=TimelineContext{.input={.cancel=!timeline_enabled},.enabled=timeline_enabled}});
     p.inspector_tabs.enabled(!f.modal&&!busy);
-    const bool lists_enabled=!f.modal&&!remote&&!gesture;
+    const bool lists_enabled=!f.modal&&!remote&&!gesture&&!editing_.active(EditGesture::animation_tree);
     p.panels_splitter.enabled(lists_enabled);for(auto splitter:p.section_splitters)splitter.enabled(lists_enabled);
     (void)dispatch(*this,workspace_situation(view),WorkspaceContext{.lists=SceneListsContext{.enabled=lists_enabled}});
     blueprint_panel_child().sync();
@@ -205,5 +207,7 @@ void EditingWorkspaceUI::present_panels(const WorkspacePanelFrame& f) {
     p.apply_vertex.enabled(editing_mesh);p.nudges.enabled(editing_mesh);
     p.publish_mesh.enabled(!remote&&!gesture&&!f.playing&&view.mode==ViewMode::mesh&&has_mesh_draft(state(),view.inspected_mesh));
     p.save_mesh_draft.enabled(!f.mode_pending&&!remote&&!gesture);
+    if(viewport_->animation_gizmo_)viewport_->animation_gizmo_->present(state(),
+        !f.modal&&!f.mode_pending&&!f.playing&&!remote&&(!busy||editing_.active(EditGesture::animation_tree)),editing_.creating_animation());
 }
 } // namespace editor_example

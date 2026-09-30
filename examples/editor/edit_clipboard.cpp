@@ -1,4 +1,5 @@
 #include "edit_clipboard.hpp"
+#include "authoring_limits.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -51,10 +52,19 @@ vng::content::Result<EditClipboard::Pasted> EditClipboard::paste(State& state) c
     auto next=state;
     Pasted result;
     if(const auto* instances=std::get_if<std::vector<Instance>>(&contents_)) {
+      std::map<vng::u32,vng::u32> copied_ids;
       for(const auto& value:*instances) {
         const auto* source=&value;
-        auto created=instantiate(next,source->value.blueprint);
+        auto created=[&]() -> vng::content::Result<vng::u32> {
+            if(!is_animation_blueprint(source->value.blueprint))return instantiate(next,source->value.blueprint);
+            if(next.document.instances.size()>=max_scene_instances||next.document.next_instance_id==UINT32_MAX)
+                return invalid("Scene instance limit reached");
+            const auto id=next.document.next_instance_id++;
+            auto root=source->value;root.id=id;next.document.instances.push_back(std::move(root));
+            return id;
+        }();
         if(!created) return std::unexpected(created.error());
+        copied_ids.emplace(source->value.id,*created);
         auto* instance=find_instance(next,*created);
         const auto default_name=instance->name;
         *instance=source->value;
@@ -70,6 +80,15 @@ vng::content::Result<EditClipboard::Pasted> EditClipboard::paste(State& state) c
         result.object=*created;
         result.objects.push_back(*created);
       }
+      // An animation copied together with its targets follows their new IDs.
+      // Copying only an enabled root retains its targets and fails overlap
+      // validation rather than silently changing or disabling the original.
+      for(auto id:result.objects)if(auto* a=std::get_if<AnimationSettings>(&find_instance(next,id)->settings)) {
+          const auto remap=[&](vng::u32& target){if(auto it=copied_ids.find(target);it!=copied_ids.end())target=it->second;};
+          if(auto* d=std::get_if<DepartureSequence>(&a->root)){remap(d->ship);remap(d->camera);}
+          else remap(std::get<SpinAnimation>(a->root).target);
+      }
+      if(auto valid=validate_scene_animations(next);!valid)return std::unexpected(valid.error());
     } else {
       for(const auto& keyframe:std::get<std::vector<Keyframe>>(contents_)) {
         const auto time=state.viewport.time+keyframe.offset;

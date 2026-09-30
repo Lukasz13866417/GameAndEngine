@@ -104,7 +104,7 @@ content::Result<void> EditingSession::writable() const {
     // Reserve a revision for compensating cancellation of the last preview.
     if (!state_.document.revision || state_.document.revision >= max_revision - 1)
         return invalid("Document revision capacity exhausted");
-    if (gesture_ && (state_.viewport.time != gesture_->before.bookmark.time ||
+    if (gesture_ && gesture_->kind!=EditGesture::animation_tree && (state_.viewport.time != gesture_->before.bookmark.time ||
                     state_.viewport.paused != gesture_->before.bookmark.paused))
         return invalid("Finish or cancel the edit before changing playback time");
     if (gesture_ && !gesture_->before.scope.properties.empty() && !can_edit_scene_pose())
@@ -203,6 +203,7 @@ void EditingSession::remember(Checkpoint before) {
 }
 content::Result<bool> EditingSession::replace(State candidate, const DocumentChanges& changes) {
     if (auto ready = available(); !ready) return std::unexpected(ready.error());
+    if(auto valid=validate_scene_animations(candidate);!valid)return std::unexpected(valid.error());
     if (candidate.document.instances.size() > state_.document.instances.size() &&
         candidate.document.instances.size() > instance_limit_)
         return invalid("Scene needs " + std::to_string(candidate.document.instances.size()) +
@@ -245,6 +246,8 @@ content::Result<bool> EditingSession::redo() { return traverse(redo_, undo_); }
 
 content::Result<void> EditingSession::begin(EditGesture kind, DocumentChanges scope, std::vector<u32> objects) {
     if (auto ready = available(); !ready) return ready;
+    for(const auto& property:scope.properties)if(const auto owner=animation_owner(state_,property,state_.viewport.time))
+        return invalid("Controlled by animation #"+std::to_string(*owner)+"; edit its gizmo or Bake / detach first");
     if (!scope.properties.empty() && !can_edit_scene_pose())
         return invalid("Select a keyframe at the playhead, or insert one, to edit scene properties");
     if (scope.empty()) return invalid("An edit gesture needs at least one target");
@@ -583,7 +586,7 @@ content::Result<bool> EditingSession::cancel() {
     for (const auto& [id, existed] : gesture_->before.drafts)
         if (existed != state_.document.mesh_drafts.contains(id)) { changes = {.full = true}; changed = true; }
     if (changed) {
-        if (auto restored = restore(gesture_->before, false); !restored) return std::unexpected(restored.error());
+        if (auto restored = restore(gesture_->before, creating_animation()); !restored) return std::unexpected(restored.error());
         publish(changes);
     }
     gesture_.reset();
@@ -603,8 +606,10 @@ content::Result<bool> EditingSession::accept_remote(u64 generation, const Docume
         return invalid("Stale or unsolicited native edit result");
     // Native inspector callbacks currently describe property edits, not topology
     // or mesh-draft publication. Those have explicit authoring operations.
-    if (!patch.vertices.empty() || patch.duration || patch.world_bounds || !patch.regions.empty() || !patch.markers.empty())
+    if (!patch.animations.empty() || !patch.vertices.empty() || patch.duration || patch.world_bounds || !patch.regions.empty() || !patch.markers.empty())
         return invalid("Native inspector results may only change properties");
+    for(const auto& property:patch.properties)if(animation_owner(state_,property.target,state_.viewport.time))
+        return invalid("This property is controlled by an animation instance");
     auto changes = changes_of(patch);
     auto before = capture(changes);
     if (!before) return std::unexpected(before.error());

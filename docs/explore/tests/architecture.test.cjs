@@ -93,13 +93,13 @@ const moduleScope = scopes.find(scope => scope.id === "modules");
 const modules = () => [...trees.get("modules").nodes.values()].filter(node => node.component);
 
 test("architecture covers the editor, worker and module catalog without ambiguous IDs", () => {
-  assert.deepEqual(Array.from(trees.keys()), ["editor", "worker", "modules"]);
+  assert.deepEqual(Array.from(trees.keys()), ["editor", "worker", "modules", "animations"]);
   assert.ok([...trees.values()].reduce((count, tree) => count + tree.nodes.size, 0) >= 100);
   for (const scope of scopes) {
     const tree = trees.get(scope.id);
     assert.equal(tree.parents.size, tree.nodes.size - 1);
     for (const id of scope.expanded) assert.ok(tree.nodes.get(id)?.children.length, id);
-    assert.ok(existsSync(path.resolve(root, scope.guide)));
+    assert.ok(existsSync(path.resolve(root, scope.guide.split("#")[0])));
     for (const node of tree.nodes.values()) {
       assert.match(node.id, /^[a-z][a-z0-9-]*$/);
       assert.ok(node.title && node.symbol && node.role && node.summary && node.detail, node.id);
@@ -183,6 +183,24 @@ test("the source scanner finds members, not comments, literals or method locals"
   assert.ok(declares(inside, "std::optional<Owned> owned_{1'000, 200'000};"));
   assert.ok(!declares(inside, "Local unused;"));
   assert.ok(!declares(inside, "class A {"));
+});
+
+test("animation forest shows real owned children and parent-controlled evaluation", () => {
+  const tree = trees.get("animations");
+  const header = readFileSync(path.join(repository,"examples/editor/scene_animation.hpp"),"utf8");
+  const implementation = readFileSync(path.join(repository,"examples/editor/scene_animation.cpp"),"utf8");
+  for (const [child,parent,member] of [
+    ["route","motion","RouteCurve route;"], ["speed","motion","SpeedProfile speed;"],
+    ["turbulence","motion","Turbulence turbulence;"], ["motion","departure","ShipMotion motion;"],
+    ["follow","departure","CameraFollow follow;"]
+  ]) {
+    assert.equal(tree.parents.get(child),parent);
+    assert.ok(header.includes(member),member);
+  }
+  assert.equal(tree.parents.get("departure"),"forest");
+  assert.equal(tree.parents.get("spin"),"forest");
+  assert.match(implementation,/const auto moving=motion\.evaluate\(seconds,duration\);[\s\S]*return \{moving,follow\.evaluate\(moving\)\};/);
+  assert.match(tree.nodes.get("forest").detail,/not a live scene inspector/);
 });
 
 test("application widgets and drawing sit directly under the editor host", () => {
