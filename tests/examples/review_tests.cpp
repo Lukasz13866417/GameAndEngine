@@ -179,6 +179,19 @@ TEST_CASE("Reviews that break the format's rules are refused with a reason", "[r
     CHECK_FALSE(fs::exists(file));
 }
 
+TEST_CASE("Review paths containing parent components retain their scene references", "[review][file]") {
+    Scratch dir;
+    const auto original = sample(dir.path);
+    for (const auto& file : {dir.path / "unused" / ".." / "cage.vreview",
+                             fs::relative(dir.path) / "unused" / ".." / "cage.vreview"}) {
+        const auto encoded = review::encode_review(original, file);
+        REQUIRE(encoded);
+        const auto parsed = review::parse_review(*encoded, file);
+        REQUIRE(parsed);
+        CHECK(*parsed == original);
+    }
+}
+
 TEST_CASE("Saving replaces the file in one step and keeps its permissions", "[review][file]") {
     Scratch dir;
     const auto file = dir.path / "r.vreview";

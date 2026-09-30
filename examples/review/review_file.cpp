@@ -70,7 +70,7 @@ bool readable(std::string_view text) {
     });
 }
 std::filesystem::path directory_of(const std::filesystem::path& file) {
-    return std::filesystem::absolute(file).parent_path();
+    return std::filesystem::absolute(file).lexically_normal().parent_path();
 }
 std::string relative_scene(const std::filesystem::path& scene, const std::filesystem::path& file) {
     const auto relative = std::filesystem::absolute(scene).lexically_normal().lexically_relative(directory_of(file));
