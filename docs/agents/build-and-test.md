@@ -222,9 +222,10 @@ Most test binaries are Catch2 v3. Run them directly to filter:
 - `"[a][b]"` means AND, `"[a],[b]"` means OR, and `"~[a]"` means NOT.
 - A filter that matches nothing prints "No tests ran" and exits 2. A bare `"#file"` without `-#`
   matches nothing.
-- Two test binaries are not Catch2 and cannot be filtered: `vng_editor_worker_tests` (takes no
-  arguments) and `vng_editor_e2e_tests` (only the flags below). `vng_editor_preview_tests` has its own
-  `main` too, but it hands the arguments to Catch2, so it filters normally.
+- Two test binaries are not Catch2: `vng_editor_worker_tests` (`--animation-only`
+  runs its hidden animation-patch check; no Catch2 filters) and
+  `vng_editor_e2e_tests` (only the flags below). `vng_editor_preview_tests` has its
+  own `main` too, but it hands the arguments to Catch2, so it filters normally.
 
 ### Editor end-to-end (e2e)
 
