@@ -69,6 +69,11 @@ looking out at the distant belt, with the fleet waiting in front of it. Open
 `examples/assets/solar_system.vscene` in the editor to author the departure.
 See [leaving home](docs/solar_system.md).
 
+`vng_review` plays saved scenes alone or side by side on one clock. Click
+anything you see to pin a note to it, and write down your thoughts on each
+candidate. It all lands in a `.vreview` file, which an agent can read and
+answer while the app is open. See [reviewing scenes](docs/review.md).
+
 See [typed shader arguments](docs/typed_shader_arguments.md) for runtime values,
 constant-only expression syntax, semantic parameter records, and backend lowering.
 

@@ -1005,6 +1005,29 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
                 set_tests_properties(vng_editor_e2e_tests vng_editor_fleet_e2e_tests vng_editor_multiselect_e2e_tests vng_editor_popout_e2e_tests vng_editor_earth_e2e_tests PROPERTIES
                     SKIP_RETURN_CODE 77 TIMEOUT 300 LABELS "editor;opengl;e2e" RUN_SERIAL TRUE)
             endif()
+            # Review saved scenes alone or side by side and pin notes to what
+            # you click; the notes live in a .vreview file an agent can read.
+            add_library(vng_review_file STATIC examples/review/review_file.cpp)
+            target_link_libraries(vng_review_file PUBLIC vng_content)
+            vng_target_defaults(vng_review_file)
+            add_executable(vng_review examples/review.cpp examples/review/candidate_view.cpp)
+            target_link_libraries(vng_review PRIVATE vng_review_file vng_editor_runtime vng_ui_opengl
+                vng_example_support vng_example_presentation)
+            target_compile_definitions(vng_review PRIVATE
+                VNG_EXAMPLE_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/fonts/DejaVuSans.ttf")
+            vng_target_defaults(vng_review)
+            if(VNG_BUILD_TESTS)
+                add_executable(vng_review_tests tests/examples/review_tests.cpp)
+                target_link_libraries(vng_review_tests PRIVATE vng_review_file vng_editor_project Catch2::Catch2WithMain)
+                vng_target_defaults(vng_review_tests)
+                add_test(NAME vng_review_tests COMMAND vng_review_tests)
+                # A one-scene review in a hidden window: a scripted note lands in the file.
+                add_test(NAME vng_review_smoke_test COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/examples/review_smoke.sh
+                    $<TARGET_FILE:vng_review> ${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/editor_timeline.vscene
+                    ${CMAKE_CURRENT_BINARY_DIR}/review_smoke)
+                set_tests_properties(vng_review_smoke_test PROPERTIES
+                    SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "review;opengl;e2e" RUN_SERIAL TRUE)
+            endif()
         endif()
     endif()
     add_executable(vng_sun_demo examples/sun.cpp)

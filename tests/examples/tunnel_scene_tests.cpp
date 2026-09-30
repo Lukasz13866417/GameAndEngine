@@ -1,5 +1,6 @@
 #include "scenes/tunnel_scene.hpp"
 #include "scenes/tunnel_departure.hpp"
+#include "scenes/key_batch.hpp"
 #include "editor/animation.hpp"
 #include "editor/rotation_math.hpp"
 #include "support/earth_assets.hpp"
@@ -229,6 +230,28 @@ TEST_CASE("Tunnel is a kilometre-scale editable scene with an occluded exit", "[
     CHECK(restored->document.instances==scene->document.instances);
     CHECK(restored->document.environment==scene->document.environment);
     CHECK(editor_example::evaluate_camera(*restored,9)==editor_example::evaluate_camera(*scene,9));
+}
+
+TEST_CASE("KeyBatch keeps rotations that already fit the editor's range", "[example][tunnel]") {
+    using namespace vng;
+    namespace p=editor_example;
+    auto cube=editor::EditableMesh::load(std::filesystem::path(VNG_TUNNEL_ASSETS)/"colored_cube.vmesh");REQUIRE(cube);
+    p::State state{.document={.mesh=std::move(*cube)}};
+    state.document.instances.clear();
+    state.document.instances.push_back({7,p::BlueprintId::camera,"Camera",p::CameraSettings{.active=true},{}});
+    example::KeyBatch keys;
+    // A camera that only ever looks down: its pitch keys are all negative.
+    keys.key({7,"rotation"},0,Vec3{-10,20,0});
+    keys.key({7,"rotation"},1,Vec3{-12,25,0});
+    REQUIRE(keys.commit(state));
+    const auto* track=state.document.timeline.find({7,"rotation"});REQUIRE(track);
+    for(const auto& key:track->keys) {
+        const auto rotation=std::get<Vec3>(key.value);
+        CHECK(rotation.x<0.F);CHECK(rotation.x>-13.F);CHECK(rotation.z==0.F);
+    }
+    // Pitch is -rotation.x: still looking down, never clamped to the zenith.
+    const auto pose=p::evaluate_camera(state,.5F);
+    CHECK(pose.pitch>10.F);CHECK(pose.pitch<12.F);
 }
 
 TEST_CASE("Express departure has a continuous close camera and clears the low terminal", "[example][tunnel][departure]") {
