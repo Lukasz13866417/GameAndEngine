@@ -316,6 +316,10 @@ compilation, upload, binding, and drawing at the call site.
 Version 1 does not attempt to be a DCC interchange format. Polygon faces,
 per-corner attributes, skinning conventions, per-face/per-edge fields, mesh
 subsets, materials, compression, and a cooked binary format need explicit
-design rather than accidental extensions to this grammar. A future importer can
-convert DCC data into this render-ready representation, duplicating vertices at
-UV, normal, or material seams before writing triangle faces.
+design rather than accidental extensions to this grammar. An importer converts
+DCC data into this render-ready representation, duplicating vertices at UV,
+normal, or material seams before writing triangle faces:
+`examples/tools/import_model.py` does so for Blender FBX characters, and keeps
+skin weights in extra `skin/bones/N` and `skin/weights/N` fields, an example-level
+convention described in [characters from Blender](characters.md) that ordinary
+mesh loaders ignore.

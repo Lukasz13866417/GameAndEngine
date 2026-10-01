@@ -1076,6 +1076,23 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
     target_link_libraries(vng_rigging_demo PRIVATE vng_rig_opengl vng_example_support)
     vng_target_defaults(vng_rigging_demo)
 
+    # Characters imported from Blender (examples/tools/import_model.py): a
+    # skinned .vmesh with its .vrig armature and clips, and the walking soldier.
+    add_library(vng_character STATIC examples/character/character_file.cpp examples/character/character.cpp)
+    target_link_libraries(vng_character PUBLIC vng_content vng_rig)
+    vng_target_defaults(vng_character)
+    add_executable(vng_soldier_demo examples/soldier.cpp)
+    target_link_libraries(vng_soldier_demo PRIVATE vng_character vng_rig_opengl vng_example_support vng_example_presentation)
+    target_compile_definitions(vng_soldier_demo PRIVATE VNG_SOLDIER_MESH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/soldier/soldier.vmesh")
+    vng_target_defaults(vng_soldier_demo)
+    if(VNG_BUILD_TESTS)
+        add_executable(vng_character_tests tests/examples/character_tests.cpp)
+        target_link_libraries(vng_character_tests PRIVATE vng_character Catch2::Catch2WithMain)
+        target_compile_definitions(vng_character_tests PRIVATE VNG_SOLDIER_MESH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/soldier/soldier.vmesh")
+        vng_target_defaults(vng_character_tests)
+        add_test(NAME vng_character_tests COMMAND vng_character_tests)
+    endif()
+
     add_executable(vng_glow_demo examples/glow.cpp)
     target_link_libraries(vng_glow_demo PRIVATE vng_resources_opengl vng_bloom_opengl vng_example_support)
     if(VNG_BUILD_TEXT)

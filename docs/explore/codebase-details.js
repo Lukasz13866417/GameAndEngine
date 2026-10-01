@@ -11,6 +11,11 @@
   });
   const describe = (target, sections) => { byTarget.get(target).sections = sections; };
 
+  describe("vng_character", [
+    section("Import once, load engine files", "A Blender character arrives as FBX and leaves examples/tools/import_model.py as two engine files: a bind-pose .vmesh (Y up, metres, facing +Z) with skin influences in extra vertex fields that ordinary mesh loaders ignore, and a .vrig document holding the armature's rest transforms and each clip's per-frame bone transforms. read_rig validates names, parent order, unit rotations and track lengths.", "examples/character/character_file.hpp"),
+    section("The rig owns deformation; the character only feeds it", "Character::load builds a vng_rig Armature and SkinBinding from those files. pose(clip, seconds, pose) sets each animated bone's local transform, blending neighbouring frames and wrapping looping clips. The mesh never changes on the CPU: the skinned renderer deforms it from the pose's bone palette, and deform_points gives the same result for tests.", "examples/character/character.hpp")
+  ]);
+
   describe("vng_review_file", [
     section("Reviews refer to scenes; they do not author them", "review::Review contains one to four Candidate records, Note records with a time and optional world-space click point, and the reviewer's summary and verdict. read_review and encode_review use the engine document format, resolve scene paths relative to the review file, and validate identities, text and limits. This library needs neither editor state nor a graphics context.", "examples/review/review_file.hpp"),
     section("File changes and rendering have separate owners", "save_review stages a sibling file, flushes it and renames it over the destination while preserving permissions and symbolic links. merge(base, mine, theirs) combines independent field edits, with local changes winning same-field conflicts. The vng_review executable watches these files and owns its UI; each CandidateView separately owns one loaded scene and Runtime with asynchronous image readback. Scene files themselves are never rewritten by reviewing them.", "examples/review/candidate_view.hpp")

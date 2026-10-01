@@ -165,6 +165,11 @@ cmake --build build --target vng_rigging_demo
 ./build/vng_rigging_demo --once
 ```
 
+`vng_soldier_demo` shows a soldier modelled and animated in Blender, walking
+through the same skinned renderer. `examples/tools/import_model.py` turned his
+FBX into a skinned mesh and a `.vrig` armature with his walk. See
+[characters from Blender](docs/characters.md).
+
 `vng_ui_demo` exercises buttons, checkboxes, dropdowns, text fields and scrolling.
 Create widgets once, poll `clicked()` / `changedText()` after each update, then
 submit the screen to its renderer. See [UI](docs/ui.md) for themes, input routing,
