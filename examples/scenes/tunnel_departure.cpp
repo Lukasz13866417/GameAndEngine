@@ -312,6 +312,24 @@ vng::content::Result<editor_example::State> author_scene(const std::filesystem::
         state.document.environment={.stars=6500,.star_seed=132,.exposure=.95F,.bloom_threshold=1.1F,.bloom_strength=.30F,
             .view_distance=1'200'000};
         state.document.world_bounds=voyage::bounds(state);
+        // The controllers are authoritative for these properties. Their base
+        // poses supply the pre-animation state; do not keep baked fallbacks.
+        for(const auto& instance:state.document.instances)
+            if(const auto* animation=std::get_if<project::AnimationSettings>(&instance.settings))
+                for(const auto& output:project::animation_outputs(*animation))(void)state.document.timeline.erase(output);
+        std::vector<timeline::Track> sparse;
+        for(const auto& track:state.document.timeline.tracks()) {
+            // Scene distances are kilometres. Aim for 20 cm / 0.01 degree
+            // sample error; float rounding can add a little. Keep hold cuts.
+            const auto tolerance=track.target.property=="position" ? .0002F :
+                track.target.property=="rotation" ? .01F :
+                track.target.property=="focus" ? .05F : .0005F;
+            auto reduced=timeline::simplify(track,tolerance,timeline::Interpolation::cubic);
+            if(!reduced)throw std::runtime_error(reduced.error().message);
+            sparse.push_back(std::move(*reduced));
+        }
+        if(auto result=state.document.timeline.replace(std::move(sparse));!result)
+            throw std::runtime_error(result.error().message);
         state.viewport.mode=project::ViewMode::scene;state.viewport.selected_object=hero;
         state.viewport.editor_camera=orbit_pose(camera_at(0,route));
         checked(project::validate_animation(state));checked(project::validate_active_cameras(state));

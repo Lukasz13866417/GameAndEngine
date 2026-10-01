@@ -81,7 +81,7 @@ timeline tracks. Select a keyframe before editing keyed instance transforms.
 
 ## Editing the cinematic's animation instances
 
-The scene contains ten ordinary instances named **ANIMATION / …**, using the
+The scene contains 341 ordinary instances named **ANIMATION / …**, using the
 [animation forest](editor_components.md#scene-animation-forests). Select one
 in **Scene instances** to open its animation gizmo:
 
@@ -90,6 +90,7 @@ in **Scene instances** to open its animation gizmo:
 | `ANIMATION / Gateway / …`: `Freighter / inbound`, `Shuttle / outbound`, `Tug / pod racks`, `Patrol / picket`, `Freighter crossing` | Route control points, speed profile, turbulence, interval, targets | ~19.39–50.3 s |
 | `ANIMATION / Gateway / habitat rotation` | Rotation rate in degrees/second, interval, target | ~19.39–50.3 s |
 | `ANIMATION / Belt / obstacle 1 tumble` through `obstacle 4 tumble` | Rotation rate, interval, target | 72.5–116 s |
+| `ANIMATION / Belt / rock … tumble` | Rotation rate for every remaining asteroid and fragment | 72.5–116 s |
 
 For example, scrub to **31.4 s**, select **ANIMATION / Gateway / Freighter
 crossing**, then choose **Speed profile** or **Ship motion / Route**. Changing
@@ -98,17 +99,25 @@ keys. **Route length / interval duration** sets the overall speed; the start
 and end speed weights control its distribution. Defaults preserve the original
 constant-speed crossing, with zero turbulence and the authored ship orientation.
 
-Each controller overlays its target's original keys only during its enabled
-interval. **Enabled** off or **Remove animation** restores those keys;
+Each controller owns its output during its enabled interval. This cinematic
+does not retain redundant baked tracks underneath it. **Enabled** off or
+**Remove animation** therefore restores the target's base pose, not its old motion;
 **Bake / detach to keyframes** commits the evaluated motion for direct keyframe
 editing. Visibility remains keyed independently, so extending an interval does
 not automatically extend the time an object is shown.
 
-The courier and camera still use their detailed authored tracks: the generic
+The courier and camera use reduced, interpolated authored tracks: the generic
 four-point Departure route cannot faithfully replace the curved tunnel,
-multi-stage flight, camera cuts and synchronized drive effects. The hundreds
-of background rocks also remain keyed, reserving the animation-root budget
-for useful individual controls rather than consuming it with filler objects.
+multi-stage flight, camera cuts and synchronized drive effects. **Smooth**
+interpolation retains curved motion with fewer samples; sharp transitions remain
+**Hold**. The scene has 6,173 property keys instead of 10,131, and 568 tracks
+instead of 909. The close-camera tracks deliberately retain more keys than
+distant effects to preserve framing.
+
+Use **Search instances** to find `animation belt`, `gateway`, a blueprint name,
+or an ID such as `#1407`. Matching is case-insensitive; separate words can match
+different fields. Search does not deselect hidden rows, and the docked and pop-out
+instance lists share the query. **Clear** or Escape in the field resets it.
 
 ## The voyage
 

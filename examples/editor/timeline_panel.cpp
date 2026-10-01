@@ -42,7 +42,8 @@ struct TimelinePanel::Impl {
         AnimationProperty property;
         ui::Container host, value_host;
         ui::Label label;
-        ui::Checkbox keyed, blend, boolean;
+        ui::Checkbox keyed, boolean;
+        std::optional<ui::Dropdown<timeline::Interpolation>> blend;
         std::array<ui::TextField, 3> fields;
         KeyframeValue value;
         bool differs{}, draft{};
@@ -162,7 +163,7 @@ struct TimelinePanel::Impl {
         erase = controls.button("Delete keyframe").width(172);
         object_host = controls.column().height(36).padding(0);
         object = object_host.dropdown<u64>("Object", {{0, "All objects"}});
-        controls.label("Key = stored here. Blend = interpolate FROM the previous value.")
+        controls.label("Key = stored here. Hold / Linear / Smooth applies FROM the previous value.")
             .height(24);
         property_rows = controls.column().padding(0).gap(6);
     }
@@ -171,7 +172,7 @@ struct TimelinePanel::Impl {
         if (name.isFocused() || key_time.isFocused())
             return true;
         return std::ranges::any_of(active_rows(), [](const Row& row) {
-            return row.keyed.isFocused() || row.blend.isFocused() || row.boolean.isFocused() ||
+            return row.keyed.isFocused() || (row.blend && row.blend->isFocused()) || row.boolean.isFocused() ||
                    std::ranges::any_of(row.fields,
                                        [](const auto& field) { return field.isFocused(); });
         });
@@ -281,14 +282,13 @@ struct TimelinePanel::Impl {
             const bool keyed = row.keyed.value();
             row.keyed.enabled(selected != 0.F);
             row.value_host.enabled(keyed);
-            row.blend.enabled(selected != 0.F && keyed && continuous(row.value.value));
+            row.blend->enabled(selected != 0.F && keyed && continuous(row.value.value));
         }
     }
     std::optional<KeyframeValue> read(const Row& row) const {
         auto field = row.value;
         field.keyed = row.keyed.value();
-        field.incoming = row.blend.value() && continuous(field.value)
-            ? timeline::Interpolation::linear : timeline::Interpolation::hold;
+        field.incoming = continuous(field.value) ? row.blend->value() : timeline::Interpolation::hold;
         if (field.keyed) {
             if (std::holds_alternative<Vec3>(field.value)) {
                 Vec3 value{};
@@ -361,7 +361,10 @@ struct TimelinePanel::Impl {
                 for (auto& field : row.fields)
                     field = row.value_host.text_input().width(70).visible(false);
                 row.boolean = row.value_host.checkbox("Enabled").width(210).visible(false);
-                row.blend = line.checkbox("Blend").width(100);
+                row.blend.emplace(line.dropdown<timeline::Interpolation>("", {
+                    {timeline::Interpolation::hold,"Hold"},
+                    {timeline::Interpolation::linear,"Linear"},
+                    {timeline::Interpolation::cubic,"Smooth"}}).width(100));
                 group.rows.push_back(std::move(row));
             }
             for (std::size_t i = group.row_count; i < group.rows.size(); ++i) group.rows[i].host.visible(false);
@@ -376,9 +379,7 @@ struct TimelinePanel::Impl {
                 row.keyed.value(row.value.keyed);
                 for (auto& field : row.fields) field.visible(false);
                 row.boolean.visible(false);
-                row.blend.value(
-                    continuous(row.value.value) &&
-                    row.value.incoming == timeline::Interpolation::linear);
+                row.blend->value(row.value.incoming);
                 std::visit(
                     [&](const auto& value) {
                         using T = std::decay_t<decltype(value)>;
@@ -631,7 +632,7 @@ std::optional<TimelineAction> TimelinePanel::poll(std::span<const input::Event> 
     }
     p.dirty |= p.name.changedText().has_value() || p.key_time.changedText().has_value();
     for (auto& row : p.active_rows()) {
-        const bool edited = row.keyed.changedValue().has_value() || row.blend.changedValue().has_value() ||
+        const bool edited = row.keyed.changedValue().has_value() || row.blend->changedValue().has_value() ||
                    row.boolean.changedValue().has_value() ||
                    std::ranges::any_of(row.fields, [](const auto& field) {
                        return field.changedText().has_value();

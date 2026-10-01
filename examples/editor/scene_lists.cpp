@@ -28,6 +28,8 @@ void SceneLists::layout(const SceneListPresentation& view) {
     instance_flyout_.layout(view.window,view.instances_anchor);
     blueprint_flyout_.layout(view.window,view.blueprints_anchor);
     blueprints_.layout();
+    instances_.layout();regions_.layout();
+    if(instance_flyout_.opened())floating_instances_.layout();
     if(blueprint_flyout_.opened()) floating_blueprints_.layout();
 }
 SceneListsReply SceneLists::handle(const Browsing&,const SceneListsContext& context) {
@@ -68,10 +70,14 @@ SceneListsReply SceneLists::handle(const Browsing&,const SceneListsContext& cont
         }
     }
     if(context.input.poll && !context.input.events.empty()) {
+        const std::string query(instances_.query());
         reply.instance=instances_.poll(context.input.events);
+        if(instances_.query()!=query)floating_instances_.search(instances_.query());
         if(auto value=regions_.poll(context.input.events)) reply.instance=value;
-        if(instance_flyout_.opened())
+        if(instance_flyout_.opened()) {
             if(auto value=floating_instances_.poll(context.input.events)) reply.instance=value;
+            if(instances_.query()!=floating_instances_.query())instances_.search(floating_instances_.query());
+        }
         reply.blueprint=blueprints_.poll();
         if(blueprint_flyout_.opened())
             if(auto value=floating_blueprints_.poll()) reply.blueprint=value;
@@ -83,7 +89,8 @@ DebugReport SceneLists::debug_report() const {
         const auto stats=list.stats();
         return DebugReport{.name=std::move(name),.role="retained instance rows",.situation="Browsing",
             .owned={{"rows",std::to_string(list.entries().size())},{"catalog synchronizations",std::to_string(stats.syncs)},
-                {"rows created",std::to_string(stats.rows_created)},{"labels updated",std::to_string(stats.labels_updated)}}};
+                {"rows created",std::to_string(stats.rows_created)},{"labels updated",std::to_string(stats.labels_updated)},
+                {"search",std::string(list.query())},{"matches",std::to_string(list.matches())}}};
     };
     return {.name="lists",.role="instance, region and blueprint lists with shared flyouts",.situation="Browsing",
         .received={{"input allowed",debug_bool(enabled_)}},

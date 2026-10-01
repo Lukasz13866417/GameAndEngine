@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <concepts>
+#include <limits>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -93,13 +94,13 @@ Result<void> validate_key(const Target& target, const Keyframe& key)
         return fail(ErrorCode::invalid_value,
                     "Keyframe values must be finite and strings cannot exceed 4096 bytes", target, key.time);
     }
-    if (key.incoming != Interpolation::hold && key.incoming != Interpolation::linear) {
+    if (key.incoming != Interpolation::hold && key.incoming != Interpolation::linear && key.incoming != Interpolation::cubic) {
         return fail(ErrorCode::invalid_interpolation, "Unknown keyframe interpolation mode", target, key.time);
     }
-    if (key.incoming == Interpolation::linear &&
+    if (key.incoming != Interpolation::hold &&
         !std::holds_alternative<f32>(key.value) && !std::holds_alternative<Vec3>(key.value)) {
         return fail(ErrorCode::invalid_interpolation,
-                    "Linear interpolation requires a float or Vec3 track; discrete values use hold", target, key.time);
+                    "Interpolation requires a float or Vec3 track; discrete values use hold", target, key.time);
     }
     return {};
 }
@@ -137,6 +138,44 @@ Result<void> validate_track(Track& track)
 f32 interpolate(f32 from, f32 to, double ratio)
 {
     return static_cast<f32>(std::lerp(static_cast<double>(from), static_cast<double>(to), ratio));
+}
+
+double component(const Value& value, unsigned axis) {
+    if (const auto* scalar=std::get_if<f32>(&value)) return *scalar;
+    return std::get<Vec3>(value)[axis];
+}
+double slope(std::span<const Keyframe> keys, std::size_t i, unsigned axis) {
+    const auto secant=[&](std::size_t left) {
+        return (component(keys[left+1].value,axis)-component(keys[left].value,axis))/
+               (double(keys[left+1].time)-keys[left].time);
+    };
+    const bool left=i>0 && keys[i].incoming!=Interpolation::hold;
+    const bool right=i+1<keys.size() && keys[i+1].incoming!=Interpolation::hold;
+    if (left && right) {
+        const auto a=secant(i-1),b=secant(i);
+        if (a*b<=0) return 0;
+        const double h0=double(keys[i].time)-keys[i-1].time,h1=double(keys[i+1].time)-keys[i].time;
+        const auto w0=2*h1+h0,w1=h1+2*h0;
+        return (w0+w1)/(w0/a+w1/b);
+    }
+    // One-sided three-point endpoint slope, limited to retain monotonicity.
+    const auto endpoint=[](double a,double b,double h0,double h1) {
+        auto m=((2*h0+h1)*a-h0*b)/(h0+h1);
+        if (m*a<=0) return 0.;
+        if (a*b<=0 && std::abs(m)>3*std::abs(a)) m=3*a;
+        return m;
+    };
+    if (right) {
+        if (i+2<keys.size() && keys[i+2].incoming!=Interpolation::hold)
+            return endpoint(secant(i),secant(i+1),double(keys[i+1].time)-keys[i].time,double(keys[i+2].time)-keys[i+1].time);
+        return secant(i);
+    }
+    if (left) {
+        if (i>1 && keys[i-1].incoming!=Interpolation::hold)
+            return endpoint(secant(i-1),secant(i-2),double(keys[i].time)-keys[i-1].time,double(keys[i-1].time)-keys[i-2].time);
+        return secant(i-1);
+    }
+    return 0;
 }
 
 } // namespace
@@ -287,16 +326,32 @@ Result<void> Timeline::replace(std::vector<Track> tracks)
 
 std::optional<Value> Timeline::sample(const Target& target, f32 time) const
 {
-    if (!valid_time(time)) return {};
     const auto* track = find(target);
     if (!track) return {};
-    const auto next = key_at(track->keys, time);
-    if (next != track->keys.end() && next->time == time) return next->value;
-    if (next == track->keys.begin()) return {};
+    return sample_keys(track->keys,time);
+}
+
+std::optional<Value> sample_keys(std::span<const Keyframe> keys, f32 time) {
+    if (!valid_time(time) || keys.empty()) return {};
+    const auto next = key_at(keys, time);
+    if (next != keys.end() && next->time == time) return next->value;
+    if (next == keys.begin()) return {};
     const auto& previous = *(next - 1);
-    if (next == track->keys.end() || next->incoming == Interpolation::hold) return previous.value;
+    if (next == keys.end() || next->incoming == Interpolation::hold) return previous.value;
     const double ratio = (static_cast<double>(time) - previous.time) /
                          (static_cast<double>(next->time) - previous.time);
+    if (next->incoming==Interpolation::cubic) {
+        const auto i=static_cast<std::size_t>(next-keys.begin());
+        const auto dt=double(next->time)-previous.time,u=ratio,u2=u*u,u3=u2*u;
+        const auto value=[&](unsigned axis) {
+            const auto a=component(previous.value,axis),b=component(next->value,axis);
+            const auto v=(2*u3-3*u2+1)*a+(u3-2*u2+u)*dt*slope(keys,i-1,axis)+
+                         (-2*u3+3*u2)*b+(u3-u2)*dt*slope(keys,i,axis);
+            return static_cast<f32>(std::clamp(v,std::min(a,b),std::max(a,b)));
+        };
+        if (std::holds_alternative<f32>(previous.value)) return value(0);
+        return Vec3{value(0),value(1),value(2)};
+    }
     if (const auto* from = std::get_if<f32>(&previous.value)) {
         return interpolate(*from, std::get<f32>(next->value), ratio);
     }
@@ -304,6 +359,58 @@ std::optional<Value> Timeline::sample(const Target& target, f32 time) const
     const auto& to = std::get<Vec3>(next->value);
     return Vec3{interpolate(from.x, to.x, ratio), interpolate(from.y, to.y, ratio),
                 interpolate(from.z, to.z, ratio)};
+}
+
+Result<Track> simplify(Track track, f32 tolerance, Interpolation mode) {
+    if (auto valid=validate_track(track);!valid) return std::unexpected(valid.error());
+    if (!std::isfinite(tolerance) || tolerance<0 ||
+        (mode!=Interpolation::linear && mode!=Interpolation::cubic))
+        return fail(ErrorCode::invalid_value,"Reduction requires a finite nonnegative tolerance and linear/cubic interpolation",track.target);
+    const auto original=track.keys;
+    const bool continuous=std::holds_alternative<f32>(original.front().value)||std::holds_alternative<Vec3>(original.front().value);
+    const auto error=[&](const Value& a,const Value& b) {
+        if (!continuous) return a==b?0.:std::numeric_limits<double>::infinity();
+        double sum{};
+        for (unsigned axis=0;axis<(std::holds_alternative<Vec3>(a)?3U:1U);++axis) {
+            const auto d=component(a,axis)-component(b,axis);sum+=d*d;
+        }
+        return std::sqrt(sum);
+    };
+    bool changed=true;
+    while (changed) {
+        changed=false;
+        for (std::size_t i=1;i+1<track.keys.size();) {
+            const auto& keys=track.keys;
+            const bool redundant_hold=keys[i].incoming==Interpolation::hold &&
+                keys[i+1].incoming==Interpolation::hold && keys[i].value==keys[i-1].value;
+            if (!redundant_hold && (!continuous || keys[i].incoming==Interpolation::hold || keys[i+1].incoming==Interpolation::hold)) {++i;continue;}
+            // Changing a Hermite neighbor can change the adjacent segments as
+            // well. Verify that whole local dependency footprint, not just the
+            // segment that loses a key. Always compare to the original track.
+            const auto from=keys[i>3?i-3:0].time,to=keys[std::min(i+3,keys.size()-1)].time;
+            auto candidate=keys;
+            candidate.erase(candidate.begin()+static_cast<std::ptrdiff_t>(i));
+            if (!redundant_hold) candidate[i].incoming=mode;
+            bool fits=true;
+            auto at=key_at(original,from);
+            for (;fits && at!=original.end() && at->time<=to;++at) {
+                const auto test=[&](f32 time) {
+                    return error(*sample_keys(original,time),*sample_keys(candidate,time))<=tolerance;
+                };
+                fits=test(at->time);
+                if (fits && at+1!=original.end() && (at+1)->time<=to)
+                    for (unsigned part=1;fits && part<4;++part)
+                        fits=test(std::lerp(at->time,(at+1)->time,static_cast<f32>(part)/4.F));
+            }
+            if (fits) {track.keys=std::move(candidate);changed=true;}
+            else ++i;
+        }
+    }
+    // An identical final hold adds no information, including on static tracks.
+    while (track.keys.size()>1 && track.keys[track.keys.size()-2].incoming!=Interpolation::cubic &&
+           track.keys.back().value==track.keys[track.keys.size()-2].value)
+        track.keys.pop_back();
+    return track;
 }
 
 } // namespace vng::timeline

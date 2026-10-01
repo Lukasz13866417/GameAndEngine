@@ -460,7 +460,7 @@ content::Result<std::string> encode_patch(const DocumentPatch& patch) {
             out.integer(placement->draft.has_value(), 1);
             if (placement->draft) for (unsigned c=0;c<4;++c) for(unsigned r=0;r<4;++r) out.scalar((*placement->draft)[c][r]);
         }
-        check(patch.animations.size()<=128,"Too many animation patches");
+        check(patch.animations.size()<=max_animation_roots,"Too many animation patches");
         out.integer(patch.animations.size(),4);
         for(const auto& [id,value]:patch.animations) {
             out.integer(id,4);
@@ -576,7 +576,7 @@ content::Result<DocumentPatch> decode_patch(std::string_view bytes) {
             }
         }
         if(version>=10) {
-            const auto count=in.integer(4);check(count<=128,"Too many animation patches");
+            const auto count=in.integer(4);check(count<=max_animation_roots,"Too many animation patches");
             for(u64 i=0;i<count;++i) {
                 const auto id=static_cast<u32>(in.integer(4));
                 auto doc=content::parse_document(in.string(16384));check(bool(doc),"Malformed animation patch");

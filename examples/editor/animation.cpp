@@ -379,7 +379,7 @@ content::Result<void> edit_property_keys(State& state, f32 time, std::span<const
         }
         if (auto valid = validate_value(*property, key.value); !valid) return valid;
         auto interpolation = key.incoming;
-        if (interpolation != timeline::Interpolation::hold && interpolation != timeline::Interpolation::linear)
+        if (interpolation != timeline::Interpolation::hold && interpolation != timeline::Interpolation::linear && interpolation != timeline::Interpolation::cubic)
             return invalid("Unknown key interpolation");
         if (std::holds_alternative<bool>(key.value)) interpolation = timeline::Interpolation::hold;
         const auto* existing = edited.find(target);
