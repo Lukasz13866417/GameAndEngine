@@ -31,7 +31,7 @@ Property strings form the application's stable animation schema. The core does
 not know whether `"position"` addresses a mesh, an effect, or another kind of object.
 
 `Value` supports `bool`, `i32`, `u32`, `f32`, `Vec3`, and `std::string`. Each track
-retains one value type. Linear interpolation is available only for `f32` and
+retains one value type. Linear and smooth cubic interpolation are available only for `f32` and
 `Vec3`; discrete values use `hold`. Invalid keys return `std::expected` diagnostics.
 
 The API also provides:
@@ -62,6 +62,21 @@ At time 3 the value is 4. Exact key times always return that key's own value.
 Before the first key, `sample` returns `nullopt`, letting the application use its
 authored fallback. After the final key, its value is held. Invalid query times
 also return `nullopt`.
+
+`Interpolation::cubic` (the editor's **Smooth** choice) uses time-aware,
+shape-preserving Hermite slopes computed from neighboring keys. Components stay
+between their endpoint values; holds and camera cuts are not smoothed across.
+No tangent data or per-frame curve building is required. Editing a neighboring
+key can change the adjacent smooth segments. This is component-wise interpolation,
+not quaternion rotation or a constant-speed path.
+
+For offline authoring, `timeline::simplify(track, tolerance, interpolation)`
+removes redundant samples. It checks against the original at key times and at
+quarter-segment samples, including neighboring segments affected by changed
+slopes. Tolerance is absolute scalar error or Vec3 distance in the application's
+units. It preserves cuts and compares every candidate to the original, avoiding
+accumulated reduction error. This is a sampled check, not a mathematical maximum
+error bound: validate rendered motion for camera-critical tracks.
 
 ## Editor scene bridge
 
@@ -101,8 +116,9 @@ matching the renderer, rather than permitting values that fail at draw time.
 
 Authored fallback edits are not implicit key edits. If a track overrides a
 property at the current time, edit that property's key to change its animation.
-Camera tracks, character animation, easing curves, track blending and animation
-layers that modify evaluation are not part of this slice.
+Scene-camera tracks and scene-owned animation controllers are supported by the
+editor bridge; the neutral timeline only samples properties. User-authored
+tangents, quaternion interpolation and general track blending are not provided.
 
 ### Scene keyframes
 

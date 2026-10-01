@@ -53,6 +53,7 @@ const Target emission{1, "emission"};
 const Target position{1, "position"};
 constexpr auto hold = Interpolation::hold;
 constexpr auto linear = Interpolation::linear;
+constexpr auto cubic = Interpolation::cubic;
 
 template<class T>
 T sampled(const Timeline& timeline, const Target& target, f32 time)
@@ -478,4 +479,54 @@ TEST_CASE("single-track replacement accounts for removed keys before enforcing l
     CHECK_FALSE(timeline.replace_track(many_keys(1, max_keys_per_track)));
     REQUIRE(timeline.erase({77, "extra"}));
     REQUIRE(timeline.replace_track(many_keys(1, max_keys_per_track)));
+}
+
+TEST_CASE("Smooth interpolation is time-aware and does not overshoot or cross cuts", "[timeline][sample]") {
+    Timeline timeline;
+    REQUIRE(timeline.replace_track({position,"","",{
+        {0,Vec3{0,8,3}},{1,Vec3{1,4,3},cubic},{4,Vec3{3,2,3},cubic},
+        {5,Vec3{20,20,3},hold},{6,Vec3{21,21,3},cubic}}}));
+    for(float t=0;t<4;t+=.01F) {
+        const auto value=sampled<Vec3>(timeline,position,t);
+        const auto next=sampled<Vec3>(timeline,position,t+.001F);
+        CHECK(value.x>=0);CHECK(value.x<=3);CHECK(value.y>=2);CHECK(value.y<=8);
+        CHECK(next.x>=value.x);CHECK(next.y<=value.y);CHECK(value.z==3);
+    }
+    CHECK(sampled<Vec3>(timeline,position,4.9F)==Vec3{3,2,3});
+    CHECK(sampled<Vec3>(timeline,position,5.5F)==Vec3{20.5F,20.5F,3});
+    CHECK(sampled<Vec3>(timeline,position,8)==Vec3{21,21,3});
+    REQUIRE(timeline.set(emission,{0,-std::numeric_limits<float>::max()}));
+    REQUIRE(timeline.set(emission,{2,std::numeric_limits<float>::max(),cubic}));
+    CHECK(std::isfinite(sampled<float>(timeline,emission,.75F)));
+    CHECK(sampled<float>(timeline,emission,1)==0);
+    CHECK_FALSE(timeline.set({1,"boolean"},{0,true,cubic}));
+}
+
+TEST_CASE("Track reduction checks the original curve and preserves discontinuities", "[timeline][simplify]") {
+    Track original{emission,"Brightness","Effects",{}};
+    for(unsigned i=0;i<=100;++i) {
+        const auto t=static_cast<float>(i)/10;
+        original.keys.push_back({t,t*t,linear});
+    }
+    const auto reduced=simplify(original,.02F,cubic);REQUIRE(reduced);
+    CHECK(reduced->keys.size()<original.keys.size()/2);
+    CHECK(reduced->target==original.target);CHECK(reduced->layer==original.layer);
+    CHECK(reduced==simplify(original,.02F,cubic));
+    for(float t=0;t<=10;t+=1.F/120) {
+        const auto a=std::get<float>(*sample_keys(original.keys,t));
+        const auto b=std::get<float>(*sample_keys(reduced->keys,t));
+        CHECK(std::abs(a-b)<.021F);
+    }
+    original.keys={{0,0.F},{1,1.F,linear},{2,2.F,linear},{3,40.F,hold},{4,40.F,hold},{5,90.F,hold}};
+    const auto cuts=simplify(original,0,cubic);REQUIRE(cuts);
+    CHECK(cuts->keys.size()==4);
+    CHECK(std::get<float>(*sample_keys(cuts->keys,2.9F))==2);
+    CHECK(std::get<float>(*sample_keys(cuts->keys,3))==40);
+    CHECK(std::get<float>(*sample_keys(cuts->keys,5))==90);
+    original.keys={{0,0.F},{1,1.F,cubic},{2,1.F,cubic}};
+    const auto flat=simplify(original,0,cubic);REQUIRE(flat);
+    CHECK(flat->keys==original.keys); // Last equal value still controls the incoming tangent.
+    CHECK_FALSE(simplify(original,-1));
+    CHECK_FALSE(simplify(original,std::numeric_limits<float>::infinity()));
+    CHECK_FALSE(simplify(original,0,hold));
 }

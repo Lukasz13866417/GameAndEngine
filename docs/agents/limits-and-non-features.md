@@ -51,6 +51,7 @@ It prints three lines: `file N MB, decoded N MiB of the editor's 64 MiB`, then i
 | Tracks | 16,384 | `max_tracks` | `Timeline track or total keyframe limit reached` |
 | Key time | [0, 86,400] s | `max_time` | `Keyframe time must be finite and between 0 and 86400 seconds` |
 | Property / label / layer / string value | 256 / 256 / 128 / 4,096 bytes | `max_property_bytes`, `max_label_bytes`, `max_layer_bytes`, `max_string_value_bytes` | Rejected |
+| Scene animation roots | 1,024 | `editor_example::max_animation_roots` | Creation/load/patch rejected; overlapping enabled writers of one property are also rejected |
 | Scene duration | [0.1, 86,400] s | `examples/editor/animation.cpp` `validate_animation` | `Timeline duration must be in [0.1, 86400] seconds` |
 | Key times | within [0, duration] | `validate_animation`, `edit_property_keys` | `Animation key time must lie within the timeline duration`. Set `timeline_duration` **before** keying. |
 | Named keyframes | 16,384; each name ≤ 256 bytes of UTF-8 with no control characters | `validate_animation` | `Too many named keyframes` / `Keyframe name must be valid UTF-8, ...` |

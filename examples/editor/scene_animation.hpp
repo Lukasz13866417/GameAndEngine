@@ -12,6 +12,7 @@
 #include <vector>
 
 namespace editor_example {
+inline constexpr std::size_t max_animation_roots = 1024;
 struct State;
 struct InstanceTransform;
 struct SceneInstance;

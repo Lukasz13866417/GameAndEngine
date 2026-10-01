@@ -947,10 +947,8 @@ Location belt(Voyage& v) {
         for (const auto u : {0.,.5,1.})
             v.turn(id,belt_cut+span*u,{static_cast<f32>(spin.x+rate*span*u),static_cast<f32>(spin.y+.6*rate*span*u),spin.z},
                    u>0 ? Interpolation::linear : Interpolation::hold);
-        // The four story obstacles get individual controls. Keep the hundreds
-        // of background fragments keyed instead of exhausting the root budget.
-        if (i<heroes.size())
-            v.spin("Belt / obstacle "+std::to_string(i+1)+" tumble",id,{belt_cut,duration},spin,
+        // Every tumble is an editable rate, not a series of rotation samples.
+        v.spin((i<heroes.size() ? "Belt / obstacle " : "Belt / rock ")+std::to_string(i+1)+" tumble",id,{belt_cut,duration},spin,
                    {static_cast<f32>(rate),static_cast<f32>(.6*rate),0});
         v.show(id,belt_cut,true);
     }

@@ -5,6 +5,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
+#include <ranges>
 #include <chrono>
 #include <iostream>
 #include "../../examples/editor/editor_layout.hpp"
@@ -93,14 +94,14 @@ struct Fixture {
             return entry && entry->text == text;
         });
     }
-    Vec2 checkbox_in_row(std::string_view property, std::string_view caption) {
+    Vec2 checkbox_in_row(std::string_view property, std::string_view caption, ui::WidgetRole role=ui::WidgetRole::checkbox) {
         const auto inspected = screen.inspect();
         REQUIRE(inspected);
         for (const auto& label : inspected->widgets) {
             if (label.role != ui::WidgetRole::label || label.label != property || !label.visible)
                 continue;
             for (const auto& widget : inspected->widgets)
-                if (widget.parent == label.parent && widget.role == ui::WidgetRole::checkbox &&
+                if (widget.parent == label.parent && widget.role == role &&
                     widget.label == caption && widget.visible)
                     return {widget.clip.x + widget.clip.width * .5F,
                             widget.clip.y + widget.clip.height * .5F};
@@ -134,6 +135,16 @@ struct Fixture {
               {.kind = EventKind::pointer_up, .position = position,.modifiers=modifiers}});
     }
     void click(std::string_view text) { click(at(text)); }
+    void popup_option(std::string_view text) {
+        // Popups draw last. A closed dropdown elsewhere may display the same
+        // word (e.g. Hold on a boolean row); choose the actual menu item.
+        const auto list=draw();
+        for(const auto& command:list.commands|std::views::reverse)
+            if(const auto* item=std::get_if<ui::TextDraw>(&command);item && item->text==text) {
+                click(Vec2{item->position.x+3,item->position.y+8});return;
+            }
+        FAIL("No popup option "<<text);
+    }
     void toggle_group(std::string_view identifier) {
         const auto tree = screen.inspect(); REQUIRE(tree);
         const auto label = std::ranges::find_if(tree->widgets, [&](const auto& widget) {
@@ -639,7 +650,8 @@ TEST_CASE("Inspector edits name timestamp and per-value interpolation atomically
     CHECK_FALSE(f.poll());
     f.edit(f.at("1.7"), "2.75");
     CHECK_FALSE(f.poll());
-    f.click(f.checkbox_in_row("Position", "Blend"));
+    f.click(f.checkbox_in_row("Position", "", ui::WidgetRole::dropdown));
+    f.popup_option("Hold");
     CHECK_FALSE(f.poll());
     f.click(f.checkbox_in_row("Scale", "Key"));
     CHECK_FALSE(f.poll());
@@ -667,6 +679,17 @@ TEST_CASE("Inspector edits name timestamp and per-value interpolation atomically
     f.applied(*action);
     CHECK_FALSE(f.panel.selected_keyframe());
     CHECK(keyframe_times(f.source) == std::vector<f32>{0});
+}
+
+TEST_CASE("Smooth interpolation is selectable and retained after inspector synchronization", "[editor][ui][timeline]") {
+    Fixture f;f.add();
+    f.click(f.checkbox_in_row("Position", "", ui::WidgetRole::dropdown));
+    f.popup_option("Smooth");CHECK_FALSE(f.poll());
+    f.click("Apply to keyframe");auto action=f.poll();REQUIRE(action);
+    CHECK(property_value(*action,{1,"position"}).incoming==timeline::Interpolation::cubic);
+    f.applied(*action);f.pump();
+    CHECK(f.has("Smooth"));
+    CHECK(f.source.document.timeline.find({1,"position"})->keys.back().incoming==timeline::Interpolation::cubic);
 }
 
 TEST_CASE("Sparse inspector exposes evaluated context and filters objects",

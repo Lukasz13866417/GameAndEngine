@@ -85,6 +85,16 @@ bool same_rect(ui::Rect a, ui::Rect b) {
     return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
 }
 
+TEST_CASE("Compact unlabeled dropdowns display only their selected option", "[ui][dropdown]") {
+    Fixture f;
+    auto compact=f.panel.dropdown<int>("",{{1,"Smooth"}}).width(100);
+    auto named=f.panel.dropdown<int>("Mode",{{1,"Linear"}});
+    f.pump();
+    CHECK(f.drawn_text("Smooth").text=="Smooth");
+    CHECK(f.drawn_text("Mode: Linear").text=="Mode: Linear");
+    CHECK(compact.value()==1);CHECK(named.value()==1);
+}
+
 TEST_CASE("Screens support more than the old 65536 live-widget budget", "[ui][capacity]") {
     Fixture f;
     auto parent = f.panel.column();

@@ -448,27 +448,23 @@ TEST_CASE("Departure uses editable animation roots without changing its choreogr
             CHECK(departure->camera==0);
             CHECK_FALSE(departure->motion.orient_to_path);
         } else ++spins;
-        // The original keys are a reversible fallback, not a second active
-        // writer. Check dense samples and both exact interval boundaries.
+        // Controllers replace baked tracks. Outside their interval the base
+        // pose is used (these background actors are hidden after their shot).
         std::vector<f32> times{animation->interval.first,animation->interval.last};
-        for (f32 t=0;t<=d::duration;t+=.25F) times.push_back(t);
+        for (const float u:{.25F,.5F,.75F})times.push_back(std::lerp(animation->interval.first,animation->interval.last,u));
+        times.push_back(0);times.push_back(std::min(d::duration,animation->interval.last+.01F));
         for (const auto& output:p::animation_outputs(*animation)) {
             CHECK(output.object!=d::hero);
             CHECK(output.object!=d::camera_id);
             const auto* target=p::find_instance(*scene,static_cast<u32>(output.object));
             REQUIRE(target);
-            REQUIRE(scene->document.timeline.find(output));
+            CHECK_FALSE(scene->document.timeline.find(output));
             for (const auto time:times) {
                 INFO(time);
-                const auto raw=scene->document.timeline.sample(output,time);
-                REQUIRE(raw);
-                const auto authored=std::get<Vec3>(*raw);
                 const auto pose=p::evaluate_transform(*scene,*target,time);
                 const auto actual=output.property=="position"?pose.position:pose.rotation;
-                if (!animation->interval.contains(time)) CHECK(actual==authored);
-                else if (output.property=="position") CHECK(distance(actual,authored)<.001F); // <1 m in km units
-                else for (const Vec3 axis:{Vec3{1,0,0},Vec3{0,1,0},Vec3{0,0,1}})
-                    CHECK(distance(p::rotation_math::direction(actual,axis),p::rotation_math::direction(authored,axis))<.00001F);
+                if (!animation->interval.contains(time))
+                    CHECK(actual==(output.property=="position"?target->transform.position:target->transform.rotation));
                 p::InstanceTransform bulk=target->transform;
                 p::AnimationFrame frame(scene->document.instances,time);
                 frame.apply(target->id,bulk);
@@ -478,7 +474,10 @@ TEST_CASE("Departure uses editable animation roots without changing its choreogr
         }
     }
     CHECK(departures==5);
-    CHECK(spins==5); // habitat ring and four story-critical belt obstacles
+    CHECK(spins==336); // habitat ring and every asteroid, including fragments
+    std::size_t key_count{};
+    for(const auto& track:scene->document.timeline.tracks())key_count+=track.keys.size();
+    CHECK(key_count<6500); // Formerly 10,131, with redundant baked controllers.
 
     auto root=std::ranges::find(scene->document.instances,std::string("ANIMATION / Gateway / Freighter crossing"),&p::SceneInstance::name);
     REQUIRE(root!=scene->document.instances.end());
@@ -496,9 +495,7 @@ TEST_CASE("Departure uses editable animation roots without changing its choreogr
     CHECK(p::evaluate_transform(*scene,*p::find_instance(*scene,d::camera_id),31.4F)==camera_before);
     CHECK(p::evaluate_transform(*scene,*p::find_instance(*scene,d::hero),31.4F)==hero_before);
     settings.enabled=false;
-    const auto raw=scene->document.timeline.sample({target->id,"position"},31.4F);
-    REQUIRE(raw);
-    CHECK(p::evaluate_transform(*scene,*target,31.4F).position==std::get<Vec3>(*raw));
+    CHECK(p::evaluate_transform(*scene,*target,31.4F).position==target->transform.position);
     settings=original;
 
     const auto encoded=p::encode(*scene);REQUIRE(encoded);

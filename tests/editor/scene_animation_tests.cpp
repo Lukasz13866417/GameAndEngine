@@ -201,3 +201,40 @@ TEST_CASE("Departure initialization preserves banked and inverted orientations",
             CHECK(actual[r][c]==Catch::Approx(expected[r][c]).margin(.0001));
     }
 }
+
+TEST_CASE("Large independent animation forests validate and patch without a 128-root bottleneck", "[editor][animation-forest]") {
+    auto state=scene();
+    for(u32 i=0;i<260;++i) {
+        const auto target=100+i,root=1000+i;
+        state.document.instances.push_back({.id=target,.blueprint=BlueprintId::mesh,.name="Rock",.settings=MeshSettings{}});
+        state.document.instances.push_back({.id=root,.blueprint=BlueprintId::spin,.name="Tumble",
+            .settings=AnimationSettings{{0,10},true,SpinAnimation{target,{},{1,2,0}}}});
+    }
+    state.document.next_instance_id=2000;
+    REQUIRE(validate_scene_animations(state));
+    DocumentChanges changes;
+    for(u32 i=0;i<260;++i)changes.animations.insert(1000+i);
+    auto patch=capture_patch(state.document.revision,state,changes);REQUIRE(patch);
+    patch->revision=patch->base_revision+1;
+    const auto bytes=encode_patch(*patch);REQUIRE(bytes);
+    const auto restored=decode_patch(*bytes);REQUIRE(restored);
+    CHECK(restored->animations.size()==260);
+    auto& last=std::get<AnimationSettings>(state.document.instances.back().settings);
+    std::get<SpinAnimation>(last.root).target=100;
+    CHECK_FALSE(validate_scene_animations(state));
+    last.enabled=false;CHECK(validate_scene_animations(state));
+}
+
+TEST_CASE("Smooth timeline segments survive the incremental preview protocol", "[editor][animation-forest][animation]") {
+    auto state=scene();auto worker=state;
+    REQUIRE(key_property(state,{1,"position"},2,Vec3{2,1,0},timeline::Interpolation::cubic));
+    REQUIRE(key_property(state,{1,"position"},6,Vec3{6,4,1},timeline::Interpolation::cubic));
+    DocumentChanges changes;changes.properties.insert({1,"position"});
+    auto patch=capture_patch(worker.document.revision,state,changes);REQUIRE(patch);
+    patch->revision=patch->base_revision+1;
+    auto encoded=encode_patch(*patch);REQUIRE(encoded);
+    auto decoded=decode_patch(*encoded);REQUIRE(decoded);
+    REQUIRE(apply_patch(worker,*decoded));
+    CHECK(worker.document.timeline==state.document.timeline);
+    for(float t=0;t<=10;t+=.25F)CHECK(position(worker,t)==position(state,t));
+}
