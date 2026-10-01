@@ -41,6 +41,11 @@ class Gait:
     lift: float = 0.07            # m the ankle rises at mid-swing
     heel_strike: float = 15.0     # degrees the toes point up at heel strike
     toe_off: float = 35.0         # degrees the heel is raised at toe-off
+    # Holding something with both hands (see rekey_walk's `hands`):
+    blade: float = 12.0           # degrees the shoulders turn to bring the support side forward
+    protract: float = 10.0        # degrees the support shoulder rolls forward
+    dip: float = 10.0             # degrees the held mesh's far end dips from the authored aim
+    lower: float = 0.08           # m the held mesh sits below the authored aim
 
 
 def _rotation(axis, degrees):
@@ -148,6 +153,8 @@ class WalkRig:
         self.hips = self.index["DEF-spine"]
         self.waist = self.index.get("DEF-spine.001")
         self.upper_spine = self.index.get("DEF-spine.002")
+        self.neck = self.index.get("DEF-spine.004")
+        self.shoulders = {side: self.index[n] for side in ("L", "R") if (n := f"DEF-shoulder.{side}") in self.index}
         # The limbs' IK chains and everything below them (hands, fingers, toes).
         self.limbs = {self.index[n] for part in (*self.legs.values(), *self.arms.values()) for n in part["bones"]}
         for b, parent in enumerate(character.parents):
@@ -209,11 +216,15 @@ def rekey_walk(character, original_worlds, fps, sole_points, gait=Gait(), hands=
     rate), and the largest distance IK fell short of a target, in metres.
 
     `hands` optionally maps a side ("L", "R") to dict(hand=grip.Hand,
-    curls=..., support=bind world or None, reach=bind-space offset). Its
+    curls=..., support=bind world or None, carry=bind-space transform). Its
     fingers take that grip; a support hand follows the other hand's held mesh
-    to its bind placement; a holding hand moves by `reach` (rotated with it),
-    e.g. to pull what it holds out of the body."""
+    to its bind placement; a holding hand moves what it holds by `carry`
+    (applied in bind space: a dip, a pull out of the body). With a support
+    hand the shoulders turn (`blade`) to bring it forward, while the held
+    mesh keeps its aim and the head keeps facing ahead."""
     hands = hands or {}
+    support = next((side for side, grip in hands.items() if grip.get("support") is not None), None)
+    blade = 0.0 if support is None else gait.blade * (1 if support == "R" else -1)  # + turns the right side forward
     rig = WalkRig(character, sole_points)
     frames = len(original_worlds); period = frames / fps
     up, forward, across_axis = np.array([0, 1.0, 0]), np.array([0, 0, 1.0]), np.array([1.0, 0, 0])
@@ -227,9 +238,9 @@ def rekey_walk(character, original_worlds, fps, sole_points, gait=Gait(), hands=
         across = gait.sway * np.sin(2 * np.pi * phase)
         pelvis = _delta(rig.pelvis, np.array([across, down, 0.0]), _rotation(up, yaw) @ _rotation(forward, drop))
         chest = _delta(rig.chest, np.array([across * 0.7, down, 0.0]),
-                       _rotation(up, yaw * (1 - gait.counter)) @ _rotation(across_axis, gait.lean))
+                       _rotation(up, yaw * (1 - gait.counter) + blade) @ _rotation(across_axis, gait.lean))
         waist = _delta((rig.pelvis + rig.chest) / 2, np.array([across * 0.85, down, 0.0]),
-                       _rotation(up, yaw * (1 - gait.counter / 2)) @ _rotation(across_axis, gait.lean / 2))
+                       _rotation(up, yaw * (1 - gait.counter / 2) + blade / 2) @ _rotation(across_axis, gait.lean / 2))
         # Each delta is nudged (by under a centimetre) so the spine stays joined:
         # the waist starts where the pelvis ends, the chest where the waist ends.
         def attach(delta, bone, below):
@@ -239,6 +250,8 @@ def rekey_walk(character, original_worlds, fps, sole_points, gait=Gait(), hands=
         if rig.waist is not None and rig.upper_spine is not None:
             waist = attach(waist, rig.waist, pelvis @ _rigid(original[character.parents[rig.waist]]))
             chest = attach(chest, rig.upper_spine, waist @ _rigid(original[rig.waist]))
+        # What the hands hold keeps the authored aim: the chest without the blade.
+        aim = _delta((chest @ np.r_[rig.chest, 1.0])[:3], np.zeros(3), _rotation(up, -blade)) @ chest
         worlds = [None] * len(original); worlds[0] = np.eye(4)
         def hang(b):
             """A bone's original turn on its parent, made rigid, at its modelled
@@ -257,6 +270,9 @@ def rekey_walk(character, original_worlds, fps, sole_points, gait=Gait(), hands=
             if b in moved: worlds[b] = moved[b] @ _rigid(original[b])
             elif character.parents[b] == 0: worlds[b] = chest @ _rigid(original[b])  # a loose bone rides the chest
             else: worlds[b] = hang(b)
+            # The neck turns the head back to the front; the support shoulder rolls forward.
+            turn = -blade if b == rig.neck else blade / abs(blade) * gait.protract if blade and b == rig.shoulders.get(support) else 0.0
+            if turn: worlds[b] = _delta(worlds[b][:3, 3], np.zeros(3), _rotation(up, turn)) @ worlds[b]
         # Legs: planted feet, IK at modelled lengths, knees to the front.
         for side, offset in (("L", 0.0), ("R", 0.5)):
             leg = rig.legs[side]; b = [rig.index[n] for n in leg["bones"]]
@@ -278,9 +294,9 @@ def rekey_walk(character, original_worlds, fps, sole_points, gait=Gait(), hands=
         for side in sorted(("L", "R"), key=lambda k: hands.get(k, {}).get("support") is not None):
             arm = rig.arms[side]; b = [rig.index[n] for n in arm["bones"]]
             shoulder = joint(b[0])
-            hand = chest @ _rigid(original[b[4]])
-            if hands.get(side, {}).get("reach") is not None:
-                hand[:3, 3] += hand[:3, :3] @ character.rest[b[4]][:3, :3].T @ hands[side]["reach"]
+            hand = aim @ _rigid(original[b[4]])
+            if hands.get(side, {}).get("carry") is not None:
+                hand = hand @ np.linalg.inv(character.rest[b[4]]) @ hands[side]["carry"] @ character.rest[b[4]]
             outward = across_axis if side == "L" else -across_axis
             # Elbows hang rather than wing out: a holding elbow points out and a
             # little down, a support elbow out and down, under what it holds

@@ -243,6 +243,23 @@ def quaternion(r):
         s = 2 * np.sqrt(1 + r[2, 2] - r[0, 0] - r[1, 1]); q = [(r[0, 2] + r[2, 0]) / s, (r[1, 2] + r[2, 1]) / s, s / 4, (r[1, 0] - r[0, 1]) / s]
     q = np.array(q); return q / np.linalg.norm(q)
 
+def rotation_matrix(q):
+    """Rotation matrix of a unit quaternion (x, y, z, w)."""
+    x, y, z, w = q
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+
+def halfway(upper, lower):
+    """A joint's half-angle frame: the rotation halfway from the upper bone's
+    to the lower bone's, at the lower bone's head; the bones' mean scale."""
+    su, sl = np.cbrt(np.linalg.det(upper[:3, :3])), np.cbrt(np.linalg.det(lower[:3, :3]))
+    qu, ql = quaternion(upper[:3, :3] / su), quaternion(lower[:3, :3] / sl)
+    if qu @ ql < 0: ql = -ql
+    out = np.eye(4); out[:3, :3] = rotation_matrix((qu + ql) / np.linalg.norm(qu + ql)) * (su + sl) / 2
+    out[:3, 3] = lower[:3, 3]
+    return out
+
 def decompose(m):
     """(translation, quaternion, uniform scale) of a similarity matrix."""
     scale = np.cbrt(np.linalg.det(m[:3, :3]))
@@ -271,6 +288,7 @@ class Character:
         index = {b: k + 1 for k, b in enumerate(self.deforming)}
         self.parents = [-1] + [index.get(parent[b], 0) for b in self.deforming]
         self.bone_index = index
+        self.halves = []
         self.rest = self.bone_worlds(bind)
 
     def deforming_parent(self, model, deforming):
@@ -314,7 +332,42 @@ class Character:
     def bone_worlds(self, globals_):
         worlds = [np.eye(4)]
         for b in self.deforming: worlds.append(self.world(globals_[b]))
+        return self.with_halves(worlds)
+
+    # Joints that get a half-angle helper: (name, upper bone, lower bone).
+    HALF_JOINTS = (("elbow", "DEF-upper_arm.{}.001", "DEF-forearm.{}"), ("knee", "DEF-thigh.{}.001", "DEF-shin.{}"))
+
+    def add_half_joints(self):
+        """Volume helpers: at each elbow and knee, a bone that turns half as far
+        as the joint does. Linear blend skinning averages the two bones'
+        matrices across a joint, which shrinks a bent elbow to half its
+        thickness; skin shared by the two bones moves onto the helper
+        (share_halves), which turns rigidly and keeps it."""
+        for joint, upper, lower in self.HALF_JOINTS:
+            for side in "LR":
+                u, l = upper.format(side), lower.format(side)
+                if u not in self.names or l not in self.names: continue
+                self.names.append(f"HALF-{joint}.{side}"); self.parents.append(self.names.index(u))
+                self.halves.append((len(self.names) - 1, self.names.index(u), self.names.index(l)))
+        self.rest = self.with_halves(self.rest)
+
+    def with_halves(self, worlds):
+        """Bone worlds with the half-angle helpers set from their joints' bones."""
+        worlds = list(worlds[:len(self.deforming) + 1])
+        for _, u, l in self.halves: worlds.append(halfway(worlds[u], worlds[l]))
         return worlds
+
+    def share_halves(self, skin):
+        """Skin [(bone, weight)] with each joint's shared weight on its helper:
+        a vertex weighted a to the upper bone and b to the lower gives
+        min(a, b) of each to the helper, so a 50/50 vertex turns rigidly by
+        half the joint's angle."""
+        skin = dict(skin)
+        for h, u, l in self.halves:
+            shared = min(skin.get(u, 0.0), skin.get(l, 0.0))
+            if shared < 0.01: continue
+            skin[u] -= shared; skin[l] -= shared; skin[h] = skin.get(h, 0.0) + 2 * shared
+        return [(b, w) for b, w in sorted(skin.items(), key=lambda x: -x[1]) if w > 1e-6]
 
     def locals(self, worlds):
         return [decompose(np.linalg.inv(worlds[p]) @ w) if p >= 0 else decompose(w)
@@ -353,6 +406,7 @@ def build_mesh(character, colors, pose_worlds=None, max_influences=8):
                 influences = sorted(mesh["influences"][vertex], key=lambda x: -x[1])[:max_influences]
                 total = sum(w for _, w in influences)
                 skin = [(character.bone_index[b], w / total) for b, w in influences] if total > 1e-4 else [(0, 1.0)]
+                skin = character.share_halves(skin)
                 p = bind_points[vertex]
                 if skinning is not None:
                     blend = sum(w * skinning[b] for b, w in skin)
@@ -432,9 +486,12 @@ def fill_unweighted(scene):
             mesh["influences"][v] = list(mesh["influences"][nearest]); filled += 1
     return filled
 
-def hand_grips(scene, character, first_frame):
+def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0):
     """Grips for a mesh held wholly by one hand (the soldier's rifle): that
-    hand's fingers close on it, and the other hand supports it from below."""
+    hand's fingers close on it, and the other hand takes its far hole the way
+    the holding hand takes the near one (or, without two holes, supports it
+    from below). The held mesh's far end dips `dip` degrees about its rear,
+    and the whole of it sits `lower` metres lower."""
     import grip
     bind = scene.bind_globals()
     hands_mesh = next((m for m in scene.meshes if m["name"].lower().startswith("hand")), None)
@@ -451,22 +508,29 @@ def hand_grips(scene, character, first_frame):
         triangles = held[mesh["corners"].reshape(-1, 3)]
         holding, support = grip.Hand(character, side, points, bones), grip.Hand(character, other, points, bones)
         h = character.bone_index[next(iter(owners))]
-        placement = grip.support_placement(support, held, triangles, first_frame[h] @ np.linalg.inv(character.rest[h]))
+        holding_world = first_frame[h] @ np.linalg.inv(character.rest[h])
+        placement = grip.hole_placement(holding, support, held, triangles, holding_world)
+        if placement is None: placement = grip.support_placement(support, held, triangles, holding_world)
         on_support = placement @ np.linalg.inv(character.rest[support.hand])
+        frame = grip.held_frame(held, character.rest[h][:3, 3], holding_world)
+        rear = frame[:3, 3] + frame[:3, 0] * ((held - frame[:3, 3]) @ frame[:3, 0]).min()
+        carry = np.eye(4); carry[:3, :3] = grip._rotation(frame[:3, 2], -dip)
+        carry[:3, 3] = rear - carry[:3, :3] @ rear - frame[:3, 1] * lower
         # Both thumbs point along it, toward its far end (the muzzle), drooping
         # toward the floor of the clip's first frame where they can.
         forward = grip.long_axis(held, character.rest[h][:3, 3])
         down = -np.linalg.inv(first_frame[h] @ np.linalg.inv(character.rest[h]))[:3, 1]
         holding.aim_thumb(triangles, np.eye(4), forward, down)
         support.aim_thumb(triangles, on_support, forward, down)
-        return {side: dict(hand=holding, curls=holding.close(triangles), support=None),
+        return {side: dict(hand=holding, curls=holding.close(triangles), support=None, carry=carry),
                 other: dict(hand=support, curls=support.close(triangles, on_support), support=placement)}
     return {}
 
 def held_out_of_body(scene, character, hands, worlds):
-    """If what a hand holds sinks into the rest of the character (the soldier's
-    authored aim pressed the rifle's butt into his chin), set that hand's
-    reach along it so it clears, and return the distance."""
+    """If what a hand holds sinks into the character's torso or head (the
+    soldier's authored aim pressed the rifle's butt into his chin), pull it
+    along its length until it clears: the holding hand's carry. Returns the
+    distance."""
     import grip
     holding = next(((side, g) for side, g in hands.items() if g.get("support") is None), None)
     if holding is None: return 0.0
@@ -480,13 +544,20 @@ def held_out_of_body(scene, character, hands, worlds):
             for b, w in top: out[v] += w / total * (skin[character.bone_index[b]] @ np.r_[points[v], 1.0])[:3]
         return out
     held = next(m for m in scene.meshes if {b for inf in m["influences"] for b, _ in inf} == {character.deforming[hand - 1]})
-    body = [m for m in scene.meshes if m is not held and not m["name"].lower().startswith("hand")]
-    triangles = np.concatenate([posed(m)[m["corners"].reshape(-1, 3)] for m in body])
+    # The torso and head only: arms reach round what they hold.
+    limb = ("upper_arm", "forearm", "hand", "palm", "f_", "thumb")
+    def trunk(mesh):
+        own = np.array([not any(k in display_name(scene.models[max(inf, key=lambda x: x[1])[0]]) for k in limb)
+                        for inf in mesh["influences"]])
+        corners = mesh["corners"].reshape(-1, 3)
+        return posed(mesh)[corners[own[corners].all(1)]]
+    triangles = np.concatenate([trunk(m) for m in scene.meshes if m is not held])
     bind_points = character.point(Character.bind_points(held, bind))
     forward = grip.long_axis(bind_points, character.rest[hand][:3, 3])
     distance = grip.clear_of(posed(held), triangles, skin[hand][:3, :3] @ forward)
     if not distance: return 0.0
-    g["reach"] = forward * distance
+    pull = np.eye(4); pull[:3, 3] = forward * distance
+    g["carry"] = pull @ g.get("carry", np.eye(4))
     return distance
 
 def sole_points(character, rows):
@@ -593,6 +664,7 @@ def main():
     scene = FbxScene(read_fbx(source))
     filled = fill_unweighted(scene)
     character = Character(scene, args.height)
+    character.add_half_joints()
     overrides = json.loads(pathlib.Path(args.colors).read_text()) if args.colors else {}
     missing = set()
     def colors(mesh, material):
@@ -614,12 +686,13 @@ def main():
         if args.rekey_walk and clip_name == "walk":
             import walk_cycle
             gait = walk_cycle.Gait(**{k: float(v) for k, v in (item.split("=") for item in args.gait.split(",") if item)})
-            hands = hand_grips(scene, character, worlds[0])
+            hands = hand_grips(scene, character, worlds[0], gait.dip, gait.lower)
             new_worlds, short = walk_cycle.rekey_walk(character, worlds, fps, sole_points(character, rows), gait, hands)
             reach = held_out_of_body(scene, character, hands, new_worlds[0])
             if reach:
                 new_worlds, short = walk_cycle.rekey_walk(character, worlds, fps, sole_points(character, rows), gait, hands)
                 notes.append(f"the held mesh was {reach * 100:.1f} cm into the body; the holding hand reaches that much further along it")
+            new_worlds = [character.with_halves(w) for w in new_worlds]
             clips.append(dict(name="walk", fps=round(fps, 3), frames=frames_from_worlds(character, new_worlds),
                               worlds=new_worlds, loop=True, speed=gait.speed))
             authored["name"] = "walk_authored"

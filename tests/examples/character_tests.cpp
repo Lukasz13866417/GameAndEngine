@@ -6,6 +6,7 @@
 #include <cmath>
 #include <optional>
 #include <random>
+#include <tuple>
 
 namespace {
 using namespace vng;
@@ -96,7 +97,7 @@ TEST_CASE("Frames blend linearly, rotations by the shortest path", "[character][
 TEST_CASE("The soldier loads with his armature, skin and walk", "[character][soldier]") {
     auto soldier = character::Character::load(VNG_SOLDIER_MESH);
     REQUIRE(soldier);
-    CHECK(soldier->armature().bone_count() == 99);
+    CHECK(soldier->armature().bone_count() == 103); // 98 from the rig, a root, 4 joint helpers
     CHECK(soldier->binding().mesh().vertex_count() > 10'000);
     const auto* walk = soldier->clip("walk");
     REQUIRE(walk);
@@ -248,4 +249,31 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
             for (std::size_t row = 0; row < 3; ++row) drift = std::max(drift, std::abs(relative[c][row] - (*first)[c][row]));
     }
     CHECK(drift < 1e-3F);
+    // Each elbow and knee helper turns half as far as its joint: in every
+    // frame it is as far (in angle) from the bone above as from the bone below.
+    const auto angle = [](const Mat4& a, const Mat4& b) {
+        f32 dot = 0;
+        for (std::size_t c = 0; c < 3; ++c)
+            for (std::size_t row = 0; row < 3; ++row) dot += a[c][row] * b[c][row];
+        return std::acos(std::clamp((dot - 1) / 2, -1.F, 1.F));
+    };
+    std::size_t helpers = 0;
+    for (const auto& [helper, upper, lower] : {std::tuple{"HALF-elbow.L", "DEF-upper_arm.L.001", "DEF-forearm.L"},
+             std::tuple{"HALF-elbow.R", "DEF-upper_arm.R.001", "DEF-forearm.R"},
+             std::tuple{"HALF-knee.L", "DEF-thigh.L.001", "DEF-shin.L"}, std::tuple{"HALF-knee.R", "DEF-thigh.R.001", "DEF-shin.R"}}) {
+        const auto h = soldier->armature().bone(helper), u = soldier->armature().bone(upper), d = soldier->armature().bone(lower);
+        REQUIRE(h);
+        REQUIRE(u);
+        REQUIRE(d);
+        ++helpers;
+        for (std::size_t frame = 0; frame < walk.frames; frame += 6) {
+            REQUIRE(soldier->pose(walk, static_cast<f32>(frame) / walk.fps, pose));
+            const auto globals = pose.globals();
+            REQUIRE(globals);
+            const auto& g = *globals;
+            const auto at = [&](rig::BoneId id) { return g[*soldier->armature().index(id)]; };
+            CHECK(angle(at(*h), at(*u)) == Catch::Approx(angle(at(*h), at(*d))).margin(.01));
+        }
+    }
+    CHECK(helpers == 4);
 }

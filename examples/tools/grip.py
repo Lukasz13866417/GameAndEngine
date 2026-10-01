@@ -207,6 +207,78 @@ class Hand:
         return out
 
 
+def held_frame(held_points, holder, holding_world):
+    """A held mesh's own frame: its centre, then its length (toward the end
+    away from the holding hand at `holder`), its up (whichever side faces up
+    while held at holding_world, which maps bind space to the walk) and its
+    width, as unit columns of a 4x4 that maps (length, up, width) to bind space."""
+    centre = held_points.mean(0)
+    _, _, axes = np.linalg.svd(held_points - centre)
+    height, width = axes[1], axes[2]
+    length = long_axis(held_points, holder)
+    up_now = np.linalg.inv(holding_world[:3, :3])[:, 1]                    # world up, seen in bind space
+    up = height if height @ up_now > 0 else -height
+    if abs(height @ up_now) < abs(width @ up_now):                        # the thin side faces up
+        up, width = (width if width @ up_now > 0 else -width), height
+    frame = np.eye(4); frame[:3, :3] = np.c_[length, up, np.cross(length, up)]; frame[:3, 3] = centre
+    return frame
+
+
+def holes(held_points, held_triangles, frame, step=0.004):
+    """Openings through a held mesh across its width (a hand-hole, a
+    thumbhole): regions of its side profile no triangle covers but its
+    outline encloses. Each is (centre, (length, up) extent) in the frame's
+    coordinates, ordered along the length."""
+    to_frame = np.linalg.inv(frame)
+    flat = (held_triangles @ to_frame[:3, :3].T + to_frame[:3, 3])[..., :2]
+    points = (held_points @ to_frame[:3, :3].T + to_frame[:3, 3])[:, :2]
+    low, high = points.min(0) - 2 * step, points.max(0) + 2 * step
+    ls, us = np.arange(low[0], high[0], step), np.arange(low[1], high[1], step)
+    grid = np.stack(np.meshgrid(ls, us, indexing="ij"), -1).reshape(-1, 2)
+    a, b, c = flat[:, 0], flat[:, 1], flat[:, 2]
+    cross = lambda u, v: u[..., 0] * v[..., 1] - u[..., 1] * v[..., 0]
+    solid = np.abs(cross(b - a, c - a)) > 1e-10
+    covered = np.zeros(len(grid), bool)
+    for k in range(0, len(grid), 2048):
+        g = grid[k:k + 2048, None, :]
+        d1, d2, d3 = cross(b - a, g - a), cross(c - b, g - b), cross(a - c, g - c)
+        covered[k:k + 2048] = ((((d1 >= 0) & (d2 >= 0) & (d3 >= 0)) | ((d1 <= 0) & (d2 <= 0) & (d3 <= 0))) & solid).any(1)
+    covered = covered.reshape(len(ls), len(us))
+    # Flood the uncovered cells from the border; what stays dry is a hole.
+    label = np.where(covered, -1, 0); found, region = [], 0
+    for start in zip(*np.nonzero(~covered)):
+        if label[start]: continue
+        region += 1; label[start] = region; stack, cells, border = [start], [], False
+        while stack:
+            i, j = stack.pop(); cells.append((i, j))
+            border |= i in (0, len(ls) - 1) or j in (0, len(us) - 1)
+            for n in ((i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)):
+                if 0 <= n[0] < len(ls) and 0 <= n[1] < len(us) and label[n] == 0:
+                    label[n] = region; stack.append(n)
+        if not border and len(cells) > 4:
+            cells = np.array(cells); at = np.c_[ls[cells[:, 0]], us[cells[:, 1]]]
+            found.append((np.r_[at.mean(0), 0.0], (at.min(0), at.max(0))))
+    return sorted(found, key=lambda h: h[0][0])
+
+
+def hole_placement(holding, support, held_points, held_triangles, holding_world):
+    """Bind-space world for a support hand taking the held mesh's far hole the
+    way the holding hand (modelled on the mesh) takes the near one: its grip
+    mirrored across the mesh's width and moved from hole to hole. None if the
+    mesh has fewer than two holes. Needs a left-right symmetric skeleton."""
+    rest = holding.c.rest
+    frame = held_frame(held_points, rest[holding.hand][:3, 3], holding_world)
+    found = holes(held_points, held_triangles, frame)
+    if len(found) < 2: return None
+    near, far = found[0][0], found[-1][0]
+    shift = np.eye(4); shift[:3, 3] = far - near
+    mirror = frame @ shift @ np.diag([1.0, 1.0, -1.0, 1.0]) @ np.linalg.inv(frame)
+    # The skeleton's own mirror: the support hand's rest is the holding
+    # hand's reflected across x = 0, with one local axis flipped.
+    flip = np.linalg.inv(np.diag([-1.0, 1.0, 1.0, 1.0]) @ rest[holding.hand]) @ rest[support.hand]
+    return mirror @ rest[holding.hand] @ flip
+
+
 def support_placement(hand, held_points, held_triangles, holding_world, along=0.04, gap=0.012, slant=35.0):
     """Bind-space world for a support hand under a held mesh: palm up against
     its underside, `along` metres ahead of its middle toward the far end from

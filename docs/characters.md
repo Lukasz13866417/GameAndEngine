@@ -60,8 +60,9 @@ directory:
 | `NAME_pose.vmesh` | The mesh deformed at one clip frame (`--pose-frame N`, default 0), with no skin. It is for static scenes and the editor's mesh import. |
 
 For the soldier, it reads 9 meshes, 11 materials, a 278-bone Rigify rig and six
-identical copies of one walk. It writes 17,667 vertices, 9,735 triangles, 99
-bones and two 24-frame clips at 24 fps, one-second loops:
+identical copies of one walk. It writes 17,667 vertices, 9,735 triangles, 103
+bones (98 from the rig, a root and 4 joint helpers) and two 24-frame clips at
+24 fps, one-second loops:
 
 - `walk`, re-keyed at 0.95 m/s (see [re-keying a walk](#re-keying-a-walk));
 - `walk_authored`, the walk as authored in Blender, for comparison. Its fingers
@@ -82,6 +83,13 @@ What the conversion does:
     that copies it. So the face hangs from the head, and the arms hang from the
     shoulders.
   - Only the hips hang from `root`.
+- **Joint helpers.** Each elbow and knee gets a `HALF-` bone that turns half
+  as far as the joint, at the joint. Linear blend skinning averages the two
+  bones' matrices across a joint, so a bent elbow shrinks toward its centre:
+  the soldier's sleeves lost up to half their thickness at the elbow, in
+  Blender as well. A vertex shared by the two bones gives the shared weight
+  to the helper instead, so it turns rigidly and keeps its distance from the
+  joint; the elbow pads turn as rigid caps.
 - **Unweighted vertices.** Blender leaves unweighted vertices in place. Here
   they take their nearest weighted neighbour's weights, so they move with what
   they touch. The soldier's front belt pouch had 74 such vertices.
@@ -132,15 +140,21 @@ The re-keyed walk:
 - **Chest:** it undoes most of the pelvis's turn and leans slightly forward,
   so the rifle keeps its aim and only rides the bob.
 - **Legs and arms** are solved by two-bone IK at their modelled lengths.
-  - The left hand stays where the original put it.
+  - The left hand keeps the original's grip on the rifle, but the rifle is
+    carried 8 cm lower with its muzzle dipped 10 degrees about its butt, so the
+    butt rests below the chin instead of in it.
+  - The shoulders turn 12 degrees to bring the right side forward, and the
+    right shoulder rolls forward 10 degrees; the rifle keeps its aim and the
+    neck turns the head back to the front. That gives the right arm the reach
+    to the rifle's front hole with a relaxed elbow.
   - The elbows hang rather than wing out. The holding elbow points out and a
-    little down; the support elbow points out and down, under the rifle but
-    clear of the chest.
+    little down; the support elbow points out and down, clear of the chest.
   - The authored upper arms roll about 100 degrees between their two halves,
     which pinched them; the shoulder now takes half of that roll.
-  - The authored aim pressed the rifle's butt 4 cm into his chin. The holding
-    hand reaches that much further along the rifle (measured by skinning both
-    meshes), so it clears.
+  - If what the hands hold still sinks into the torso or head, it is pulled
+    along its length until it clears (measured by skinning both meshes). The
+    authored aim pressed the butt 4 cm into his chin; the lower carry needs no
+    pull.
   - That removes the authored right arm's 1.53x stretch, which the uniform-scale
     fit had turned into a hand 16% too large and a wrist torn 9 cm open.
   - Each limb bone points exactly at the next joint.
@@ -155,13 +169,19 @@ The re-keyed walk:
     is bound to his left hand.
   - The holding hand's fingers curl about their knuckles until they touch the
     mesh.
-  - The other hand goes palm up under the mesh, 4 cm ahead of its middle,
-    with its fingers slanted 35 degrees toward the muzzle, as a hand reaching
-    from a dropped elbow lies. It settles up against the underside above the
-    palm, and its fingers curl onto the far side.
-  - The support thumb swings at its base to lie forward along the near side.
-    A thumb that can't turn forward within 60 degrees (the left one, modelled
-    wrapped round the grip) keeps its modelled direction.
+  - The other hand takes the mesh's far hole the way the holding hand takes
+    the near one. `grip.holes` finds openings through the mesh across its
+    width (lines through its side profile that miss every triangle but lie
+    inside its outline); the soldier's rifle has two of about 58 cm2, the
+    rear hand-hole and the front hex hole. The holding hand's grip is mirrored
+    across the rifle and moved from hole to hole, which the symmetric skeleton
+    makes exact, and the fingers curl into place.
+  - A mesh with fewer than two holes is supported from below instead: the
+    hand goes palm up under it, 4 cm ahead of its middle, fingers slanted 35
+    degrees toward the far end, settled against the underside.
+  - A thumb swings at its base to lie forward along the mesh if that is within
+    60 degrees of how it was modelled; otherwise (both of the soldier's) it
+    keeps its modelled direction.
   - A finger that touches nothing relaxes like its neighbour, rather than
     closing into a fist.
   - Grips are solved once, in bind space, so they hold in every frame. The left
@@ -170,7 +190,8 @@ The re-keyed walk:
 
 `--gait` tunes it, for example `--gait crouch=0.02,bob=0.02`. The settings are
 the fields of `walk_cycle.Gait`: `speed`, `stance`, `crouch`, `bob`, `sway`,
-`turn`, `hip_drop`, `counter`, `lean`, `lift`, `heel_strike` and `toe_off`.
+`turn`, `hip_drop`, `counter`, `lean`, `lift`, `heel_strike`, `toe_off`, and
+for a two-handed hold `blade`, `protract`, `dip` and `lower`.
 With the defaults, the soldier's lowest point stays within 1 cm of the floor in
 every frame, and his hips rise and fall by 3 cm.
 
