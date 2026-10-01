@@ -17,13 +17,13 @@ public:
     enum class Filter { all, scene, regions };
     explicit InstanceList(vng::ui::Container host, Filter filter = Filter::all):host_(host),filter_(filter) {
         search_bar_=host_.row().height(32).padding(0).gap(4);
-        search_=search_bar_.text_input("Search instances").placeholder("Name, blueprint or #ID");
-        clear_=search_bar_.button("Clear").width(52);
+        search_=search_bar_.text_input("Search instances").placeholder("Name, blueprint or #ID").height(32);
+        clear_=search_bar_.button("Clear").width(76).height(32);
         empty_=host_.label("No matching instances").height(28).visible(false);
     }
     std::string_view query() const { return query_; }
     std::size_t matches() const { return matches_; }
-    void layout() { search_.width(std::max(1.F,search_bar_.bounds().width-56)); }
+    void layout() { search_.width(std::max(1.F,search_bar_.bounds().width-80)); }
     void search(std::string_view query) {
         if(query_==query)return;
         query_=query;search_.value(query_);normalized_=lower(query_);

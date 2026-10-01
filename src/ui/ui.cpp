@@ -1027,7 +1027,7 @@ struct State {
                 at.x += 28;
                 text(n.label, at, clip, ink);
             } else if (n.kind == Kind::dropdown) {
-                text(n.label + ": " + n.choices[n.selected], at,
+                text((n.label.empty() ? "" : n.label + ": ") + n.choices[n.selected], at,
                      intersect(clip, {r.x, r.y, std::max(0.0F, r.width - 24), r.height}), ink);
                 text(popup == id ? "−" : "+", {r.x + r.width - 22, at.y}, clip, t.muted);
             } else if (editable(n.kind)) {

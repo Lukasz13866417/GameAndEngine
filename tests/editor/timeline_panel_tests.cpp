@@ -5,6 +5,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
+#include <ranges>
 #include <chrono>
 #include <iostream>
 #include "../../examples/editor/editor_layout.hpp"
@@ -134,6 +135,16 @@ struct Fixture {
               {.kind = EventKind::pointer_up, .position = position,.modifiers=modifiers}});
     }
     void click(std::string_view text) { click(at(text)); }
+    void popup_option(std::string_view text) {
+        // Popups draw last. A closed dropdown elsewhere may display the same
+        // word (e.g. Hold on a boolean row); choose the actual menu item.
+        const auto list=draw();
+        for(const auto& command:list.commands|std::views::reverse)
+            if(const auto* item=std::get_if<ui::TextDraw>(&command);item && item->text==text) {
+                click(Vec2{item->position.x+3,item->position.y+8});return;
+            }
+        FAIL("No popup option "<<text);
+    }
     void toggle_group(std::string_view identifier) {
         const auto tree = screen.inspect(); REQUIRE(tree);
         const auto label = std::ranges::find_if(tree->widgets, [&](const auto& widget) {
@@ -640,7 +651,7 @@ TEST_CASE("Inspector edits name timestamp and per-value interpolation atomically
     f.edit(f.at("1.7"), "2.75");
     CHECK_FALSE(f.poll());
     f.click(f.checkbox_in_row("Position", "", ui::WidgetRole::dropdown));
-    f.click("Hold");
+    f.popup_option("Hold");
     CHECK_FALSE(f.poll());
     f.click(f.checkbox_in_row("Scale", "Key"));
     CHECK_FALSE(f.poll());
@@ -673,7 +684,7 @@ TEST_CASE("Inspector edits name timestamp and per-value interpolation atomically
 TEST_CASE("Smooth interpolation is selectable and retained after inspector synchronization", "[editor][ui][timeline]") {
     Fixture f;f.add();
     f.click(f.checkbox_in_row("Position", "", ui::WidgetRole::dropdown));
-    f.click("Smooth");CHECK_FALSE(f.poll());
+    f.popup_option("Smooth");CHECK_FALSE(f.poll());
     f.click("Apply to keyframe");auto action=f.poll();REQUIRE(action);
     CHECK(property_value(*action,{1,"position"}).incoming==timeline::Interpolation::cubic);
     f.applied(*action);f.pump();

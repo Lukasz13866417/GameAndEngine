@@ -22,6 +22,12 @@ TEST_CASE("Instance search filters retained rows by name blueprint and ID withou
     input::Frame frame{.logical_size={800,700},.framebuffer={800,700}};
     const auto pump=[&]{REQUIRE(screen.update(frame,.016F));list.layout();};
     pump();pump();
+    const auto draws=screen.draw_list();REQUIRE(draws);
+    for(const auto& command:draws->commands)
+        if(const auto* text=std::get_if<ui::TextDraw>(&command);text && text->text=="Clear") {
+            const auto measured=text->font.measure(text->text,static_cast<u32>(text->size));REQUIRE(measured);
+            CHECK(text->position.x+measured->width<=text->clip.x+text->clip.width);
+        }
     auto tree=screen.inspect();REQUIRE(tree);
     const auto field=std::ranges::find_if(tree->widgets,[](const auto& w){return w.label=="Search instances";});
     REQUIRE(field!=tree->widgets.end());

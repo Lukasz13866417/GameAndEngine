@@ -297,7 +297,7 @@ TEST_CASE(
           track("1", "scale", "{ time = 2; value = true; incoming = \"linear\"; }"),
           track("1", "scale", "{ time = 2; value = 1000001; incoming = \"linear\"; }"),
           track("1", "scale", "{ time = 11; value = 1; incoming = \"linear\"; }"),
-          track("1", "scale", "{ time = 2; value = 1; incoming = \"cubic\"; }"),
+          track("1", "scale", "{ time = 2; value = 1; incoming = \"unknown\"; }"),
           track("1", "visible", "{ time = 2; value = false; incoming = \"linear\"; }"),
           track("1", "position", "{ time = 2; value = [0,0]; incoming = \"linear\"; }"),
           track("1", "position", "{ time = 2; value = [0,1000001,0]; incoming = \"hold\"; }"),

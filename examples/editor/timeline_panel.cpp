@@ -163,7 +163,7 @@ struct TimelinePanel::Impl {
         erase = controls.button("Delete keyframe").width(172);
         object_host = controls.column().height(36).padding(0);
         object = object_host.dropdown<u64>("Object", {{0, "All objects"}});
-        controls.label("Key = stored here. Hold / Linear / Smooth applies FROM the previous value.")
+        controls.label("Key = stored here. Blend starts at the previous key.")
             .height(24);
         property_rows = controls.column().padding(0).gap(6);
     }
