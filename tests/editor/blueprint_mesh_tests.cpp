@@ -1,5 +1,6 @@
 #include "../../examples/editor/blueprint_mesh_controls.hpp"
 #include "../../examples/editor/editing_session.hpp"
+#include "../../examples/editor/mesh_colours.hpp"
 #include "../../examples/editor/mesh_camera_bake.hpp"
 #include "../../examples/editor/preview_delivery_logic.hpp"
 #include "../../examples/support/earth_assets.hpp"
@@ -85,10 +86,57 @@ TEST_CASE("Blueprint mesh controls are declared by identity, not display names o
     auto result=request->apply(mesh());REQUIRE(result);CHECK(result->size()==3);
     CHECK(earth::cloud_settings(result->document())->coverage==1.5F);
     CHECK(earth::cloud_settings(result->document())->edge_scatter==1.25F);
+    // A mesh named Earth is not the Earth blueprint: it only gets the colour
+    // controls every flat-coloured mesh gets (this one is all white).
     auto ordinary=source();ordinary.metadata={{"name","Earth"}};
     editor::Inspector none{4,1,1};
     REQUIRE(describe_blueprint_mesh(none,mesh(ordinary),[](MeshDraftEdit){FAIL("Unexpected controls");}));
-    CHECK(none.schema().controls.empty());
+    REQUIRE(none.schema().controls.size()==1);
+    CHECK(none.schema().controls[0].key=="colour_0");
+}
+
+TEST_CASE("A flat-coloured mesh lists its colours and recolours each one everywhere", "[editor][blueprint-mesh][colours]") {
+    auto coloured=source();coloured.metadata={{"name","soldier"},{"skin/rig","soldier.vrig"}};
+    // Two vertices red, two green, one blue and one half-transparent blue.
+    std::get<std::vector<f32>>(coloured.vertex_fields[2].values)={1,0,0,1, 0,1,0,1, 1,0,0,1, 0,1,0,1, 0,0,1,1, 0,0,1,.5F};
+    const auto palette=mesh_palette(coloured);
+    REQUIRE(palette.size()==4);
+    CHECK(palette[0].vertices==2);CHECK(palette[1].vertices==2);CHECK(palette[2].vertices==1);
+    CHECK(palette[0].value==std::array<f32,4>{1,0,0,1}); // equal counts: first to appear first
+    CHECK(mesh_palette(coloured,3).empty()); // painted per vertex: no palette
+    editor::Inspector ui{5,1,1};std::optional<MeshDraftEdit> request;
+    const auto description=describe_blueprint_mesh(ui,mesh(coloured),[&](MeshDraftEdit r){request=std::move(r);});
+    REQUIRE(description);CHECK_FALSE(description->hint.empty());
+    REQUIRE(ui.schema().controls.size()==4);
+    const auto& red=*std::ranges::find_if(ui.schema().controls,[](const editor::Control& c){
+        return std::get<u32>(c.fields[0].value)==255;});
+    REQUIRE(red.fields.size()==3);
+    CHECK(std::get<u32>(red.fields[1].value)==0);CHECK(red.apply_label=="Recolour");
+    // Applying 0x80 grey turns both red vertices grey, and nothing else.
+    REQUIRE(ui.dispatch({ui.schema().stamp,red.key,editor::Phase::apply,{{"red",u32{128}},{"green",u32{128}},{"blue",u32{128}}}}));
+    REQUIRE(request);
+    auto result=request->apply(mesh(coloured));REQUIRE(result);
+    const auto& colours=std::get<std::vector<f32>>(result->document().vertex_fields[2].values);
+    const auto grey=from_srgb8(128);
+    CHECK(colours[0]==grey);CHECK(colours[1]==grey);CHECK(colours[2]==grey);CHECK(colours[3]==1.F);
+    CHECK(colours[8]==grey);CHECK(colours[4]==0.F);CHECK(colours[5]==1.F);CHECK(colours[23]==.5F);
+    auto expected=coloured;
+    for(std::size_t field=0;field<expected.vertex_fields.size();++field)
+        if(field!=2)CHECK(result->document().vertex_fields[field]==expected.vertex_fields[field]);
+    CHECK(result->document().metadata==expected.metadata); // a skinned mesh stays skinned
+    // Only the colour field changes, so the draft patch is narrow.
+    const auto changes=editor::mesh_changes(coloured,result->document());
+    CHECK_FALSE(changes.whole);REQUIRE(changes.fields.size()==1);CHECK(changes.fields.begin()->first=="color/0");
+    // RGB colour fields work too; other colour encodings have no palette.
+    auto rgb=coloured;rgb.vertex_fields[2]={"color/0",{vm::ScalarType::Float32,3},std::vector<f32>{1,0,0,1,0,0,0,0,1,0,0,1,1,0,0,1,0,0}};
+    REQUIRE(mesh_palette(rgb).size()==2);CHECK(mesh_palette(rgb)[0].value==std::array<f32,4>{1,0,0,1});
+    auto recoloured=recolour(rgb,{0,0,1,1},{0,1,0});REQUIRE(recoloured);
+    CHECK(std::get<std::vector<f32>>(recoloured->vertex_fields[2].values)[7]==1.F);
+    auto bytes=coloured;bytes.vertex_fields[2]={"color/0",{vm::ScalarType::UInt32,4},std::vector<u32>(24,255)};
+    CHECK(mesh_palette(bytes).empty());CHECK_FALSE(recolour(bytes,{1,1,1,1},{0,0,0}));
+    // Sliders show 8-bit sRGB; every value survives the trip to linear and back.
+    for(u32 v=0;v<256;++v)CHECK(to_srgb8(from_srgb8(v))==v);
+    CHECK(to_srgb8(4.F)==255); // glowing colours show as full
 }
 
 TEST_CASE("Tunnel class picker applies a blueprint-owned width edit", "[editor][blueprint-mesh][tunnel-classes]") {

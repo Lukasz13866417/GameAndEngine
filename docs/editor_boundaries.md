@@ -55,7 +55,10 @@ the affected realization, while ordinary camera navigation uploads nothing.
 `BlueprintMeshPanel` owns a local `InspectorPanel`, the blueprint's control
 declaration, part selection, and at most one background CPU edit. `describe_blueprint_mesh()`
 routes explicit asset identity to a typed blueprint declaration; the app contains
-no Earth-specific widgets or parameter handling. Scene instance controls remain
+no Earth-specific widgets or parameter handling. Every other mesh gets the
+generic colour declaration: a group per palette colour (`mesh_colours.hpp`
+finds the palette and recolours a document), so imported meshes need no
+blueprint of their own to be recoloured. Scene instance controls remain
 on the existing worker inspector path; mesh recipe controls don't require a scene
 keyframe or the worker to be available.
 

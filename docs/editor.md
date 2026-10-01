@@ -77,6 +77,19 @@ metadata and **Logs → Interaction timing** measurements/export.
   in its own **Mesh: [name]** view; choose **Scene** to place its instance.
   Vertex tools open in the right-hand **Blueprint geometry** panel. Import is undoable, and invalid files leave
   the scene unchanged. OBJ/FBX/glTF are not supported.
+- **Colours.** A flat-coloured mesh lists its colours in **Blueprint geometry**:
+  one with a float RGB or RGBA `color/0` and at most 32 distinct colours, such
+  as an imported character or a ship (Earth's painted terrain has thousands).
+  - The 16 commonest colours are listed, commonest first. Each is labelled with
+    its hex value and vertex count, and has **Red**, **Green** and **Blue**
+    sliders in 8-bit sRGB (files keep linear values; brighter-than-white
+    colours show as 255).
+  - **Recolour** changes every vertex of that colour in the mesh draft, as one
+    undoable edit; the entry keeps its place in the list.
+  - **Apply mesh to scene** publishes the new colours to every instance, and
+    **Export new .vmesh** writes them with every other field and the metadata.
+    A recoloured skinned character (`skin/` fields and `skin/rig`) stays a
+    valid skinned mesh: export it next to its `.vrig`.
   Effect presets create their own reusable blueprint and a selected instance,
   opening effect inspection. Try [`quiet_sun.veffect`](../examples/assets/quiet_sun.veffect).
   The current preset type is **Sun**; this loads saved settings, not new C++ code.
@@ -520,8 +533,9 @@ file permissions are preserved when replacing; final-component symlinks are
 rejected. Save is disabled during active drags or a pending worker Apply; unsubmitted
 inspector drafts are not silently applied by saving.
 
-Mesh editing changes vertex positions and supports the existing face/edge creation,
-subdivision and alignment tools; it does not remesh, edit UVs, or rig characters.
+Mesh editing changes vertex positions and colours, and supports the existing
+face/edge creation, subdivision and alignment tools; it does not remesh, edit
+UVs, or rig characters.
 The project retains a built-in mesh blueprint,
 one procedural sun blueprint, and imported mesh blueprints, with multiple independent
 scene instances. Imported geometry is embedded in `.vscene`, so reopening does
