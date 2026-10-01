@@ -1,0 +1,48 @@
+{
+    "_comment": "Provisional per-mesh colours (linear), until the model's textures replace them.",
+    "Armor": [
+        0.117,
+        0.15,
+        0.0482
+    ],
+    "ShoulderAttachment": [
+        0.0685,
+        0.0887,
+        0.0319
+    ],
+    "Belt": [
+        0.2874,
+        0.1946,
+        0.0802
+    ],
+    "KneeWraps": [
+        0.107,
+        0.0648,
+        0.0343
+    ],
+    "Boots": [
+        0.0423,
+        0.0369,
+        0.0319
+    ],
+    "ElbowProtectionL": [
+        0.0612,
+        0.0648,
+        0.0612
+    ],
+    "ElbowProtectionR": [
+        0.0612,
+        0.0648,
+        0.0612
+    ],
+    "Hands": [
+        0.6172,
+        0.3515,
+        0.2159
+    ],
+    "RifleMesh": [
+        0.0343,
+        0.0369,
+        0.0423
+    ]
+}

@@ -112,6 +112,9 @@
       ["vng_ui", "vng_text_opengl"], { kind: "Integration", external: external("vng_glad_dependency") })
   ];
   const applications = [
+    component("vng_character", "Imported characters", "Load a skinned mesh with its armature and animation clips, and sample a clip into a pose.",
+      "examples/tools/import_model.py converts a rigged Blender FBX into a bind-pose .vmesh whose skin/bones/N and skin/weights/N fields hold up to eight influences, and a .vrig document with the armature and per-frame clips. Character::load binds them through vng_rig; pose() blends frames into a caller-owned Pose. It needs no graphics context: the demo supplies the skinned renderer.",
+      ["examples/character/character_file.hpp", "examples/character/character.hpp", "examples/character/character.cpp", "tests/examples/character_tests.cpp", "docs/characters.md"], ["vng_content", "vng_rig"], { kind: "App library" }),
     component("vng_review_file", "Scene review documents", "Read, merge and atomically save review notes and candidate scene references without a renderer.",
       "Review holds candidate scenes, timestamps, pinned notes and verdicts in a .vreview document. Its codec resolves scene paths relative to the review file. Field-wise three-way merging preserves independent reviewer and author edits; it does not change the scene files being reviewed.",
       ["examples/review/review_file.hpp", "examples/review/review_file.cpp", "tests/examples/review_tests.cpp", "docs/review.md"], ["vng_content"], { kind: "App library" }),
@@ -204,6 +207,7 @@
     ["vng_solar_flyby_demo", "vng_spaceflight_support", "vng_sun_support", "vng_bloom_opengl", "vng_example_support"],
     ["vng_sun_demo", "vng_sun_support", "vng_example_presentation", "vng_bloom_opengl", "vng_example_support"],
     ["vng_rigging_demo", "vng_rig_opengl", "vng_example_support"],
+    ["vng_soldier_demo", "vng_character", "vng_rig_opengl", "vng_example_support", "vng_example_presentation"],
     ["vng_glow_demo", "vng_resources_opengl", "vng_bloom_opengl", "vng_example_support", "vng_text_opengl"],
     ["vng_text_demo", "vng_text_opengl", "vng_example_support"],
     ["vng_ui_demo", "vng_ui_opengl", "vng_example_support", "vng_example_presentation"],

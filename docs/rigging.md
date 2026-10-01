@@ -4,8 +4,11 @@ Rigging is built around independent mesh and armature assets. A `SkinBinding`
 connects exactly one immutable mesh snapshot to one immutable armature, while
 each character instance has its own mutable `Pose`.
 
-There is no ML integration, asset database, animation graph, or imported skeleton
-format in this implementation.
+There is no ML integration, asset database or animation graph in this
+implementation, and the engine itself reads no skeleton format. The example
+library `vng_character` loads characters imported from Blender (`.vmesh` with
+skin fields plus a `.vrig` armature and clips) into these types; see
+[characters from Blender](characters.md).
 
 ## Small public API
 
