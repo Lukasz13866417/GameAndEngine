@@ -1,9 +1,11 @@
 #include "blueprint_mesh_controls.hpp"
 #include "earth_infrastructure_controls.hpp"
+#include "mesh_colours.hpp"
 #include "../support/earth_assets.hpp"
 #include "../support/mesh_frame.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 
 namespace editor_example {
@@ -133,10 +135,43 @@ vng::editor::Result<BlueprintMeshDescription> describe_earth(vng::editor::Inspec
     });
     return description;
 }
+// Any flat-coloured mesh (an imported character, a ship): one group per
+// colour, its channels as 8-bit sRGB sliders, recolouring every vertex of
+// that colour in the draft.
+BlueprintMeshDescription describe_colours(vng::editor::Inspector& ui,const vng::editor::EditableMesh& mesh,
+    const SubmitMeshDraftEdit& submit) {
+    constexpr std::size_t listed=16;
+    const auto palette=mesh_palette(mesh.document());
+    BlueprintMeshDescription description;
+    for(std::size_t k=0;k<std::min(palette.size(),listed);++k) {
+        const auto& colour=palette[k];
+        struct Channels {vng::u32 red{},green{},blue{};};
+        const Channels shown{to_srgb8(colour.value[0]),to_srgb8(colour.value[1]),to_srgb8(colour.value[2])};
+        char label[96];
+        std::snprintf(label,sizeof label,"Colour %zu / #%02X%02X%02X / %zu vertices",k+1,
+            shown.red,shown.green,shown.blue,colour.vertices);
+        auto edit=ui.edit("colour_"+std::to_string(k),shown,label);
+        edit.slider("red",&Channels::red,0,255,"Red");
+        edit.slider("green",&Channels::green,0,255,"Green");
+        edit.slider("blue",&Channels::blue,0,255,"Blue");
+        edit.apply("Recolour",[submit,from=colour.value](const Channels& next) {
+            const vng::Vec3 to{from_srgb8(next.red),from_srgb8(next.green),from_srgb8(next.blue)};
+            submit({"Recolour",[from,to](const vng::editor::EditableMesh& source)->vng::content::Result<vng::editor::EditableMesh> {
+                auto recoloured=recolour(source.document(),from,to);
+                if(!recoloured)return std::unexpected(recoloured.error());
+                return vng::editor::EditableMesh::create(std::move(*recoloured));
+            }});
+        });
+    }
+    if(!palette.empty())description.hint=palette.size()>listed
+        ? "Recolour changes a colour everywhere.\nThe "+std::to_string(listed)+" commonest colours are listed."
+        : "Recolour changes a colour everywhere.";
+    return description;
+}
 }
 vng::editor::Result<BlueprintMeshDescription> describe_blueprint_mesh(vng::editor::Inspector& ui,
     const vng::editor::EditableMesh& mesh,SubmitMeshDraftEdit submit,MeshPartId selected_part) {
     if(example::earth::is_earth(mesh.document()))return describe_earth(ui,mesh,std::move(submit),selected_part);
-    return BlueprintMeshDescription{};
+    return describe_colours(ui,mesh,submit);
 }
 }
