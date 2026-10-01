@@ -47,8 +47,15 @@ window can be made.
 
 ```sh
 python3 examples/tools/import_model.py Soldier.fbx examples/assets/soldier --name soldier \
-    --colors examples/assets/soldier/colors.json --rekey-walk
+    --colors examples/assets/soldier/colors.json --rekey-walk --hole-closer 0.06
 ```
+
+`--hole-closer M` edits the model: a mesh held wholly by one hand that has
+two holes through it (the soldier's rifle: a rear and a front hand-hole) gets
+its far hole moved M metres nearer the near one. The stretch between them is
+shortened; the near hole and what lies behind it, and the far hole and what
+lies beyond it, keep their shape. The soldier's rifle is 6 cm shorter, so his
+right hand reaches its front hole with the rifle at the authored aim height.
 
 The tool needs Python 3 and numpy. It writes three files into the output
 directory:
@@ -140,9 +147,9 @@ The re-keyed walk:
 - **Chest:** it undoes most of the pelvis's turn and leans slightly forward,
   so the rifle keeps its aim and only rides the bob.
 - **Legs and arms** are solved by two-bone IK at their modelled lengths.
-  - The left hand keeps the original's grip on the rifle, but the rifle is
-    carried 8 cm lower with its muzzle dipped 10 degrees about its butt, so the
-    butt rests below the chin instead of in it.
+  - The left hand keeps the original's grip on the rifle and its aim at face
+    height. `--gait lower=0.08,dip=10` carries it 8 cm lower instead, muzzle
+    dipped 10 degrees about the butt.
   - The shoulders turn 12 degrees to bring the right side forward, and the
     right shoulder rolls forward 10 degrees; the rifle keeps its aim and the
     neck turns the head back to the front. That gives the right arm the reach
@@ -153,8 +160,8 @@ The re-keyed walk:
     which pinched them; the shoulder now takes half of that roll.
   - If what the hands hold still sinks into the torso or head, it is pulled
     along its length until it clears (measured by skinning both meshes). The
-    authored aim pressed the butt 4 cm into his chin; the lower carry needs no
-    pull.
+    authored aim pressed the butt 4.2 cm into his chin, so the rifle sits
+    4.2 cm further forward; the lower carry needs no pull.
   - That removes the authored right arm's 1.53x stretch, which the uniform-scale
     fit had turned into a hand 16% too large and a wrist torn 9 cm open.
   - Each limb bone points exactly at the next joint.

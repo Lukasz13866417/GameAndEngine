@@ -44,8 +44,8 @@ class Gait:
     # Holding something with both hands (see rekey_walk's `hands`):
     blade: float = 12.0           # degrees the shoulders turn to bring the support side forward
     protract: float = 10.0        # degrees the support shoulder rolls forward
-    dip: float = 10.0             # degrees the held mesh's far end dips from the authored aim
-    lower: float = 0.08           # m the held mesh sits below the authored aim
+    dip: float = 0.0              # degrees the held mesh's far end dips from the authored aim
+    lower: float = 0.0            # m the held mesh sits below the authored aim
 
 
 def _rotation(axis, degrees):

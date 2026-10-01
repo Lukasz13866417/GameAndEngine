@@ -261,6 +261,18 @@ def holes(held_points, held_triangles, frame, step=0.004):
     return sorted(found, key=lambda h: h[0][0])
 
 
+def shorten_between_holes(held_points, frame, found, by, margin=0.005):
+    """A held mesh's points with its far hole moved `by` metres nearer its near
+    hole: the stretch between the two is compressed along the length, and the
+    far hole and everything beyond it move back unchanged. The near hole and
+    everything behind it stay put."""
+    near, far = found[0], found[-1]
+    a, b = near[1][1][0] + margin, far[1][0][0] - margin    # near hole's front edge, far hole's rear edge
+    length = frame[:3, 0]; along = (held_points - frame[:3, 3]) @ length
+    moved = np.where(along <= a, 0.0, np.where(along >= b, -by, -by * (along - a) / (b - a)))
+    return held_points + moved[:, None] * length
+
+
 def hole_placement(holding, support, held_points, held_triangles, holding_world):
     """Bind-space world for a support hand taking the held mesh's far hole the
     way the holding hand (modelled on the mesh) takes the near one: its grip

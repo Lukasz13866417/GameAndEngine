@@ -498,16 +498,13 @@ def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0):
     if hands_mesh is None: return {}
     points = character.point(Character.bind_points(hands_mesh, bind))
     bones = np.array([character.bone_index[max(inf, key=lambda x: x[1])[0]] for inf in hands_mesh["influences"]])
-    for mesh in scene.meshes:
-        owners = {b for inf in mesh["influences"] for b, _ in inf}
-        if len(owners) != 1: continue
-        holder = display_name(scene.models[next(iter(owners))])
-        if not holder.startswith("DEF-hand."): continue
-        side = holder[-1]; other = "R" if side == "L" else "L"
+    found = held_mesh(scene, character)
+    if found is not None:
+        mesh, h = found
+        side = character.names[h][-1]; other = "R" if side == "L" else "L"
         held = character.point(Character.bind_points(mesh, bind))
         triangles = held[mesh["corners"].reshape(-1, 3)]
         holding, support = grip.Hand(character, side, points, bones), grip.Hand(character, other, points, bones)
-        h = character.bone_index[next(iter(owners))]
         holding_world = first_frame[h] @ np.linalg.inv(character.rest[h])
         placement = grip.hole_placement(holding, support, held, triangles, holding_world)
         if placement is None: placement = grip.support_placement(support, held, triangles, holding_world)
@@ -525,6 +522,45 @@ def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0):
         return {side: dict(hand=holding, curls=holding.close(triangles), support=None, carry=carry),
                 other: dict(hand=support, curls=support.close(triangles, on_support), support=placement)}
     return {}
+
+def held_mesh(scene, character):
+    """The mesh bound wholly to one hand (the soldier's rifle) and that hand's bone index, or None."""
+    for mesh in scene.meshes:
+        owners = {b for inf in mesh["influences"] for b, _ in inf}
+        if len(owners) == 1 and display_name(scene.models[next(iter(owners))]).startswith("DEF-hand."):
+            return mesh, character.bone_index[next(iter(owners))]
+    return None
+
+def shorten_held(scene, character, by):
+    """--hole-closer: the held mesh's far hole (the soldier's rifle's front
+    hand-hole) moves `by` metres nearer its near one, shortening the stretch
+    between them, so the support hand reaches it with the mesh carried higher.
+    Edits the scene's mesh in place; flat normals are recomputed. Returns
+    whether the mesh had two holes."""
+    import grip
+    found = held_mesh(scene, character)
+    if found is None: return False
+    mesh, h = found
+    bind = scene.bind_globals()
+    clip = scene.clips[0]
+    first = character.bone_worlds(scene.globals(scene.locals_at(clip, clip["times"][0])))
+    points = character.point(Character.bind_points(mesh, bind))
+    triangles = points[mesh["corners"].reshape(-1, 3)]
+    frame = grip.held_frame(points, character.rest[h][:3, 3], first[h] @ np.linalg.inv(character.rest[h]))
+    holes = grip.holes(points, triangles, frame)
+    if len(holes) < 2: return False
+    moved = grip.shorten_between_holes(points, frame, holes, by)
+    # Back to the mesh's own FBX space.
+    world = ((moved - character.offset) / character.scale) @ character.linear
+    local = (np.c_[world, np.ones(len(world))] @ np.linalg.inv(bind[mesh["model"]]).T)[:, :3]
+    p, corners = local, mesh["corners"].reshape(-1, 3)
+    normals = np.cross(p[corners[:, 1]] - p[corners[:, 0]], p[corners[:, 2]] - p[corners[:, 0]])
+    normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+    old = mesh["normals"].reshape(-1, 3, 3)
+    flat = (np.einsum("fk,fck->fc", normals, old / np.linalg.norm(old, axis=2, keepdims=True)) > 0.999).mean() > 0.99
+    mesh["positions"] = local
+    if flat: mesh["normals"] = np.repeat(normals, 3, axis=0).reshape(mesh["normals"].shape)
+    return True
 
 def held_out_of_body(scene, character, hands, worlds):
     """If what a hand holds sinks into the character's torso or head (the
@@ -658,6 +694,8 @@ def main():
     parser.add_argument("--rekey-walk", action="store_true",
                         help="replace the walk clip with a re-keyed one (see walk_cycle.py); keep the original as walk_authored")
     parser.add_argument("--gait", default="", help="re-keyed walk settings, e.g. crouch=0.035,bob=0.02 (walk_cycle.Gait)")
+    parser.add_argument("--hole-closer", type=float, default=0.0,
+                        help="move the held mesh's far hand-hole this many metres nearer its near one")
     args = parser.parse_args()
     source = pathlib.Path(args.source); out = pathlib.Path(args.output); out.mkdir(parents=True, exist_ok=True)
     name = args.name or source.stem.lower()
@@ -665,6 +703,8 @@ def main():
     filled = fill_unweighted(scene)
     character = Character(scene, args.height)
     character.add_half_joints()
+    if args.hole_closer and not shorten_held(scene, character, args.hole_closer):
+        print("  --hole-closer: no mesh held by one hand has two holes; nothing moved")
     overrides = json.loads(pathlib.Path(args.colors).read_text()) if args.colors else {}
     missing = set()
     def colors(mesh, material):
