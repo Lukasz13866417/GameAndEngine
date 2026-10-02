@@ -95,6 +95,7 @@ void sample(T& value, const timeline::Timeline& timeline, u64 object, std::strin
 std::vector<AnimationProperty> animation_properties(const State& state) {
     std::vector<AnimationProperty> properties;
     for (const auto& instance : state.document.instances) {
+        if(is_animation_blueprint(instance.blueprint))continue;
         const auto id = instance.id;
         const auto& name = instance.name;
         properties.insert(properties.end(), {
@@ -149,10 +150,11 @@ std::vector<AnimationProperty> animation_properties(const State& state) {
 
 SceneValues evaluate_scene(const State& state, f32 time) {
     SceneValues result{};
+    const AnimationFrame animations{state.document.instances,time};
     result.model.visible = result.sun.visible = false;
     result.instances.reserve(state.document.instances.size());
     for (const auto& instance : state.document.instances) {
-        result.instances.push_back(evaluate_instance(state, instance, time));
+        result.instances.push_back(evaluate_instance(state, instance, time, &animations));
         const auto& value = result.instances.back();
         if (value.id == 1 && std::holds_alternative<MeshSettings>(value.settings)) {
             result.model = std::get<MeshSettings>(value.settings);
@@ -202,6 +204,10 @@ gfx::Camera render_camera(const State& state, f32 time, f32 maximum_distance) {
 
 bool has_camera_animation(const State& state) {
     if (has_camera(state)) {
+        for (const auto& instance : state.document.instances)
+            if (const auto* root = std::get_if<AnimationSettings>(&instance.settings); root && root->enabled)
+                for (const auto& target : animation_outputs(*root))
+                    if (is_camera_instance(state, static_cast<u32>(target.object))) return true;
         for (const auto& track : state.document.timeline.tracks())
             if (track.target.object <= UINT32_MAX && is_camera_instance(state, static_cast<u32>(track.target.object)))
                 return true;
@@ -266,24 +272,27 @@ content::Result<void> key_camera(State& state, f32 time, const CameraPose& pose)
     }
     return edit_property_keys(state, time, keys);
 }
-InstanceTransform evaluate_transform(const State& state, const SceneInstance& source, f32 time) {
+InstanceTransform evaluate_transform(const State& state, const SceneInstance& source, f32 time, const AnimationFrame* animations) {
     auto result = source.transform;
     sample(result.position, state.document.timeline, source.id, "position", time);
     sample(result.rotation, state.document.timeline, source.id, "rotation", time);
     sample(result.scale, state.document.timeline, source.id, "scale", time);
     sample(result.axis_scale, state.document.timeline, source.id, "axis_scale", time);
+    if (animations) animations->apply(source.id,result);
+    else sample_scene_animations(state,source.id,time,result);
     return result;
 }
 bool evaluate_visibility(const State& state, const SceneInstance& source, f32 time) {
-    auto result = std::visit([](const auto& value) { return value.visible; }, source.settings);
+    auto result = instance_visible(source);
     sample(result, state.document.timeline, source.id, "visible", time);
     return result;
 }
-SceneInstance evaluate_instance(const State& state, const SceneInstance& source, f32 time) {
+SceneInstance evaluate_instance(const State& state, const SceneInstance& source, f32 time, const AnimationFrame* animations) {
     auto result = source;
-    result.transform = evaluate_transform(state, source, time);
+    result.transform = evaluate_transform(state, source, time, animations);
     std::visit([&](auto& value) {
-        sample(value.visible, state.document.timeline, source.id, "visible", time);
+        if constexpr (!std::same_as<std::remove_cvref_t<decltype(value)>,AnimationSettings>)
+            sample(value.visible, state.document.timeline, source.id, "visible", time);
         if constexpr (std::same_as<std::remove_cvref_t<decltype(value)>, MeshSettings>) {
             sample(value.brightness, state.document.timeline, source.id, "brightness", time);
             sample(value.wireframe, state.document.timeline, source.id, "wireframe", time);
@@ -357,6 +366,8 @@ content::Result<void> edit_property_keys(State& state, f32 time, std::span<const
     auto edited = state.document.timeline;
     for (const auto& key : keys) {
         const auto& target = key.target;
+        if(const auto owner=animation_owner(state,target,time))
+            return invalid("Property is controlled by animation #"+std::to_string(*owner)+"; edit its gizmo or Bake / detach it first");
         if (!seen.insert(identity(target)).second) return invalid("Duplicate keyframe property");
         const auto found = lookup.find(identity(target));
         if (found == lookup.end()) return invalid("Unknown animated scene property '" + target.property + "'");

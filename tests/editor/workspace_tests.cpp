@@ -92,9 +92,8 @@ static_assert(private_to_owner<ToolPanel, ToolPanel::Show, ToolPanel::Context>);
 static_assert(private_to_owner<SceneLists, SceneLists::Browsing, SceneListsContext>);
 static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Available, TimelineContext>);
 static_assert(private_to_owner<TimelineEditingUI, TimelineEditingUI::Unavailable, TimelineContext>);
-static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Orbiting, NavigationFrame>);
-static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Walking, NavigationFrame>);
-static_assert(private_to_owner<CameraNavigationLogic, CameraNavigationLogic::Unavailable, NavigationFrame>);
+// Gizmos expose a simple active-operation API, not situation dispatch.
+static_assert(requires(CameraGizmo& gizmo, const NavigationFrame& frame) { gizmo.update(frame); });
 
 EditingWorkspaceUI timeline_workspace(State state, ui::Screen& screen, TimelineHosts hosts) {
     const auto hidden=[&] { return screen.column().visible(false); };
@@ -423,7 +422,7 @@ TEST_CASE("Timeline selection is owned locally and availability survives narrow 
 TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losing focus state", "[editor][workspace][navigation]") {
     Fixture f;
     ViewportToolsUI interaction{f.session.session(),f.screen.column(),f.screen.column(),f.screen.column(),f.screen.column()};
-    const auto& navigation=interaction.camera_navigation();
+    const auto& navigation=interaction.camera_gizmo();
     input::Frame raw{.logical_size={800,600},.framebuffer={800,600},.focused=true};
     raw.events={{.kind=input::EventKind::key_down,.key=input::Key::w}};
     NavigationFrame frame{.pose={0,0,8,{},1},.mode=ViewMode::scene,
@@ -449,7 +448,7 @@ TEST_CASE("Navigation parent routes walk orbit and blocked contexts without losi
     CHECK(navigation.debug_string()==report);
     raw.events.clear(); frame.unhandled={};
     reply=dispatch(interaction,ViewportToolsUI::Navigate{},NavigationContext{.frame=frame,.walk_active=false});
-    CHECK(navigation.debug_report().situation=="Orbiting");
+    CHECK(navigation.debug_report().situation=="Orbit");
     CHECK_FALSE(navigation.walking().active());
     CHECK_FALSE(reply.changed);
 }

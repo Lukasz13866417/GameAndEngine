@@ -184,7 +184,7 @@ std::vector<SceneInstance> instances;`,
     vng::u32 id{};
     BlueprintId blueprint{BlueprintId::mesh};
     std::string name;
-    std::variant<MeshSettings, SunSettings, RegionSettings, CameraSettings> settings;
+    std::variant<MeshSettings, SunSettings, RegionSettings, CameraSettings, AnimationSettings> settings;
     InstanceTransform transform{};
     friend bool operator==(const SceneInstance&, const SceneInstance&) = default;
 };`, ["Instance name/settings/transform and numeric IDs."], ["Blueprint geometry is resolved through the Document catalog."], ["walk-document", "walk-blueprint-renderer"], true),

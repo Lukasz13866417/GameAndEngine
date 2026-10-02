@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore Vibe Engine's architecture as a pan-and-zoom map of real owners, components and source files.">
+  <title>Architecture map · Vibe Engine</title>
+  <link rel="stylesheet" href="architecture.css">
+  <script src="data.js" defer></script>
+  <script src="codebase.js" defer></script>
+  <script src="architecture-data.js" defer></script>
+  <script src="architecture-model.js" defer></script>
+  <script src="architecture.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#map">Skip to architecture map</a>
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Vibe Engine guide"><span aria-hidden="true">v.</span> VIBE ENGINE</a>
+    <h1>Architecture <span class="muted">/ explorer</span></h1>
+    <nav id="navigation" aria-label="Guide pages"><a href="index.html">Field guide ↗</a><a href="codebase.html">Codebase ↗</a></nav>
+  </header>
+  <div class="toolbar">
+    <div id="scopes" class="scopes" role="group" aria-label="Architecture view"></div>
+    <div class="search-wrap">
+      <label class="sr-only" for="map-search">Find a component in all maps</label>
+      <input id="map-search" type="search" autocomplete="off" placeholder="Find a class, responsibility or file…" aria-controls="search-results">
+      <kbd aria-hidden="true">/</kbd>
+      <div id="search-results" hidden></div>
+    </div>
+    <button id="details-toggle" aria-expanded="true" aria-controls="inspector">Details</button>
+  </div>
+  <main id="main">
+    <section class="map-panel" aria-label="Architecture canvas">
+      <div class="map-heading"><div><p class="eyebrow" id="scope-subtitle"></p><div id="breadcrumbs" aria-label="Component path"></div></div><span id="node-count" class="muted"></span></div>
+      <div id="map" tabindex="-1" aria-label="Pan and zoom architecture canvas" aria-describedby="map-help">
+        <div id="plane">
+          <svg id="edges" aria-hidden="true"></svg>
+          <div id="nodes" role="tree" aria-label="Component ownership tree"></div>
+        </div>
+        <div class="map-actions" role="group" aria-label="Map controls">
+          <button id="zoom-out" aria-label="Zoom out">−</button>
+          <output id="zoom-label" aria-label="Zoom level">100%</output>
+          <button id="zoom-in" aria-label="Zoom in">+</button>
+          <span class="divider"></span>
+          <button id="fit" title="Fit the visible tree (F)">Fit</button>
+          <button id="overview" title="Restore this map's overview">Overview</button>
+          <button id="expand-all">Expand all</button>
+        </div>
+        <button id="leave-branch" hidden>← Whole map</button>
+        <svg id="minimap" viewBox="0 0 190 125" role="img" aria-label="Map overview; shaded area is the visible canvas"></svg>
+      </div>
+      <footer class="map-footer"><div class="legend"><span><i class="line"></i> Owns</span><span><i class="line grouped"></i> Groups</span><span class="role-key" data-role="UI">UI</span><span class="role-key" data-role="Logic">Logic</span><span class="role-key" data-role="Data">Data</span><span class="role-key" data-role="GPU">GPU</span></div><p id="map-help">Drag background to pan · Scroll to zoom · Arrow keys explore · F fits</p></footer>
+    </section>
+    <aside id="inspector" aria-label="Selected component details"><div id="details"></div></aside>
+  </main>
+  <div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+  <noscript><p class="no-js">This interactive map needs JavaScript. The <a href="index.html">overview</a> and <a href="../codebase.md">codebase tour</a> are also available without it.</p></noscript>
+</body>
+</html>

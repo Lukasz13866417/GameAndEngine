@@ -3,7 +3,7 @@
 #include "box_selection.hpp"
 #include "component_dispatch.hpp"
 #include "camera_pointer_logic.hpp"
-#include "camera_navigation_logic.hpp"
+#include "camera_gizmo.hpp"
 #include "camera_walk_logic.hpp"
 #include "region_editor.hpp"
 #include "instance_rotation_gizmo.hpp"
@@ -32,10 +32,11 @@ class ViewportToolsUI {
 public:
     ViewportToolsUI(const EditingSession& editing, vng::ui::Container controls,
                         vng::ui::Container creation, vng::ui::Container inspector, vng::ui::Container popup)
-        : regions(controls, creation, inspector, popup), instances(editing), rotation(editing), mesh(editing), editing_(editing) {}
+        : regions(controls, creation, inspector, popup.column()), instances(editing), rotation(editing), mesh(editing), editing_(editing), navigation_(popup.column()) {}
 
     struct Navigate {};
-    [[nodiscard]] const CameraNavigationLogic& camera_navigation() const { return navigation_; }
+    [[nodiscard]] CameraGizmo& camera_gizmo() { return navigation_; }
+    [[nodiscard]] const CameraGizmo& camera_gizmo() const { return navigation_; }
     [[nodiscard]] DebugReport debug_report() const {
         const auto name=[](ViewportTool tool) {
             constexpr std::array names{"none","navigation","boundary","bounds","instances","translation",
@@ -90,7 +91,7 @@ public:
         if (mesh.active() || editing_.active(EditGesture::vertices) || editing_.active(EditGesture::mesh_transform)) return ViewportTool::components;
         if (mesh_part.dragging() || editing_.active(EditGesture::mesh_draft)) return ViewportTool::mesh_part;
         if (pivot.dragging()) return ViewportTool::pivot;
-        if (navigation_.pointer().dragging() || navigation_.walking().moving() || editing_.active(EditGesture::camera)) return ViewportTool::navigation;
+        if (navigation_.dragging() || navigation_.walking().moving() || editing_.active(EditGesture::camera)) return ViewportTool::navigation;
         if (selection_box.active() || editing_.active(EditGesture::vertices)) return ViewportTool::selection;
         return ViewportTool::none;
     }
@@ -107,6 +108,7 @@ public:
         return owner!=ViewportTool::none && owner!=ViewportTool::navigation && owner!=ViewportTool::selection;
     }
     [[nodiscard]] bool accepts(ViewportTool tool) const {
+        if(navigation_.exclusive() && tool!=ViewportTool::navigation)return false;
         const auto owner = active();
         if(tool==ViewportTool::navigation && transforming())return true;
         return (owner == ViewportTool::none || owner == tool) &&
@@ -156,10 +158,7 @@ private:
         if(context.walk_active) navigation_.walking(*context.walk_active);
         if(!context.frame) return {};
         const bool allowed=context.enabled && accepts(ViewportTool::navigation);
-        NavigationReply reply;
-        if(!allowed) reply=navigation_.handle(CameraNavigationLogic::Unavailable{},*context.frame);
-        else if(navigation_.walking().active()) reply=navigation_.handle(CameraNavigationLogic::Walking{},*context.frame);
-        else reply=navigation_.handle(CameraNavigationLogic::Orbiting{},*context.frame);
+        auto reply=navigation_.update(*context.frame,allowed);
         observe(ViewportTool::navigation,allowed);
         return reply;
     }
@@ -170,7 +169,7 @@ public:
         if (!allowed) return;
         bool handled{};
         switch (tool) {
-        case ViewportTool::navigation: handled = navigation_.pointer().handledPointer() || navigation_.walking().moving(); break;
+        case ViewportTool::navigation: handled = navigation_.handledPointer() || navigation_.walking().moving(); break;
         case ViewportTool::boundary: handled = regions.handled() || regions.component_editing(); break;
         case ViewportTool::bounds: handled = bounds.handledPointer(); break;
         case ViewportTool::instances: handled = instances.handled(); break;
@@ -187,7 +186,7 @@ public:
     }
 private:
     const EditingSession& editing_;
-    CameraNavigationLogic navigation_;
+    CameraGizmo navigation_;
     ViewportTool handled_{ViewportTool::none};
 };
 } // namespace editor_example

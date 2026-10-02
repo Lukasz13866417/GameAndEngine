@@ -15,8 +15,7 @@ constexpr std::array labels{"UI FPS cap (0 = unlimited)", "Embedded preview FPS 
                             "Independent Play FPS cap (0 = unlimited)",
                             "Debug-preview FPS cap (0 = unlimited)", "Preview resolution % (100 = native)",
                             "Minimum orbit distance", "Maximum orbit distance", "Timeline track limit", "Instance limit",
-                            "Maximum viewing distance", "Walk forward speed (units/s)", "Walk sideways speed (units/s)",
-                            "Walk vertical speed (units/s)", "Walk Shift multiplier"};
+                            "Maximum viewing distance"};
 text::Font font() {
     auto result = text::Font::load(VNG_TEST_FONT_PATH);
     REQUIRE(result);
@@ -143,9 +142,10 @@ TEST_CASE("Settings panel accepts fractional orbit_distance and rejects reversed
     f.enter(6,"nan",true); CHECK_FALSE(f.poll());
 }
 
-TEST_CASE("Settings panel exposes viewing distance and independent walk speeds", "[editor][ui][settings][walk]") {
-    Fixture f; f.panel.open({}); f.pump(); f.labels_fit();
-    f.enter(9,"50000"); f.enter(10,"12"); f.enter(11,"8"); f.enter(12,"5"); f.enter(13,"3",true);
+TEST_CASE("Settings panel exposes viewing distance and preserves mode-local walk speeds", "[editor][ui][settings][walk]") {
+    Fixture f; editor_example::Settings initial; initial.walk={12,8,5,3};
+    f.panel.open(initial); f.pump(); f.labels_fit();
+    f.enter(9,"50000",true);
     auto settings=f.poll(); REQUIRE(settings);
     CHECK(settings->maximum_viewing_distance==50000);
     CHECK(settings->walk==editor_example::WalkSpeeds{12,8,5,3});
@@ -160,7 +160,7 @@ TEST_CASE("Camera preference drafts preserve unrelated editor preferences", "[ed
     auto edited=panel.read(settings); REQUIRE(edited); CHECK(*edited==settings);
     CHECK_FALSE(panel.applied());
 }
-TEST_CASE("Walk speed sliders update the preference draft before explicit save", "[editor][ui][camera]") {
+TEST_CASE("Advanced camera preferences leave mode-local navigation controls to the camera gizmo", "[editor][ui][camera]") {
     ui::Screen screen{ui::dark_theme(font())};
     editor_example::CameraPreferences panel{screen.column().width(600)};
     editor_example::Settings settings;panel.show(settings);
@@ -168,17 +168,9 @@ TEST_CASE("Walk speed sliders update the preference draft before explicit save",
     const auto pump=[&] {REQUIRE(screen.update(frame,.016F));panel.poll();};
     pump();pump();
     const auto snapshot=screen.inspect();REQUIRE(snapshot);
-    const auto slider=std::ranges::find_if(snapshot->widgets,[](const auto& item) {
-        return item.role==ui::WidgetRole::slider && item.label=="Walk forward";
-    });
-    REQUIRE(slider!=snapshot->widgets.end());
-    const Vec2 p{slider->bounds.x+slider->bounds.width*.75F,slider->bounds.y+slider->bounds.height*.5F};
-    frame.pointer=p;
-    frame.events={{.kind=EventKind::pointer_down,.position=p},{.kind=EventKind::pointer_up,.position=p}};pump();
-    const auto draft=panel.read(settings);REQUIRE(draft);
-    CHECK(draft->walk.forward>50.F);CHECK(draft->walk.forward<100.F);
-    CHECK(draft->walk.sideways==settings.walk.sideways);
-    CHECK_FALSE(panel.applied());
+    CHECK_FALSE(std::ranges::any_of(snapshot->widgets,[](const auto& item) {
+        return item.label.starts_with("Walk") || item.label.starts_with("Pan multiplier");
+    }));
 }
 
 TEST_CASE("General settings preserve camera preferences not edited by this panel", "[editor][ui][settings]") {

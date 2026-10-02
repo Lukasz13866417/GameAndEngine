@@ -4,9 +4,70 @@
 #include "editor/rotation_math.hpp"
 #include "support/earth_assets.hpp"
 #include "support/earth_structures.hpp"
+#include "support/earth_placement.hpp"
 #include "support/mesh_frame.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
+
+TEST_CASE("Tunnel bore and collars are regular octagons with readable planar lining", "[example][tunnel]") {
+    using namespace vng;
+    namespace e=example::earth;
+    using namespace e::placement;
+    const auto size=3.F/e::detail::tunnel_inner_height;
+    const e::SkywaySample frame{{0,0,0},{0,0,1},{1,0,0},{0,1,0}};
+    std::vector<e::detail::TunnelSection> path;
+    for(unsigned i=0;i<6;++i) {
+        auto section=frame;section.position.z=f32(i)*4;
+        path.push_back({section,size});
+    }
+    const auto shell=e::detail::tunnel_shell(path,1);
+    const auto collar=e::detail::tunnel_collar(frame,size);
+    const auto length=[](Vec3 p){return std::hypot(p.x,p.y,p.z);};
+    const auto sub=[](Vec3 a,Vec3 b){return add(a,mul(b,-1));};
+    // Independent edge/radius checks catch both stretched profiles and an
+    // accidental return to six sides. The first ring is the outer skin.
+    const auto check_ring=[&](const auto& mesh,std::size_t first) {
+        const auto edge=length(sub(mesh.vertices[first].position,mesh.vertices[first+1].position));
+        const auto radius=std::hypot(mesh.vertices[first].position.x,mesh.vertices[first].position.y);
+        for(unsigned j=0;j<8;++j) {
+            const auto a=mesh.vertices[first+j].position,b=mesh.vertices[first+(j+1)%8].position;
+            CHECK(std::abs(length(sub(a,b))-edge)<.00001F);
+            CHECK(std::abs(std::hypot(a.x,a.y)-radius)<.00001F);
+        }
+    };
+    check_ring(shell,0);
+    REQUIRE(collar.vertices.size()==32);
+    for(unsigned ring=0;ring<4;++ring)check_ring(collar,ring*8);
+    const auto lining_first=path.size()*8;
+    for(unsigned j=0;j<8;++j) {
+        const auto& a=shell.vertices[lining_first+j*2];
+        const auto& b=shell.vertices[lining_first+j*2+1];
+        const auto& next=shell.vertices[lining_first+((j+1)%8)*2];
+        CHECK(a.normal==b.normal);
+        CHECK(a.normal!=next.normal); // A crease, not cylinder-like smoothing.
+        CHECK(std::abs(dot(a.normal,sub(b.position,a.position)))<.00001F);
+        CHECK(std::abs(length(a.normal)-1)<.00001F);
+        CHECK(a.color!=next.color);
+        CHECK(a.color!=shell.vertices[lining_first+16+j*2].color); // Bay variation.
+        CHECK(std::max(std::abs(a.position.x),std::abs(a.position.y))==3.F);
+    }
+    for(const auto* mesh:{&shell,&collar})for(const auto& f:mesh->faces) {
+        const auto& a=mesh->vertices[f.vertices[0]];
+        const auto& b=mesh->vertices[f.vertices[1]];
+        const auto& c=mesh->vertices[f.vertices[2]];
+        CHECK(dot(cross(sub(b.position,a.position),sub(c.position,a.position)),a.normal)>0);
+    }
+    const auto unlit=e::detail::tunnel_shell(path,0);
+    REQUIRE(unlit.vertices.size()==shell.vertices.size());
+    CHECK(unlit.faces==shell.faces);
+    for(std::size_t i=0;i<shell.vertices.size();++i) {
+        CHECK(unlit.vertices[i].position==shell.vertices[i].position);
+        CHECK(unlit.vertices[i].normal==shell.vertices[i].normal);
+        CHECK(unlit.vertices[i].emission==0);
+    }
+    // Detail remains indexed and linear in route samples, not a box per panel.
+    CHECK(shell.vertices.size()<=50*path.size()+80);
+}
 
 TEST_CASE("One shared tunnel has a dark outside, lit lining and open ends", "[example][tunnel]") {
     using namespace vng;
@@ -53,7 +114,7 @@ TEST_CASE("Tunnel is a kilometre-scale editable scene with an occluded exit", "[
     CHECK(high-low>6.F);
     CHECK(high-low<6.3F);
     CHECK(scene->document.mesh.document().metadata.at("geometry/recipe")=="earth/tunnel");
-    // The close-up uses exactly the original Earth hexagonal structural rib.
+    // The close-up uses exactly the original Earth octagonal structural rib.
     const auto& collar=scene->document.mesh_assets.front().geometry;
     const auto shared=example::earth::detail::tunnel_collar({{0,0,0},{0,0,1},{1,0,0},{0,1,0}},
         tunnel::radius/example::earth::detail::tunnel_inner_height);

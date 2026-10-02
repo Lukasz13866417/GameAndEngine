@@ -1464,7 +1464,42 @@ void mesh_draft_test(Harness& h) {
     std::cout<<"Mesh drafts passed: view isolation, tiny patches, hidden edits, explicit publication changes pixels.\n";
 }
 
-void integration_test() {
+void animation_forest_test(Harness& h) {
+    project::State next{.document={.revision=h.authored.document.revision+1,.mesh=h.authored.document.mesh}};
+    project::sun_settings(next,2)->visible=false;
+    const auto id=take(project::create_scene_animation(next,project::BlueprintId::departure,{1,0},{0,10}),"Create worker animation");
+    auto& root=std::get<project::DepartureSequence>(std::get<project::AnimationSettings>(project::find_instance(next,id)->settings).root);
+    root.motion.orient_to_path=false;
+    root.motion.route.points={vng::Vec3{0,0,0},vng::Vec3{1,0,0},vng::Vec3{2,0,0},vng::Vec3{3,0,0}};
+    next.viewport.time=5;next.viewport.paused=true;
+    h.authored=std::move(next);h.send_snapshot();
+    h.until("procedural animation rendered",[&]{return h.matching_frame(h.authored.document.revision);});
+    const auto pixels=h.session.latest_frame()->rgba;
+    const auto stats=h.query_stats();
+    const auto base=h.authored.document.revision++;
+    auto& edited=std::get<project::DepartureSequence>(std::get<project::AnimationSettings>(project::find_instance(h.authored,id)->settings).root);
+    for(unsigned i=1;i<4;++i)edited.motion.route.points[i].y=static_cast<float>(i)*.8F;
+    project::DocumentChanges changes;changes.animations.insert(id);
+    const auto patch=take(project::capture_patch(base,h.authored,changes),"Capture animation parameters");
+    const auto wire=take(project::encode_patch(patch),"Encode animation patch");
+    check(wire.size()<2048,"Animation patch includes unrelated scene content");
+    take(h.session.send("patch\n"+wire),"Send animation patch");
+    h.until("animation patch rendered",[&]{return h.acknowledged_revision==h.authored.document.revision&&h.matching_frame(h.authored.document.revision);});
+    const auto result=h.session.latest_frame()->rgba;
+    check(result!=pixels,"Animation parameter patch did not change the image");
+    const auto after=h.query_stats();
+    for(const auto key:{"scene_encode_calls","scene_decode_calls","full_mesh_uploads","mesh_update_calls","vertex_bytes_uploaded"})
+        check(after.at(key)==stats.at(key),std::string("Animation patch did unrelated work: ")+key);
+    const auto pose=project::evaluate_transform(h.authored,*project::find_instance(h.authored,1),5);
+    take(project::erase_instance(h.authored,id),"Detach root for reference render");
+    project::find_instance(h.authored,1)->transform=pose;
+    ++h.authored.document.revision;h.send_snapshot();
+    h.until("reference pose rendered",[&]{return h.matching_frame(h.authored.document.revision);});
+    check(equivalent_pixels(result,h.session.latest_frame()->rgba),"Worker animation differs from its sampled static pose");
+    std::cout<<"Animation worker passed: root-only patch, changed pixels, no geometry uploads/scene serialization, reference pose matches.\n";
+}
+
+void integration_test(bool animation_only=false) {
     auto mesh = take(editor::EditableMesh::load(VNG_EDITOR_MESH_PATH), "Load bundled editor mesh");
     project::State initial{.document = {.mesh = std::move(mesh)}};
     initial.viewport.paused = true;
@@ -1485,6 +1520,7 @@ void integration_test() {
                h.schema->stamp ==
                    editor::Stamp{2, h.session.active_generation(), h.authored.document.revision,h.authored.viewport.sequence};
     });
+    if(animation_only){animation_forest_test(h);return;}
     const auto first_generation = h.session.active_generation();
     check(bright_pixels(*h.session.latest_frame()) > 1000, "Initial sun and mesh preview is black");
     check(h.session.latest_frame()->info.time == static_cast<double>(h.authored.viewport.time),
@@ -1631,9 +1667,9 @@ void integration_test() {
 }
 } // namespace
 
-int main() {
+int main(int argc,char** argv) {
     try {
-        integration_test();
+        integration_test(argc==2&&std::string_view(argv[1])=="--animation-only");
         return 0;
     } catch (const ContextUnavailable& error) {
         std::cout << "SKIP: OpenGL preview context unavailable: " << error.what() << '\n';

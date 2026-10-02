@@ -18,9 +18,9 @@ struct CameraVisit {
 };
 
 // UI-only camera actions drawn in the viewport next to the selected camera's
-// glyph, like a gizmo. The host owns the visit state, the editing session and
-// status messages; poll clicked() after Screen::update() like any other
-// retained control.
+// glyph, like a gizmo. ViewportCameraUI owns the visit and these controls;
+// EditingWorkspaceUI polls actions and coordinates authoring. No application
+// widget handles or mutable session are needed here.
 class CameraPanel final {
 public:
     explicit CameraPanel(vng::ui::Container host) : host_(std::move(host)) {

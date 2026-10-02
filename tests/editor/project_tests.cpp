@@ -399,7 +399,7 @@ TEST_CASE("Deleting scene instances retains blueprints without resurrecting anim
     CHECK_FALSE(value.document.timeline.find({1, "position"}));
     CHECK(value.document.timeline.find({2, "radius"}));
     CHECK(value.document.mesh.document() == geometry);
-    CHECK(project::blueprint_catalog(value).size() == 4);
+    CHECK(project::blueprint_catalog(value).size() == 6);
     CHECK_FALSE(editing.erase_instances(std::array<u32,1>{1}));
     REQUIRE(editing.undo());
     REQUIRE(project::find_instance(value, 1));
@@ -665,7 +665,7 @@ TEST_CASE("Mesh import adds independent retained blueprints without replacing th
     CHECK(value.viewport.selected_vertex == 0);
     CHECK(value.viewport.inspected_mesh == blueprint);
     CHECK(project::editable_mesh(value)->document() == original_mesh->document());
-    CHECK(project::blueprint_catalog(value).size() == 5);
+    CHECK(project::blueprint_catalog(value).size() == 7);
     CHECK(project::is_mesh_instance(value, *created));
     REQUIRE(project::view_instance(value, project::BlueprintKind::mesh));
     CHECK(project::view_instance(value, project::BlueprintKind::mesh)->id == *created);
@@ -678,7 +678,7 @@ TEST_CASE("Mesh import adds independent retained blueprints without replacing th
     REQUIRE(project::erase_instance(value, *created));
     REQUIRE(project::erase_instance(value, *duplicate));
     CHECK(project::mesh_geometry(value, blueprint));
-    CHECK(project::blueprint_catalog(value).size() == 5);
+    CHECK(project::blueprint_catalog(value).size() == 7);
     const auto serialized = encoded(value);
     const auto decoded = project::decode(serialized);
     REQUIRE(decoded);

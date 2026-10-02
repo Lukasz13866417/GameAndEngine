@@ -135,7 +135,7 @@ void ProjectControls::describe_editor(vng::editor::Inspector& ui) {
     const auto id = state_.viewport.selected_object;
     const auto* source = find_instance(state_, id);
     // A blueprint inspection does not edit an instance's placement or timeline.
-    if (!source || state_.viewport.mode == ViewMode::mesh) return;
+    if (!source || state_.viewport.mode == ViewMode::mesh || is_animation_blueprint(source->blueprint)) return;
     const auto initial = evaluate_instance(state_, *source, state_.viewport.time);
     if (state_.viewport.mode == ViewMode::scene) {
     auto transform = ui.edit("transform", initial.transform, "Instance transform");

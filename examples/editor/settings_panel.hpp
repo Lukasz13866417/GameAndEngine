@@ -21,8 +21,7 @@ public:
                                     "Independent Play FPS cap (0 = unlimited)",
                                     "Debug-preview FPS cap (0 = unlimited)", "Preview resolution % (100 = native)",
                                     "Minimum orbit distance", "Maximum orbit distance", "Timeline track limit", "Instance limit",
-                                    "Maximum viewing distance", "Walk forward speed (units/s)",
-                                    "Walk sideways speed (units/s)", "Walk vertical speed (units/s)", "Walk Shift multiplier"};
+                                    "Maximum viewing distance"};
         for (std::size_t i = 0; i < fields_.size(); ++i) {
             auto row = panel_.row().height(36).padding(0).gap(8);
             row.label(labels[i]).width(450);
@@ -95,15 +94,14 @@ public:
             }
         }
         next.vsync = vsync_.value() ? vng::window::VSync::on : vng::window::VSync::off;
-        const std::array camera_values{&next.maximum_viewing_distance,&next.walk.forward,
-            &next.walk.sideways,&next.walk.vertical,&next.walk.fast_multiplier};
+        const std::array camera_values{&next.maximum_viewing_distance};
         for(std::size_t i=0;i<camera_values.size();++i) {
             auto text=fields_[9+i].getText();
             const auto first=text.find_first_not_of(" \t");
             if(first!=std::string_view::npos) text=text.substr(first,text.find_last_not_of(" \t")-first+1);
             const auto [end,e]=std::from_chars(text.data(),text.data()+text.size(),*camera_values[i]);
             if(e!=std::errc{} || end!=text.data()+text.size() || text.empty()) {
-                error("Enter numbers for viewing distance and walk speeds."); return {};
+                error("Enter a number for viewing distance."); return {};
             }
         }
         if (auto valid = validate_settings(next); !valid) { error(valid.error().message); return {}; }
@@ -123,8 +121,7 @@ private:
         }
         fields_[7].value(std::to_string(s.timeline_track_limit));
         fields_[8].value(std::to_string(s.instance_limit));
-        for(std::size_t i=0; const auto value : {s.maximum_viewing_distance,s.walk.forward,
-                s.walk.sideways,s.walk.vertical,s.walk.fast_multiplier}) {
+        for(std::size_t i=0; const auto value : {s.maximum_viewing_distance}) {
             std::array<char,64> bytes{};
             const auto [end,error]=std::to_chars(bytes.data(),bytes.data()+bytes.size(),value);
             if(error==std::errc{}) fields_[9+i].value(std::string_view{bytes.data(),end});
@@ -133,7 +130,7 @@ private:
         vsync_.value(s.vsync == vng::window::VSync::on);
     }
     vng::ui::Container panel_;
-    std::array<vng::ui::TextField, 14> fields_;
+    std::array<vng::ui::TextField, 10> fields_;
     vng::ui::TextField scale_;
     vng::ui::Checkbox vsync_;
     vng::ui::Label status_;

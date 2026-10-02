@@ -149,11 +149,11 @@ TEST_CASE("Patch wire rejects truncation versions and trailing bytes", "[editor]
     const auto wire = encode_patch(patch_for(state)); REQUIRE(wire);
     for (std::size_t length = 0; length < wire->size(); ++length)
         REQUIRE_FALSE(decode_patch(std::string_view(*wire).substr(0, length)));
-    auto corrupt = *wire; corrupt[8] = 10;
+    auto corrupt = *wire; corrupt[8] = 11;
     CHECK_FALSE(decode_patch(corrupt));
     CHECK_FALSE(decode_patch(*wire + "x"));
-    // V1 predates bounds/regions flags, mesh-patch and placement counts.
-    auto legacy = *wire; legacy[8] = 1; legacy.resize(legacy.size()-10);
+    // V1 predates bounds/regions flags and mesh/placement/animation counts.
+    auto legacy = *wire; legacy[8] = 1; legacy.resize(legacy.size()-14);
     const auto decoded = decode_patch(legacy); REQUIRE(decoded);
     CHECK(*decoded == patch_for(state));
 }

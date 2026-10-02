@@ -82,6 +82,13 @@ content::Result<bool> EditingSession::erase_instances(std::span<const u32> objec
     if (objects.empty()) return false;
     auto candidate = state_;
     std::set<u32> unique(objects.begin(), objects.end());
+    // Remove selected relationship roots before their selected targets.
+    for(auto it=unique.begin();it!=unique.end();) {
+        if(scene_animation(candidate,*it)) {
+            if(auto erased=erase_instance(candidate,*it);!erased)return std::unexpected(erased.error());
+            it=unique.erase(it);
+        } else ++it;
+    }
     for (auto id : unique)
         if (auto erased = erase_instance(candidate, id); !erased) return std::unexpected(erased.error());
     return replace(std::move(candidate), {.full = true});

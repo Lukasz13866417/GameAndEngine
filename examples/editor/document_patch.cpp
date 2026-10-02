@@ -7,6 +7,8 @@
 #include <bit>
 #include <cmath>
 #include <stdexcept>
+#include <sstream>
+#include <iomanip>
 
 namespace editor_example {
 namespace {
@@ -45,7 +47,8 @@ std::optional<PropertyReference<S>> property_reference(S& state, const timeline:
     if (key == "scale") return &instance->transform.scale;
     if (key == "axis_scale") return &instance->transform.axis_scale;
     return std::visit([&](auto& settings) -> std::optional<PropertyReference<S>> {
-        if (key == "visible") return &settings.visible;
+        if constexpr (!std::same_as<std::decay_t<decltype(settings)>,AnimationSettings>)
+            if (key == "visible") return &settings.visible;
         if constexpr (std::same_as<std::decay_t<decltype(settings)>, MeshSettings>) {
             if (key == "brightness") return &settings.brightness;
             if (key == "wireframe") return &settings.wireframe;
@@ -199,6 +202,7 @@ DocumentChanges changes_of(const DocumentPatch& patch) {
     for (const auto& [time, name] : patch.markers) { (void)name; changes.markers.insert(time); }
     for(const auto& mesh:patch.meshes)changes.meshes[mesh.blueprint]=editor::changes_of(mesh.values);
     for (const auto& [id, value] : patch.mesh_placements) changes.mesh_placements.insert(static_cast<u32>(id));
+    for (const auto& [id, value] : patch.animations) changes.animations.insert(id);
     return changes;
 }
 DocumentChanges animation_changes(const Document& before, const Document& after) {
@@ -222,6 +226,11 @@ DocumentChanges animation_changes(const Document& before, const Document& after)
 content::Result<DocumentPatch> capture_patch(u64 base, const State& state, const DocumentChanges& changes) {
     if (changes.full) return invalid("Structural changes need a snapshot, not a value patch");
     DocumentPatch patch{base, state.document.revision};
+    for(auto id:changes.animations) {
+        const auto* value=scene_animation(state,id);
+        if(!value)return invalid("Missing animation root in patch");
+        patch.animations.emplace(id,*value);
+    }
     for (auto id : changes.mesh_placements) {
         const auto blueprint = static_cast<BlueprintId>(id);
         if (!mesh_geometry(state, blueprint)) return invalid("Missing mesh placement blueprint");
@@ -285,6 +294,15 @@ content::Result<DocumentPatch> capture_patch(u64 base, const State& state, const
 content::Result<void> apply_patch(State& state, const DocumentPatch& patch) {
     try { shape(patch); } catch (const std::invalid_argument& error) { return invalid(error.what()); }
     if (state.document.revision != patch.base_revision) return invalid("Stale document patch base revision");
+    if(!patch.animations.empty() || patch.duration) {
+        auto instances=state.document.instances;
+        for(const auto& [id,value]:patch.animations) {
+            auto instance=std::ranges::find(instances,id,&SceneInstance::id);
+            if(instance==instances.end()||!is_animation_blueprint(instance->blueprint))return invalid("Patch references missing animation root");
+            instance->settings=value;
+        }
+        if(auto valid=validate_animation_roots(instances,patch.duration.value_or(state.document.timeline_duration));!valid)return valid;
+    }
     for (const auto& [id, placement] : patch.mesh_placements)
         if (!mesh_geometry(state, id)) return invalid("Missing mesh placement blueprint");
     // Prepare only changed blueprints, without touching unrelated scene data.
@@ -376,13 +394,14 @@ content::Result<void> apply_patch(State& state, const DocumentPatch& patch) {
         for (const auto& vertex : edit.vertices) (void)mesh->set_position(vertex.index, vertex.position);
     }
     state.document.revision = patch.revision;
+    for(const auto& [id,value]:patch.animations)find_instance(state,id)->settings=value;
     return {};
 }
 content::Result<std::string> encode_patch(const DocumentPatch& patch) {
     try {
         shape(patch);
         Writer out;
-        out.integer(9, 1); out.integer(patch.base_revision, 8); out.integer(patch.revision, 8);
+        out.integer(10, 1); out.integer(patch.base_revision, 8); out.integer(patch.revision, 8);
         out.integer(patch.vertices.size(), 4); out.integer(patch.properties.size(), 4); out.integer(patch.markers.size(), 4);
         out.integer(patch.duration.has_value(), 1); if (patch.duration) out.scalar(*patch.duration);
         for (const auto& edit : patch.vertices) out.string(*encode_edit(edit));
@@ -441,6 +460,13 @@ content::Result<std::string> encode_patch(const DocumentPatch& patch) {
             out.integer(placement->draft.has_value(), 1);
             if (placement->draft) for (unsigned c=0;c<4;++c) for(unsigned r=0;r<4;++r) out.scalar((*placement->draft)[c][r]);
         }
+        check(patch.animations.size()<=128,"Too many animation patches");
+        out.integer(patch.animations.size(),4);
+        for(const auto& [id,value]:patch.animations) {
+            out.integer(id,4);
+            std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9)<<std::boolalpha<<"animation 1.0\nroot = ";
+            write_scene_animation(text,value);text<<";\n";out.string(text.str());
+        }
         check(out.bytes.size() <= max_bytes, "Document patch exceeds transport capacity");
         return std::move(out.bytes);
     } catch (const std::invalid_argument& error) { return invalid(error.what()); }
@@ -450,7 +476,7 @@ content::Result<DocumentPatch> decode_patch(std::string_view bytes) {
         check(bytes.size() <= max_bytes && bytes.substr(0, 8) == "VNGPATCH", "Unknown document patch");
         Reader in{bytes, 8};
         const auto version = in.integer(1);
-        check(version >= 1 && version <= 9, "Unknown document patch version");
+        check(version >= 1 && version <= 10, "Unknown document patch version");
         DocumentPatch patch{in.integer(8), in.integer(8)};
         const auto vertices = in.integer(4), properties = in.integer(4), markers = in.integer(4);
         check(vertices <= 256 && properties <= max_properties && markers <= timeline::max_total_keys, "Patch counts exceed limits");
@@ -547,6 +573,16 @@ content::Result<DocumentPatch> decode_patch(std::string_view bytes) {
                     }
                 }
                 check(patch.mesh_placements.emplace(id, placement).second, "Duplicate mesh placement");
+            }
+        }
+        if(version>=10) {
+            const auto count=in.integer(4);check(count<=128,"Too many animation patches");
+            for(u64 i=0;i<count;++i) {
+                const auto id=static_cast<u32>(in.integer(4));
+                auto doc=content::parse_document(in.string(16384));check(bool(doc),"Malformed animation patch");
+                auto value=doc->root().read([](content::Reader r){return read_scene_animation(r.child("root"));});
+                check(bool(value),value?"":value.error().message);
+                check(patch.animations.emplace(id,*value).second,"Duplicate animation root patch");
             }
         }
         check(in.offset == bytes.size(), "Trailing patch data"); shape(patch); return patch;

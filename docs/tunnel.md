@@ -153,7 +153,7 @@ courier is in frame through every act. The demo plays the camera through
 uses its own **Settings → Maximum viewing distance** instead; raise it to at
 least 1,200,000 to see the sun, Earth and Moon from the other locations.
 
-**Budgets.** The generated scene is about 47 MB, about 56 MiB decoded against
+**Budgets.** The generated scene is about 56 MB and round-trips within
 the editor's 64 MiB document limit, and uses about 11,500 of the timeline's
 16,384 keys: collinear camera and courier keys (static shots, holds, straight
 runs) are simplified away, which pays for dense keys on fast moves.
@@ -164,10 +164,14 @@ runs) are simplified away, which pays for dense keys on fast moves.
 in `examples/support/earth_structures.hpp` are CPU-only geometry recipes shared
 by Earth infrastructure and both tunnel scenes. A section supplies a route frame
 and size; the close-up route supplies more samples, not a different tunnel design.
-The original six-sided profile, dark ribs and cyan crown remain. There are now
-separate outer and inner surfaces with a thin physical wall between them, and
-emissive cyan/amber lanes on the inside. Six kilometres measures the clear
-vertical height; this is a hexagonal passage, not a circular bore.
+The bore is a **regular octagon**: equal edges, flat roof/floor and upright side
+walls, not a stretched circle or a six-sided profile. Separate outer and inner
+surfaces retain real wall thickness. Interior face normals are split at every
+corner; cyan/amber guide seams, octagonal collars and transverse bands, distinct wall-plane colors
+and staggered service plates make the shape readable from inside. Indexed route
+samples keep this detail compact; no extra scene instances or draw calls are
+introduced. Six kilometres is the nominal face-to-face lining height, with
+shallow structural collar lips projecting inward by 1.5% of the half-height.
 
 The cinematic uses **Local** from `earth_tunnel_sizes.hpp`, the same 6 km class
 available on the Earth blueprint (6371 km reference radius). Regional routes
@@ -178,7 +182,7 @@ This is one passage, not yet a tessellated bundle of smaller passages.
 
 The departure author reads the actual Earth route and samples its curve and
 terminal for ship, traffic and camera tracks. Open Earth's blueprint mesh editor
-and select **Pacific express / cinematic local** to edit it just like any tunnel.
+and select **Arabian express / cinematic local** to edit it just like any tunnel.
 After reshaping the route, regenerate the cinematic to refit its baked timeline;
 existing animation keys do not automatically become a live path constraint.
 
@@ -194,7 +198,7 @@ chooses the visible surface, including views through the mouth where exterior
 and interior are visible simultaneously. No whole-ticket inside/outside routing
 or duplicate renderer resources are needed. Indexed rings share route samples
 to keep geometry compact. Dense Earth presets with real tunnel linings use a
-bounded 131,072-vertex blueprint budget (32-bit indices), rather than reducing
+bounded 196,608-vertex blueprint budget (32-bit indices), rather than reducing
 their existing route tessellation. Import, subdivision, selection and vertex
 patches share the corresponding editor limit. The close-up collars are spaced 6 km apart.
 
@@ -203,10 +207,24 @@ its class choices and hand edits. Previously saved Earth meshes keep their baked
 geometry until explicitly rebuilt or retuned; there is no hidden rebuild when
 authoring the cinematic, during playback or during camera movement.
 
+To refresh just the tunnel recipes (retaining placement, terrain/cloud edits,
+cities and other addons), explicitly run:
+
+```sh
+./build/vng_make_earth examples/assets examples/assets --refresh-tunnels --replace
+./build/vng_make_tunnel_scene examples/assets examples/assets/tunnel_interior.vscene --replace
+./build/vng_make_tunnel_departure examples/assets examples/assets/tunnel_departure.vscene --replace
+```
+
+The last two commands regenerate the authored demos, so do not use them on a
+scene whose manually edited timeline you want to keep.
+
 The cyan/amber lamps use the existing emission stream and HDR bloom. Local wall
 illumination is baked into vertex colors; a `render/lighting = tunnel` mesh
 material adds per-pixel, camera-relative distance haze in kilometre units, with
-bright near-white spill extending onto the walls. This
+bright near-white spill extending onto the walls. A gentler near-field haze
+keeps nearby panels visible, while the distant passage still fades to white.
+The departure walls and mouth veil use the same distance falloff. This
 is a stylized lighting approximation, not dynamic volumetric scattering or
 shadow-casting local lights. Other scene materials are unchanged.
 The departure variant uses `tunnel_departure`, whose exit is at Z=0 with the

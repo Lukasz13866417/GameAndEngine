@@ -35,7 +35,7 @@ struct WorkspaceFixture {
         workspace.select_instance(1); // The document's normal initial selection is Sun (#2).
         REQUIRE(workspace.state().viewport.selected_object==1);
         REQUIRE(std::ranges::equal(workspace.selected_instances().items(),std::array<u32,1>{1}));
-        workspace.gizmo_selector().show(workspace.state(),workspace.selected_instances().items());
+        workspace.reconcile_selection();
         camera.set_position({0,0,10}).look_at({}).set_orthographic({.vertical_height=10});
     }
     std::vector<ViewportInputReply> pump(std::initializer_list<input::Event> events,double seconds=.02) {
@@ -185,7 +185,7 @@ TEST_CASE("Workspace advances held transform arrows once despite many pointer oc
 
 TEST_CASE("Refreshing viewport presentation preserves captured free rotation", "[editor][input][parent-coordination][viewport]") {
     WorkspaceFixture f;
-    f.workspace.gizmo_selector().value(GizmoMode::free_rotate);
+    f.workspace.choose_gizmo(GizmoMode::free_rotate);
     f.pump({{.kind=input::EventKind::pointer_down,.position={460,300},.button=2},
             {.kind=input::EventKind::pointer_move,.position={480,320}}});
     REQUIRE(f.workspace.interaction().rotation.active());

@@ -15,6 +15,7 @@ std::optional<vng::Vec3> direction(std::string_view name) {
 }
 }
 BlueprintManipulation blueprint_manipulation(const State& state, BlueprintId id) {
+    if(is_animation_blueprint(id))return {.gizmos={},.forward={},.attitude={}};
     BlueprintManipulation result;
     if (id == BlueprintId::region) {
         result.surface = ManipulationSurface::boundary;
