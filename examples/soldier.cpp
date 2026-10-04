@@ -211,10 +211,23 @@ int main(int argc, char** argv) {
         if (!frame) return example::fail(frame.error());
         auto view = render::RenderView::create(camera, *extent);
         if (!view) return example::fail(view.error());
+        // The light he carries (his flashlight), turned with him; it lights him and the floor.
+        std::optional<render::SpotLight> spot;
+        if (const auto spots = soldier->spots(pose); !spots.empty()) {
+            const auto turn_with = rig::matrix({.rotation = spin});
+            const auto turned = [&](Vec3 v, f32 w) {
+                return Vec3{turn_with[0].x * v.x + turn_with[1].x * v.y + turn_with[2].x * v.z + turn_with[3].x * w,
+                            turn_with[0].y * v.x + turn_with[1].y * v.y + turn_with[2].y * v.z + turn_with[3].y * w,
+                            turn_with[0].z * v.x + turn_with[1].z * v.y + turn_with[2].z * v.z + turn_with[3].z * w};
+            };
+            spot = spots.front();
+            spot->position = turned(spot->position, 1);
+            spot->direction = turned(spot->direction, 0);
+        }
         if (auto drawn = floor_renderer->render(*frame, *view, render::SkinnedDraw{.pose = floor_pose,
-                .transform = {.translation = floor_offset, .rotation = spin}}); !drawn)
+                .transform = {.translation = floor_offset, .rotation = spin}, .spot = spot}); !drawn)
             return example::fail(drawn.error());
-        if (auto drawn = renderer->render(*frame, *view, render::SkinnedDraw{.pose = pose, .transform = {.rotation = spin}}); !drawn)
+        if (auto drawn = renderer->render(*frame, *view, render::SkinnedDraw{.pose = pose, .transform = {.rotation = spin}, .spot = spot}); !drawn)
             return example::fail(drawn.error());
         if (auto ended = frame->end(); !ended) return example::fail(ended.error());
         if (auto copied = display->copy_to_window(device); !copied) return fail(copied.error().message);

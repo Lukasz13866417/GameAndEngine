@@ -47,7 +47,8 @@ window can be made.
 
 ```sh
 python3 examples/tools/import_model.py Soldier.fbx examples/assets/soldier --name soldier \
-    --colors examples/assets/soldier/colors.json --rekey-walk --hole-closer 0.06 --flatten-deltoids
+    --colors examples/assets/soldier/colors.json --lights examples/assets/soldier/lights.json \
+    --rekey-walk --hole-closer 0.06 --flatten-deltoids
 ```
 
 `--hole-closer M` edits the model: a mesh held wholly by one hand that has
@@ -65,6 +66,17 @@ the sleeve may now come no further from the bone than the straight line from
 its distance 2 cm along the arm to its distance at 20 cm. For the soldier, 61
 sleeve vertices move in, by at most 2.9 cm, and the shoulder yoke lying on
 them moves with them.
+
+`--lights FILE` adds lights the character carries, from a JSON list. Each
+light has a `name`, a `position` and `direction` in the character's bind pose
+(engine coordinates, metres; it rides on the skin there), a linear `color`
+times its strength,
+`inner` and `outer` cone edges in degrees and a `range` in metres. They are
+written to the `.vrig` (see [The .vrig format](#the-vrig-format)). With
+`lens` (metres), the faces within that distance of the light that face along
+it glow in twice its colour. The soldier's `lights.json` gives him his
+shoulder flashlight: a warm beam angled 15 degrees down from where it points
+as modelled, so it lights the floor ahead of him.
 
 The tool needs Python 3 and numpy. It writes three files into the output
 directory:
@@ -126,6 +138,11 @@ What the conversion does:
   and the surface shows stripes of light and dark. The soldier's shoulder
   flashlight was built twice over (134 such pairs). Of each pair the copy
   facing away from the middle of its doubled region is kept.
+- **Face weights.** Blender's automatic weights let things near the face
+  follow the face's bones: the flashlight followed his jaw by about half, so
+  it bent when his head turned against his shoulders. Only the mesh with the
+  most head-bone weight (his hood) keeps face-bone weights; on others they go
+  to each vertex's strongest other bone (198 vertices for the soldier).
 - **Unweighted vertices.** Blender leaves unweighted vertices in place. Here
   they take their nearest weighted neighbour's weights, so they move with what
   they touch. The soldier's front belt pouch had 74 such vertices.
@@ -295,6 +312,10 @@ clips = [
         ];
     },
 ];
+lights = [
+    { name = "flashlight"; position = [-0.147, 1.55, 0.004]; direction = [-0.021, -0.261, 0.965];
+      color = [3, 2.7, 2.1]; inner = 9; outer = 20; range = 12; },
+];
 ```
 
 - **Bones.** Bones are listed parents first. Transforms are parent-relative:
@@ -305,6 +326,13 @@ clips = [
 - **Looping.** A looping clip lasts `frames / fps` seconds, and its last frame
   blends into its first. A clip that does not loop lasts `(frames - 1) / fps`
   seconds and holds its ends.
+- **Lights** (optional). `position` and `direction` are where a light is and
+  where it points in the bind pose, in the mesh's space. It rides on the skin
+  there: it moves as the mesh vertex nearest it does, so it stays on (and aims
+  along) whatever carries it. `color` is linear and times its strength; `inner` and `outer`
+  are the edges of its cone in degrees off its axis; it fades out at `range`
+  metres. `Character::spots(pose)` gives them as `render::SpotLight`s for a
+  pose.
 
 `read_rig` refuses:
 
@@ -314,7 +342,10 @@ clips = [
 - rotations that are not unit length to within f32 rounding;
 - scales that are zero or negative;
 - a non-positive `fps`, or zero frames;
-- tracks of the wrong length, or for unknown bones.
+- tracks of the wrong length, or for unknown bones;
+- lights with no position, a zero direction, non-finite values, cone
+  edges outside 0 <= inner <= outer < 90 degrees or a range that is not
+  positive.
 
 ## Code
 
@@ -324,8 +355,11 @@ clips = [
   which builds the armature and skin binding from the mesh and its rig.
   `pose(clip, seconds, pose)` sets each animated bone, blending neighbouring
   frames: linear translation and scale, and shortest-path rotation.
-- **`examples/soldier.cpp`** is the demo. It draws the floor with the same
-  skinned renderer, bound to a single bone.
+- **`examples/character/stage.{hpp,cpp}`** is the floor a character walks
+  on when shown alone, bound to a single bone so the same skinned renderer
+  draws it.
+- **`examples/soldier.cpp`** is the demo. His flashlight (`spots`) lights him
+  and the floor, turning with him on the turntable.
 - **`tests/examples/character_tests.cpp`** (`vng_character_tests`) covers:
   - the format and its refusals;
   - frame blending;

@@ -80,6 +80,22 @@ TEST_CASE("Rig documents that break the rules are refused", "[character][file]")
     CHECK_FALSE(character::read_rig("missing.vrig"));
 }
 
+TEST_CASE("A rig's lights are read, and broken ones refused", "[character][file]") {
+    const auto light = [](std::string_view fields) {
+        return std::string{small_rig} + "lights = [ { name = \"lamp\"; " + std::string{fields} + " }, ];\n";
+    };
+    const auto rig = character::parse_rig(light(R"(position = [0, 1.5, 0]; direction = [0, 0, 2]; color = [2, 2, 1]; inner = 5; outer = 15; range = 4;)"), "x");
+    REQUIRE(rig);
+    REQUIRE(rig->lights.size() == 1);
+    CHECK(rig->lights[0].position == Vec3{0, 1.5F, 0});
+    CHECK(rig->lights[0].color == Vec3{2, 2, 1});
+    CHECK(rig->lights[0].outer == 15.F);
+    CHECK_FALSE(character::parse_rig(light(R"(position = [0, 0, 0]; direction = [0, 0, 0];)"), "x"));
+    CHECK_FALSE(character::parse_rig(light(R"(position = [0, 0, 0]; direction = [0, 0, 1]; inner = 30; outer = 20;)"), "x"));
+    CHECK_FALSE(character::parse_rig(light(R"(position = [0, 0, 0]; direction = [0, 0, 1]; range = 0;)"), "x"));
+    CHECK_FALSE(character::parse_rig(light(R"(direction = [0, 0, 1];)"), "x"));
+}
+
 TEST_CASE("Frames blend linearly, rotations by the shortest path", "[character][clip]") {
     const rig::Transform a{{0, 0, 0}, {0, 0, 0, 1}, 1};
     const rig::Transform b{{2, 4, 6}, {0, 0, 0.70710677F, 0.70710677F}, 3};
@@ -114,6 +130,30 @@ TEST_CASE("The soldier loads with his armature, skin and walk", "[character][sol
     // The importer scales the bind pose to 1.8 m. Its top is the muzzle of the
     // rifle raised in his hand, which --hole-closer then shortened by 1.3 cm.
     CHECK(high.y == Catch::Approx(1.8).margin(.02));
+}
+
+TEST_CASE("The soldier's flashlight rides on his right shoulder and lights ahead", "[character][soldier]") {
+    auto soldier = character::Character::load(VNG_SOLDIER_MESH);
+    REQUIRE(soldier);
+    REQUIRE(soldier->rig().lights.size() == 1);
+    const auto& walk = *soldier->clip("walk");
+    auto pose = soldier->armature().rest_pose();
+    const auto shoulder = soldier->armature().bone("DEF-shoulder.R");
+    REQUIRE(shoulder);
+    for (std::size_t frame = 0; frame < walk.frames; frame += 4) {
+        REQUIRE(soldier->pose(walk, static_cast<f32>(frame) / walk.fps, pose));
+        const auto spots = soldier->spots(pose);
+        REQUIRE(spots.size() == 1);
+        const auto globals = pose.globals();
+        REQUIRE(globals);
+        const auto& joint = (*globals)[*soldier->armature().index(*shoulder)][3];
+        // Within the collarbone's reach of its joint, high on his right, pointing forward and down.
+        CHECK(distance(spots[0].position, {joint.x, joint.y, joint.z}) < .25F);
+        CHECK(spots[0].position.x < 0.F);
+        CHECK(spots[0].position.y > 1.4F);
+        CHECK(spots[0].direction.z > .6F);
+        CHECK(spots[0].direction.y < 0.F);
+    }
 }
 
 TEST_CASE("The soldier's rest pose leaves the mesh where it is", "[character][soldier]") {

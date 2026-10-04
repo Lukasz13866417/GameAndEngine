@@ -9,6 +9,8 @@
 #include "../opengl/gl_error.hpp"
 
 #include <array>
+#include <cmath>
+#include <algorithm>
 #include <bit>
 #include <limits>
 #include <stdexcept>
@@ -59,8 +61,27 @@ using Varyings = shader::VertexOutputs<shader::ClipPosition,
 using FragmentInputs = shader::FragmentInputs<shader::smooth<gfx::Color>,
     shader::smooth<render::SkinnedWorldPosition>, shader::smooth<render::SkinnedWorldNormal>>;
 using Outputs = shader::FragmentOutputs<shader::Color<0>>;
-using SkinProgram = shader::TypedGraphicsProgram<Mat4, Mat4>;
-using SkinRuntime = render::TypedOpenGLProgramRuntime<Mat4, Mat4>;
+// Arguments: object and normal matrices (vertex), the packed spot light (fragment).
+using SkinProgram = shader::TypedGraphicsProgram<Mat4, Mat4, Mat4>;
+using SkinRuntime = render::TypedOpenGLProgramRuntime<Mat4, Mat4, Mat4>;
+
+// A draw's spot light packed by columns for the fragment stage: position and
+// on (1) or off (0); unit axis and the cosine of the inner edge; colour and
+// the cosine of the outer edge; range.
+Mat4 packed_spot(const std::optional<render::SpotLight>& spot)
+{
+    Mat4 m{};
+    if (!spot) return m;
+    const auto axis = spot->direction;
+    const auto length = std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+    if (!(length > 0.0F) || !(spot->range > 0.0F)) return m;
+    const auto cosine = [](f32 degrees) { return std::cos(degrees * 3.14159265F / 180.0F); };
+    m[0] = Vec4{spot->position.x, spot->position.y, spot->position.z, 1.0F};
+    m[1] = Vec4{axis.x / length, axis.y / length, axis.z / length, cosine(spot->inner)};
+    m[2] = Vec4{spot->color.x, spot->color.y, spot->color.z, cosine(std::max(spot->outer, spot->inner + 0.01F))};
+    m[3] = Vec4{spot->range, 0.0F, 0.0F, 0.0F};
+    return m;
+}
 
 constexpr GraphicsStateSnapshot raster(const render::SkinnedDraw& draw)
 {
@@ -148,7 +169,7 @@ std::expected<SkinProgram, Diagnostic> create_program(bool has_normals, bool lig
             dsl::field<render::SkinnedWorldNormal>(world_normal.xyz()));
     });
     if (!vertex) return std::unexpected(invalid(vertex.error().message));
-    auto fragment = shader::fragment<FragmentInputs, Outputs>("skinned_fragment", [=](auto& stage) {
+    auto fragment = shader::fragment<FragmentInputs, Outputs>("skinned_fragment", [=](auto& stage, dsl::Float4x4 spot) {
         const auto color = stage.input(gfx::Color{});
         const auto raw_normal = stage.input(render::SkinnedWorldNormal{});
         // Opposing influences can cancel a blended normal. Avoid NaNs without
@@ -168,7 +189,21 @@ std::expected<SkinProgram, Diagnostic> create_program(bool has_normals, bool lig
         if (lighting) {
             const auto light = dsl::normalize(stage.constant(Vec3{0.3F, 0.6F, 1.0F}));
             const auto brightness = dsl::max(dsl::dot(normal, light), 0.0F) * 0.75F + 0.25F;
-            output = dsl::vec4(color.xyz() * brightness, color.w());
+            // The draw's spot light (packed_spot): lit by how far inside its
+            // cone, how near and how squarely facing it the surface is.
+            const auto place = spot * stage.constant(Vec4{1.0F, 0.0F, 0.0F, 0.0F});
+            const auto axis = spot * stage.constant(Vec4{0.0F, 1.0F, 0.0F, 0.0F});
+            const auto tint = spot * stage.constant(Vec4{0.0F, 0.0F, 1.0F, 0.0F});
+            const auto range = spot * stage.constant(Vec4{0.0F, 0.0F, 0.0F, 1.0F});
+            const auto to_light = place.xyz() - stage.input(render::SkinnedWorldPosition{});
+            const auto distance = dsl::sqrt(dsl::max(dsl::dot(to_light, to_light), 1.0e-8F));
+            const auto toward = to_light / distance;
+            const auto across = (-dsl::dot(toward, axis.xyz()) - tint.w()) / dsl::max(axis.w() - tint.w(), 1.0e-4F);
+            const auto edge = dsl::min(dsl::max(across, 0.0F), 1.0F);
+            const auto cone = edge * edge * (3.0F - 2.0F * edge);
+            const auto near = dsl::max(1.0F - distance / dsl::max(range.x(), 1.0e-4F), 0.0F);
+            const auto lit = place.w() * cone * near * near * dsl::max(dsl::dot(normal, toward), 0.0F);
+            output = dsl::vec4(color.xyz() * brightness + color.xyz() * tint.xyz() * lit, color.w());
         }
         return stage.output(dsl::field<shader::Color<0>>(output));
     });
@@ -485,7 +520,7 @@ std::expected<void, Diagnostic> SkinnedMeshRenderer::render(
         for (const auto& draw : draws) {
             auto arguments = impl_->upload_palette(draw);
             if (!arguments) return std::unexpected(std::move(arguments.error()));
-            if (auto selected = context.run(impl_->shaders.production(), (*arguments)[0], (*arguments)[1]); !selected)
+            if (auto selected = context.run(impl_->shaders.production(), (*arguments)[0], (*arguments)[1], packed_spot(draw.spot)); !selected)
                 return selected;
             if (auto selected = context.view(view); !selected) return selected;
             if (auto changed = graphics.set(raster(draw)); !changed) return changed;
@@ -509,7 +544,8 @@ std::expected<analysis::FrameEvidence, Diagnostic> SkinnedMeshRenderer::capture(
     impl_->stats = {};
     auto arguments = impl_->upload_palette(draw);
     if (!arguments) return std::unexpected(std::move(arguments.error()));
-    if (auto supplied = impl_->shaders.set_arguments((*arguments)[0], (*arguments)[1]); !supplied)
+    const auto spot = packed_spot(draw.spot);
+    if (auto supplied = impl_->shaders.set_arguments((*arguments)[0], (*arguments)[1], spot); !supplied)
         return std::unexpected(std::move(supplied.error()));
     auto slot = StorageSlotScope::capture();
     if (!slot) return std::unexpected(std::move(slot.error()));
@@ -519,6 +555,7 @@ std::expected<analysis::FrameEvidence, Diagnostic> SkinnedMeshRenderer::capture(
     options.provenance.object_to_world = rig::matrix(draw.transform);
     auto fingerprint = impl_->static_fingerprint;
     for (const auto& matrix : *arguments) fingerprint.append(matrix);
+    fingerprint.append(spot);
     fingerprint.append(impl_->last_matrices.size());
     for (const auto& matrix : impl_->last_matrices) fingerprint.append(matrix);
     options.resource_fingerprint = fingerprint.finish();

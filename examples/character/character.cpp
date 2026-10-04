@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
 
 namespace character {
 namespace {
@@ -89,6 +90,50 @@ content::Result<Character> Character::load(const std::filesystem::path& mesh_pat
         if (auto set = binding->set_weights(v, influences[v]); !set) return std::unexpected(from_rig(set.error(), mesh_path));
     if (auto normalized = binding->normalize_weights(); !normalized) return std::unexpected(from_rig(normalized.error(), mesh_path));
     return Character{std::move(*rig_file), std::move(*armature), std::move(bones), std::move(*binding)};
+}
+
+Character::Character(RigFile rig, rig::Armature armature, std::vector<rig::BoneId> bones, Binding binding)
+    : rig_(std::move(rig)), armature_(std::move(armature)), bones_(std::move(bones)), binding_(std::move(binding)) {
+    const auto& mesh = binding_.mesh();
+    for (const auto& light : rig_.lights) {
+        std::size_t nearest{};
+        f32 best = std::numeric_limits<f32>::max();
+        for (std::size_t v = 0; v < mesh.vertex_count(); ++v) {
+            const auto p = mesh.vertices()[v].get(gfx::Position{});
+            const auto d = (p.x - light.position.x) * (p.x - light.position.x) + (p.y - light.position.y) * (p.y - light.position.y) +
+                           (p.z - light.position.z) * (p.z - light.position.z);
+            if (d < best) { best = d; nearest = v; }
+        }
+        light_vertices_.push_back(nearest);
+    }
+}
+
+std::vector<render::SpotLight> Character::spots(const rig::Pose& pose) const {
+    std::vector<render::SpotLight> out;
+    if (rig_.lights.empty()) return out;
+    const auto palette = binding_.palette(pose);
+    if (!palette) return out;
+    for (std::size_t k = 0; k < rig_.lights.size(); ++k) {
+        const auto& light = rig_.lights[k];
+        const auto influences = binding_.weights().influences(light_vertices_[k]);
+        if (!influences) continue;
+        Mat4 m{};                                   // the skin's blend of bone matrices there
+        for (const auto& influence : *influences)
+            if (const auto index = armature_.index(influence.bone); index && *index < palette->size())
+                for (std::size_t c = 0; c < 4; ++c) {
+                    const auto& column = (*palette)[*index][c];
+                    m[c] = Vec4{m[c].x + column.x * influence.weight, m[c].y + column.y * influence.weight,
+                                m[c].z + column.z * influence.weight, m[c].w + column.w * influence.weight};
+                }
+        const auto& p = light.position;
+        const auto& d = light.direction;
+        const Vec3 at{m[0].x * p.x + m[1].x * p.y + m[2].x * p.z + m[3].x, m[0].y * p.x + m[1].y * p.y + m[2].y * p.z + m[3].y,
+                      m[0].z * p.x + m[1].z * p.y + m[2].z * p.z + m[3].z};
+        const Vec3 toward{m[0].x * d.x + m[1].x * d.y + m[2].x * d.z, m[0].y * d.x + m[1].y * d.y + m[2].y * d.z,
+                          m[0].z * d.x + m[1].z * d.y + m[2].z * d.z};
+        out.push_back({.position = at, .direction = toward, .color = light.color, .inner = light.inner, .outer = light.outer, .range = light.range});
+    }
+    return out;
 }
 
 content::Result<void> Character::pose(const Clip& clip, f32 seconds, rig::Pose& pose) const {

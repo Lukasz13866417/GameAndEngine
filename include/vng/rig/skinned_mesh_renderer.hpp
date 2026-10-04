@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <utility>
 
 #include <vng/gfx/geometry.hpp>
@@ -25,6 +26,17 @@ struct SkinnedRendererOptions final {
     bool lighting{true};  // simple directional lighting when normals exist
 };
 
+// A cone of light in world space, such as a flashlight's, added to a lit
+// draw. It fades across the cone's edge, from `inner` to `outer` degrees off
+// its axis, and with distance, to nothing at `range` metres.
+struct SpotLight final {
+    Vec3 position{};
+    Vec3 direction{0, 0, -1};
+    Vec3 color{1, 1, 1}; // linear, times its strength
+    f32 inner{12}, outer{20};
+    f32 range{8};
+};
+
 // Pose is borrowed only for the synchronous render/capture call. CPU poses
 // are independent of GPU buffers and may be shared by several mesh bindings.
 struct SkinnedDraw final {
@@ -33,6 +45,7 @@ struct SkinnedDraw final {
     bool depth_test{true};
     bool depth_write{true};
     CullMode cull{CullMode::none};
+    std::optional<SpotLight> spot{}; // ignored unless the renderer lights the mesh
 };
 
 struct SkinnedRenderStats final {

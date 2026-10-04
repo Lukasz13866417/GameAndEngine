@@ -428,7 +428,7 @@ def build_mesh(character, colors, pose_worlds=None, max_influences=8):
         bind_points = character.point(character.bind_points(mesh, bind))
         normal_matrix = np.linalg.inv(bind[mesh["model"]][:3, :3]).T
         for face, material_index in enumerate(mesh["face_material"]):
-            color = colors(mesh, mesh["materials"][material_index] if mesh["materials"] else None)
+            color = colors(mesh, mesh["materials"][material_index] if mesh["materials"] else None, face)
             triangle = []
             for c in range(3):
                 corner = face * 3 + c; vertex = mesh["corners"][corner]
@@ -469,7 +469,7 @@ def write_mesh(path, name, source, rows, faces, rig=None, max_influences=8):
     lines += ["    }", "}", f"faces {len(faces)} {{"] + [f"    [{a}, {b}, {c}];" for a, b, c in faces] + ["}"]
     pathlib.Path(path).write_text("\n".join(lines) + "\n")
 
-def write_rig(path, name, source, character, clips):
+def write_rig(path, name, source, character, clips, lights=()):
     lines = ["vrig 1.0", "rig = 1;", f"name = {quote(name)};", f"source = {quote(source)};", "bones = ["]
     for bone, (parent, (t, q, s)) in enumerate(zip(character.parents, character.locals(character.rest))):
         parent_name = character.names[parent] if parent >= 0 else ""
@@ -488,7 +488,34 @@ def write_rig(path, name, source, character, clips):
                          f"scale = {vector([s for _, _, s in frames])}; }},")
         lines += ["        ];", "    },"]
     lines.append("];")
+    if lights:
+        lines.append("lights = [")
+        for light in lights:
+            lines.append(f"    {{ name = {quote(light['name'])}; "
+                         f"position = {vector(light['position'])}; direction = {vector(light['direction'])}; "
+                         f"color = {vector(light.get('color', [1, 1, 1]))}; inner = {f32(light.get('inner', 12))}; "
+                         f"outer = {f32(light.get('outer', 20))}; range = {f32(light.get('range', 8))}; }},")
+        lines.append("];")
     pathlib.Path(path).write_text("\n".join(lines) + "\n")
+
+def lens_faces(scene, character, lights):
+    """The faces that make each light's lens (`lens` metres round its
+    position, facing along it), so they can glow in its colour: {(mesh id,
+    face): colour}."""
+    bind = scene.bind_globals(); glowing = {}
+    for light in lights:
+        radius = light.get("lens", 0)
+        if not radius: continue
+        at, toward = np.array(light["position"], float), np.array(light["direction"], float)
+        toward /= np.linalg.norm(toward)
+        glow = tuple(float(c) * 2 for c in light.get("color", [1, 1, 1])) + (1.0,)
+        for mesh in scene.meshes:
+            p = character.point(Character.bind_points(mesh, bind))[mesh["corners"].reshape(-1, 3)]
+            normals = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0])
+            normals /= np.linalg.norm(normals, axis=1, keepdims=True) + 1e-12
+            for f in np.nonzero((np.linalg.norm(p.mean(1) - at, axis=1) < radius) & (normals @ toward > .5))[0]:
+                glowing[(id(mesh), int(f))] = glow
+    return glowing
 
 def frames_from_worlds(character, worlds):
     """Per-frame local transforms, quaternions kept on one hemisphere for blending."""
@@ -557,6 +584,33 @@ def drop_doubled_faces(scene):
         mesh["face_material"] = np.asarray(mesh["face_material"])[keep]
         dropped += len(drop)
     return dropped
+
+FACE_PARTS = ("jaw", "ear", "lip", "cheek", "nose", "eye", "brow", "lid", "chin", "tongue", "teeth", "forehead", "temple")
+
+def keep_face_weights_on_head(scene):
+    """Blender's automatic weights let things near the face follow the face's
+    bones: the soldier's shoulder flashlight followed his jaw by about half.
+    When the head turns against the shoulders, as in the walk, such a piece
+    bends. Only the mesh carrying the most head-bone weight (the head's skin)
+    keeps face-bone weights; elsewhere they go to the vertex's strongest other
+    bone. Returns the vertices changed."""
+    names = {b: display_name(scene.models[b]) for b in scene.models}
+    face = lambda b: names.get(b, "").removeprefix("DEF-").split(".")[0] in FACE_PARTS
+    head = lambda b: names.get(b, "") == "DEF-spine.006" or face(b)
+    if not scene.meshes: return 0
+    skin = max(scene.meshes, key=lambda m: sum(w for inf in m["influences"] for b, w in inf if head(b)))
+    changed = 0
+    for mesh in scene.meshes:
+        if mesh is skin: continue
+        for v, inf in enumerate(mesh["influences"]):
+            moved = sum(w for b, w in inf if face(b))
+            rest = [(b, w) for b, w in inf if not face(b)]
+            if not moved: continue
+            if not rest: rest = [(next(b for b in names if names[b] == "DEF-spine.006"), 0.0)]
+            strongest = max(range(len(rest)), key=lambda k: rest[k][1])
+            rest[strongest] = (rest[strongest][0], rest[strongest][1] + moved)
+            mesh["influences"][v] = rest; changed += 1
+    return changed
 
 def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0, reach=0.0):
     """Grips for a mesh held wholly by one hand (the soldier's rifle): that
@@ -924,6 +978,8 @@ def main():
     parser.add_argument("--name", default=None)
     parser.add_argument("--height", type=float, default=1.8, help="character height in metres (default 1.8)")
     parser.add_argument("--colors", help="JSON {material or mesh name: [r, g, b]} in linear 0..1, for colours FBX lost")
+    parser.add_argument("--lights", help="JSON list of lights the character carries (written to the .vrig): name, position, direction, "
+                                         "color, inner, outer, range, lens (see docs/characters.md)")
     parser.add_argument("--pose-frame", type=int, default=0, help="clip frame baked into NAME_pose.vmesh")
     parser.add_argument("--rekey-walk", action="store_true",
                         help="replace the walk clip with a re-keyed one (see walk_cycle.py); keep the original as walk_authored")
@@ -938,6 +994,7 @@ def main():
     scene = FbxScene(read_fbx(source))
     filled = fill_unweighted(scene)
     doubled = drop_doubled_faces(scene)
+    unfaced = keep_face_weights_on_head(scene)
     character = Character(scene, args.height)
     character.add_half_joints()
     evened = even_elbows(scene, character)
@@ -946,8 +1003,11 @@ def main():
     if args.hole_closer and not shorten_held(scene, character, args.hole_closer):
         print("  --hole-closer: no mesh held by one hand has two holes; nothing moved")
     overrides = json.loads(pathlib.Path(args.colors).read_text()) if args.colors else {}
+    lights = json.loads(pathlib.Path(args.lights).read_text()) if args.lights else []
+    glowing = lens_faces(scene, character, lights)
     missing = set()
-    def colors(mesh, material):
+    def colors(mesh, material, face=None):
+        if (id(mesh), face) in glowing: return glowing[(id(mesh), face)]
         for key in ((display_name(material) if material is not None else None), mesh["name"]):
             if key in overrides: return tuple(float(c) for c in overrides[key]) + (1.0,)
         color = scene.material_color(material) if material is not None else None
@@ -980,7 +1040,7 @@ def main():
                          "the original is walk_authored")
         clips.append(authored)
     write_mesh(out / f"{name}.vmesh", name, source.name, rows, faces, rig=f"{name}.vrig")
-    write_rig(out / f"{name}.vrig", name, source.name, character, clips)
+    write_rig(out / f"{name}.vrig", name, source.name, character, clips, lights)
     if clips:
         frame = min(args.pose_frame, len(clips[0]["worlds"]) - 1)
         pose_rows, pose_faces = build_mesh(character, colors, clips[0]["worlds"][frame])
@@ -992,6 +1052,7 @@ def main():
         print("no colour in the FBX for: " + ", ".join(sorted(missing)) + " (grey; pass --colors or textures)")
     if filled: print(f"  {filled} vertices had no skin weights; they take their nearest weighted neighbour's")
     if doubled: print(f"  {doubled} triangles were there twice, facing opposite ways; the inward copies are dropped")
+    if unfaced: print(f"  {unfaced} vertices off the head followed face bones; they follow their strongest other bone instead")
     if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
     if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")
     if flattened[0]: print(f"  {flattened[0]} sleeve vertices of the deltoid bulges moved toward the bone, by at most {flattened[1] * 100:.1f} cm")
