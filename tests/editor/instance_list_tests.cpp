@@ -6,6 +6,54 @@
 using namespace vng;
 using namespace editor_example;
 
+TEST_CASE("Instance search filters retained rows by name blueprint and ID without changing selection", "[editor][ui][selection][search]") {
+    auto font=text::Font::load(VNG_TEST_FONT_PATH);REQUIRE(font);
+    ui::Screen screen{ui::dark_theme(*font)};
+    InstanceList list{screen.column().width(400).height(600)};
+    std::vector<SceneInstance> instances{
+        {.id=7,.blueprint=BlueprintId::mesh,.name="Courier alpha"},
+        {.id=42,.blueprint=BlueprintId::spin,.name="ANIMATION / Belt rock"},
+        {.id=91,.blueprint=BlueprintId::mesh,.name="Belt fragment"}};
+    const std::array blueprints{Blueprint{BlueprintId::mesh,"Stone",BlueprintKind::mesh},
+        Blueprint{BlueprintId::spin,"Spin animation",BlueprintKind::animation}};
+    list.sync(instances,blueprints);
+    editor::Selection<u32> selected;selected.select(7);list.selection(selected);
+    const auto stats=list.stats();
+    input::Frame frame{.logical_size={800,700},.framebuffer={800,700}};
+    const auto pump=[&]{REQUIRE(screen.update(frame,.016F));list.layout();};
+    pump();pump();
+    const auto draws=screen.draw_list();REQUIRE(draws);
+    for(const auto& command:draws->commands)
+        if(const auto* text=std::get_if<ui::TextDraw>(&command);text && text->text=="Clear") {
+            const auto measured=text->font.measure(text->text,static_cast<u32>(text->size));REQUIRE(measured);
+            CHECK(text->position.x+measured->width<=text->clip.x+text->clip.width);
+        }
+    auto tree=screen.inspect();REQUIRE(tree);
+    const auto field=std::ranges::find_if(tree->widgets,[](const auto& w){return w.label=="Search instances";});
+    REQUIRE(field!=tree->widgets.end());
+    const Vec2 at{field->bounds.x+10,field->bounds.y+10};
+    frame.pointer=at;
+    frame.events={{.kind=input::EventKind::pointer_down,.position=at},{.kind=input::EventKind::pointer_up,.position=at}};
+    pump();CHECK_FALSE(list.poll(frame.events));
+    frame.events={{.kind=input::EventKind::text,.text="BELT animation"}};
+    pump();CHECK_FALSE(list.poll(frame.events));
+    CHECK(list.query()=="BELT animation");CHECK(list.matches()==1);
+    frame.events.clear();pump();
+    tree=screen.inspect();REQUIRE(tree);
+    CHECK(std::ranges::any_of(tree->widgets,[](const auto& w){return w.visible && w.text=="#42 ANIMATION / Belt rock";}));
+    CHECK_FALSE(std::ranges::any_of(tree->widgets,[](const auto& w){return w.visible && w.text=="> #7 Courier alpha";}));
+    list.search("#91 stone");CHECK(list.matches()==1);
+    list.search("does not exist");CHECK(list.matches()==0);
+    frame.events={{.kind=input::EventKind::key_down,.key=input::Key::escape}};
+    pump();CHECK_FALSE(list.poll(frame.events));CHECK(list.query().empty());CHECK(list.matches()==3);
+    CHECK(list.stats().rows_created==stats.rows_created);CHECK(list.stats().syncs==stats.syncs);
+    CHECK(list.stats().labels_updated==stats.labels_updated);
+    frame.events.clear();pump();tree=screen.inspect();REQUIRE(tree);
+    CHECK(std::ranges::any_of(tree->widgets,[](const auto& w){return w.visible && w.text=="> #7 Courier alpha";}));
+    list.search("renamed");CHECK(list.matches()==0);CHECK(list.rename(7,"Renamed"));CHECK(list.matches()==1);
+    instances.erase(instances.begin());list.sync(instances,blueprints);CHECK(list.matches()==0);
+}
+
 TEST_CASE("Floating lists retain shared IDs and independent scrolling without owning scene data",
           "[editor][ui][selection][flyout]") {
     auto font = text::Font::load(VNG_TEST_FONT_PATH); REQUIRE(font);

@@ -38,6 +38,7 @@ constexpr std::string_view help = R"(vng_review: review saved scenes, alone or s
       --about and --offset apply to the candidate before them. --range limits the clock.
 
   --at SECONDS       start the clock here            --play        start playing
+  --select N         open note N: its candidate, its time, its text and actions
   --note ID X Y TEXT pin a note on candidate ID at the normalized view point X,Y
                      (0..1, top-left) at the start time, as a click there would
   --frames N         quit after N frames and print the frame rate
@@ -83,6 +84,7 @@ struct Options {
     std::vector<review::Candidate> candidates;
     std::optional<std::filesystem::path> screenshot;
     std::optional<f32> at;
+    std::optional<u32> select;
     struct Pin { std::string candidate; Vec2 view; std::string text; };
     std::vector<Pin> pins;
     bool play{}, hidden{};
@@ -117,6 +119,10 @@ std::expected<Options, std::string> parse(int argc, char** argv) {
         } else if (arg == "--note" && more(4)) {
             o.pins.push_back({argv[i + 1], {number(argv[i + 2], ok), number(argv[i + 3], ok)}, argv[i + 4]});
             i += 4;
+        } else if (arg == "--select" && more(1)) {
+            const auto id = number(argv[++i], ok);
+            ok = ok && id >= 1 && id == std::floor(id);
+            o.select = static_cast<u32>(id);
         } else if (arg == "--play") o.play = true;
         else if (arg == "--hidden") o.hidden = true;
         else if (arg == "--frames" && more(1)) {
@@ -216,10 +222,27 @@ Layout layout(Vec2 size, std::size_t count) {
     return l;
 }
 void place(auto&& widget, ui::Rect r) { widget.position({r.x, r.y}).width(r.width).height(r.height); }
-std::string row_text(const review::Note& n) {
+// The longest start of a line that fits a width, ending in "..." when cut.
+std::string fit_line(const text::Font& font, std::string_view text, f32 width, u32 size) {
+    const auto fits = [&](const std::string& s) {
+        const auto metrics = font.measure(s, size);
+        return metrics && metrics->width <= width;
+    };
+    auto line = std::string(text.substr(0, text.find('\n')));
+    if (fits(line)) return line;
+    while (!line.empty()) {
+        do line.pop_back();
+        while (!line.empty() && (static_cast<unsigned char>(line.back()) & 0xC0) == 0x80);
+        if (!line.empty() && (static_cast<unsigned char>(line.back()) & 0xC0) == 0xC0) line.pop_back();
+        if (fits(line + "...")) return line + "...";
+    }
+    return "...";
+}
+// A notes list row: number, candidate, time, state and the note's first line.
+std::string row_text(const text::Font& font, const review::Note& n, f32 width) {
     const auto what = n.text.empty() ? (n.object ? n.object_name : std::string("background")) : n.text;
-    const auto state = n.status == "resolved" ? " (resolved)" : n.reply.empty() ? "" : " (replied)";
-    return std::format("#{} {} {}{}  {}", n.id, n.candidate, clock_text(n.time), state, first_line(what, 26));
+    const auto state = n.status == "resolved" ? "resolved, " : n.reply.empty() ? "" : "replied, ";
+    return fit_line(font, std::format("#{}  {}  {}{}  {}", n.id, n.candidate, state, clock_text(n.time), what), width, 18);
 }
 
 // A candidate's view, or why it has none, and the version of the scene file it shows.
@@ -538,15 +561,19 @@ private:
         thoughts_ = side_.text_area().height(120).placeholder("What works, what doesn't...");
         if (review_.comparison()) pick_ = side_.button("Pick this one");
         else verdict_ = side_.dropdown<std::string>("Verdict", {{"", "No verdict yet"}, {"approved", "Approved"}, {"needs work", "Needs work"}});
-        note_label_ = side_.label("");
-        note_text_ = side_.text_area().height(100).placeholder("Your note (Enter for a new line)");
-        auto actions = side_.row().padding(0).gap(8);
-        go_to_ = actions.button("Go to").width(110);
-        resolve_ = actions.button("Resolve").width(120);
-        delete_ = actions.button("Delete").width(110);
-        reply_ = side_.column().padding(0).gap(0);
         notes_title_ = side_.label("");
-        notes_ = side_.column().padding(4).gap(4).height(200).scrollbar(ui::ScrollBar::automatic);
+        // The notes as a list. The selected one opens under its row: where it
+        // is pinned, its text, the reply and what can be done with it.
+        notes_ = side_.column().padding(4).gap(4).scrollbar(ui::ScrollBar::automatic);
+        no_notes_ = notes_.label("No notes yet. Click anything in a view.").height(row_height);
+        editor_ = notes_.column().padding(6).gap(6);
+        note_label_ = editor_.label("").height(26);
+        note_text_ = editor_.text_area().height(90).placeholder("Your note (Enter for a new line)");
+        reply_ = editor_.column().padding(0).gap(0);
+        auto actions = editor_.row().padding(0).gap(8).height(row_height);
+        go_to_ = actions.button("Go to").width(110);
+        resolve_ = actions.button("Resolve").width(118);
+        delete_ = actions.button("Delete").width(112);
         side_.label("Overall");
         summary_ = side_.text_area().height(100).placeholder("Your overall thoughts").value(review_.summary);
         status_label_ = side_.label("");
@@ -563,8 +590,10 @@ private:
         place(side_, l.sidebar);
         rewrap();
     }
-    // The sidebar's inner width, less padding, a scrollbar and the labels' own insets.
-    static constexpr f32 text_width = 340;
+    // The sidebar's inner width, less padding, a scrollbar and the labels' own insets;
+    // and the same inside an open note in the notes list.
+    static constexpr f32 text_width = 340, note_width = 300, row_width = 330;
+    static constexpr f32 row_height = 34, notes_height = 480;
     void rewrap() {
         for (auto& label : about_lines_) label.remove();
         about_lines_.clear();
@@ -575,8 +604,19 @@ private:
         reply_lines_.clear();
         if (const auto* note = selected_note())
             if (!note->reply.empty())
-                for (auto& line : wrap(font_, "Reply: " + note->reply, text_width, 18))
+                for (auto& line : wrap(font_, "Reply: " + note->reply, note_width, 18))
                     reply_lines_.push_back(reply_.label(line).height(26));
+        fit_notes();
+    }
+    // The list grows with its rows and the open note, then scrolls.
+    void fit_notes() {
+        const auto replies = static_cast<f32>(reply_lines_.size());
+        const f32 open = 12 + 26 + 6 + 90 + 6 + (replies ? replies * 26 + 6 : 0) + row_height;
+        reply_.visible(replies > 0);
+        editor_.height(open);
+        const auto rows = static_cast<f32>(note_rows_.size());
+        const f32 content = rows ? rows * (row_height + 4) + (selected_note() ? open + 4 : 0) : row_height + 4;
+        notes_.height(std::min(content + 8, notes_height));
     }
 
     review::Note* selected_note() {
@@ -610,38 +650,45 @@ private:
                 touched();
             }
         note_ = id;
-        const auto* note = selected_note();
-        if (!note) {
-            note_ = 0;
-            note_label_.text("Click anything in a view to pin a note.");
-            note_text_.value("").enabled(false);
-            go_to_.enabled(false);
-            resolve_.enabled(false);
-            delete_.enabled(false);
-        } else {
+        if (const auto* note = selected_note()) {
             const auto where = note->object ? note->object_name : std::string("the background");
-            note_label_.text(std::format("#{}  {}  {}  {}", note->id, note->candidate, clock_text(note->time), first_line(where, 22)));
-            note_text_.enabled(true);
+            note_label_.text(std::format("On {}", first_line(where, 30)));
             if (note_text_.getText() != note->text) note_text_.value(note->text);
-            go_to_.enabled(true);
-            resolve_.enabled(true).text(note->status == "resolved" ? "Reopen" : "Resolve");
-            delete_.enabled(true);
+            resolve_.text(note->status == "resolved" ? "Reopen" : "Resolve");
+        } else {
+            note_ = 0;
         }
+        const bool opening = note_ && note_ != open_note_;
         rebuild_note_rows();
         rewrap();
+        // A note opened from its marker may sit below the fold: scroll its row and text into view.
+        if (opening) {
+            editor_.reveal();
+            for (std::size_t i = 0; i < note_rows_.size(); ++i)
+                if (note_row_ids_[i] == note_) note_rows_[i].reveal();
+        }
     }
+    // Rows in time order, with the open note right under its row. Rows are
+    // rebuilt only when the order or the open note changes, so an edit taken
+    // in from the file does not move the note being typed.
     void rebuild_note_rows() {
-        for (auto& row : note_rows_) row.remove();
-        note_rows_.clear();
-        note_row_ids_.clear();
         auto sorted = review_.notes;
         std::ranges::sort(sorted, {}, [](const review::Note& n) { return std::pair{n.time, n.id}; });
-        for (const auto& n : sorted) {
-            auto row = notes_.button(row_text(n));
-            row.selected(n.id == note_);
-            note_rows_.push_back(row);
-            note_row_ids_.push_back(n.id);
+        std::vector<u32> ids;
+        for (const auto& n : sorted) ids.push_back(n.id);
+        if (ids != note_row_ids_ || note_ != open_note_) {
+            for (auto& row : note_rows_) row.remove();
+            note_rows_.clear();
+            for (const auto& n : sorted) {
+                note_rows_.push_back(notes_.button(row_text(font_, n, row_width)).height(row_height));
+                if (n.id == note_) notes_.adopt(editor_);
+            }
+            note_row_ids_ = std::move(ids);
+            open_note_ = note_;
         }
+        for (std::size_t i = 0; i < sorted.size(); ++i) note_rows_[i].text(row_text(font_, sorted[i], row_width)).selected(sorted[i].id == note_);
+        no_notes_.visible(sorted.empty());
+        editor_.visible(selected_note() != nullptr);
         notes_title_.text(std::format("Notes ({})", review_.notes.size()));
         for (std::size_t i = 0; i < header_counts_.size(); ++i) {
             const auto count = std::ranges::count(review_.notes, review_.candidates[i].id, &review::Note::candidate);
@@ -676,7 +723,7 @@ private:
                 note->text = std::string(*text);
                 touched();
                 for (std::size_t i = 0; i < note_rows_.size(); ++i)
-                    if (note_row_ids_[i] == note->id) note_rows_[i].text(row_text(*note));
+                    if (note_row_ids_[i] == note->id) note_rows_[i].text(row_text(font_, *note, row_width));
             }
         if (auto* note = selected_note()) {
             if (go_to_.clicked()) {
@@ -696,13 +743,15 @@ private:
                 show_note(0);
             }
         }
+        // A row opens its note (a second click closes it) and goes to it.
         for (std::size_t i = 0; i < note_rows_.size(); ++i)
             if (note_rows_[i].clicked()) {
                 const auto id = note_row_ids_[i];
-                show_note(id);
+                show_note(id == note_ ? 0 : id);
                 if (const auto* note = selected_note()) {
                     at(note->time);
                     select_candidate(candidate_index(note->candidate));
+                    note_text_.focus();
                 }
                 break;
             }
@@ -840,18 +889,19 @@ private:
     std::vector<ui::Label> header_counts_;
     std::vector<ui::ImageView> images_;
     std::vector<u64> shown_revision_;
-    ui::Container bar_, side_, about_, reply_, notes_;
+    ui::Container bar_, side_, about_, reply_, notes_, editor_;
     ui::Button play_, pick_, go_to_, resolve_, delete_;
     ui::Dropdown<f32> speed_box_{{}, {}};
     ui::Dropdown<std::string> verdict_{{}, {}};
     ui::Checkbox loop_box_;
-    ui::Label title_, clock_, candidate_label_, note_label_, notes_title_, status_label_;
+    ui::Label title_, clock_, candidate_label_, note_label_, notes_title_, no_notes_, status_label_;
     ui::ImageView strip_;
     ui::Slider playhead_;
     ui::TextField thoughts_, note_text_, summary_;
     std::vector<ui::Label> about_lines_, reply_lines_;
     std::vector<ui::Button> note_rows_;
     std::vector<u32> note_row_ids_;
+    u32 open_note_{};
 };
 
 struct WindowClipboard final : input::Clipboard {
@@ -890,6 +940,14 @@ int main(int argc, char** argv) {
         auto read = review::read_review(options->file);
         if (!read) return fail(describe(read.error()));
         carry.edits = {*read, *read, stamp};
+    }
+    if (options->select) {
+        const auto& notes = carry.edits.review.notes;
+        const auto found = std::ranges::find(notes, *options->select, &review::Note::id);
+        if (found == notes.end()) return fail(std::format("The review has no note {}", *options->select));
+        carry.note = found->id;
+        carry.candidate = found->candidate;
+        if (!options->at) carry.time = found->time;
     }
     auto font = text::Font::load(VNG_EXAMPLE_FONT_PATH);
     if (!font) return fail(font.error().message);

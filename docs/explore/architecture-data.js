@@ -288,7 +288,7 @@
             "Stores the captured world-space offset and initial orientation. Optional Look at ship changes orientation. This dependency is an ordinary function argument, not an ownership edge to ShipMotion.")
         ]),
       animationNode("spin", "Independent spin instance", "SpinAnimation", "Rotates a different target, or an unclaimed rotation channel.",
-        "SpinBlueprint captures initial orientation and stores degrees per second. This root need not reevaluate when a departure root changes at the same timestamp. Root overlap is rejected with instance IDs and the conflicting property. The tunnel_departure cinematic uses independent Spin instances for the habitat ring and four asteroid obstacles, alongside five Departure instances for gateway traffic; its courier and camera still use their detailed keyed choreography.")
+        "SpinBlueprint captures initial orientation and stores degrees per second. This root need not reevaluate when a departure root changes at the same timestamp. Root overlap is rejected with instance IDs and the conflicting property. The tunnel_departure cinematic uses independent Spin instances for the habitat ring and all 335 asteroids, alongside five Departure instances for gateway traffic, without duplicate baked tracks. Its courier and camera use reduced interpolated choreography, including shape-preserving smooth segments and explicit cuts.")
     ] });
   window.VNG_ARCHITECTURE_DECLARATIONS = declarations;
   window.VNG_ARCHITECTURE = [

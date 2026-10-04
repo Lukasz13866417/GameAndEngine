@@ -149,7 +149,9 @@ content::Result<void> validate_scene_animations(const State& state,u32 replaceme
     return validate_animation_roots(state.document.instances,state.document.timeline_duration,replacement_id,replacement);
 }
 content::Result<void> validate_animation_roots(std::span<const SceneInstance> instances,float duration,u32 replacement_id,const AnimationSettings* replacement) {
-    const auto find=[&](u32 id)->const SceneInstance*{auto it=std::ranges::find(instances,id,&SceneInstance::id);return it==instances.end()?nullptr:&*it;};
+    std::map<u32,const SceneInstance*> objects;
+    for(const auto& instance:instances)objects.emplace(instance.id,&instance);
+    const auto find=[&](u32 id)->const SceneInstance*{auto it=objects.find(id);return it==objects.end()?nullptr:it->second;};
     struct Root {u32 id;const AnimationSettings* value;std::vector<timeline::Target> writes;};
     std::vector<Root> roots;
     for(const auto& instance:instances) {
@@ -162,7 +164,7 @@ content::Result<void> validate_animation_roots(std::span<const SceneInstance> in
     }
     if(replacement&&std::ranges::none_of(roots,[&](const auto& r){return r.id==replacement_id;}))
         roots.push_back({replacement_id,replacement,animation_outputs(*replacement)});
-    if(roots.size()>128)return invalid("At most 128 animation roots are supported");
+    if(roots.size()>max_animation_roots)return invalid("At most "+std::to_string(max_animation_roots)+" animation roots are supported");
     for(const auto& root:roots) {
         const auto& a=*root.value;
         if(!range(a.interval.first,0,duration)||
@@ -197,12 +199,17 @@ content::Result<void> validate_animation_roots(std::span<const SceneInstance> in
                 return invalid("Invalid spin parameters (maximum 3600 degrees per second)");
         }
     }
-    for(std::size_t i=0;i<roots.size();++i)for(std::size_t j=i+1;j<roots.size();++j) {
-        const auto& a=*roots[i].value;const auto& b=*roots[j].value;
-        if(!a.enabled||!b.enabled||a.interval.last<b.interval.first||b.interval.last<a.interval.first)continue;
-        for(const auto& output:roots[i].writes)if(std::ranges::find(roots[j].writes,output)!=roots[j].writes.end())
-            return invalid("Animation roots #"+std::to_string(roots[i].id)+" and #"+std::to_string(roots[j].id)+
-                " both control #"+std::to_string(output.object)+" / "+output.property+" in overlapping intervals");
+    // Only writers of the same property can conflict. Independent roots do
+    // not require pairwise comparisons (large asteroid fields have hundreds).
+    std::map<std::pair<u64,std::string>,std::vector<const Root*>> writers;
+    for(const auto& root:roots)if(root.value->enabled)
+        for(const auto& output:root.writes)writers[{output.object,output.property}].push_back(&root);
+    for(auto& [target,list]:writers) {
+        std::ranges::sort(list,{},[](const Root* root){return root->value->interval.first;});
+        for(std::size_t i=1;i<list.size();++i)
+            if(list[i-1]->value->interval.last>=list[i]->value->interval.first)
+                return invalid("Animation roots #"+std::to_string(list[i-1]->id)+" and #"+std::to_string(list[i]->id)+
+                    " both control #"+std::to_string(target.first)+" / "+target.second+" in overlapping intervals");
     }
     return {};
 }

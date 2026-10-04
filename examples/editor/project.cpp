@@ -254,8 +254,8 @@ void read_animation(State& state, content::Reader reader) {
                 total_keys >= timeline::max_total_keys)
                 key.fail("Too many animation keys", content::ErrorCode::limit_exceeded);
             const auto incoming = key.get<std::string>("incoming");
-            if (incoming != "hold" && incoming != "linear")
-                key.fail("Key incoming interpolation must be 'hold' or 'linear'");
+            if (incoming != "hold" && incoming != "linear" && incoming != "cubic")
+                key.fail("Key incoming interpolation must be 'hold', 'linear' or 'cubic'");
             const auto value = std::visit(
                 [&](const auto& base) -> timeline::Value {
                     return key.get<std::remove_cvref_t<decltype(base)>>("value");
@@ -263,7 +263,7 @@ void read_animation(State& state, content::Reader reader) {
                 property->base_value);
             decoded.keys.push_back({key.get<f32>("time"), value,
                                     incoming == "hold" ? timeline::Interpolation::hold
-                                                       : timeline::Interpolation::linear});
+                                                       : incoming == "cubic" ? timeline::Interpolation::cubic : timeline::Interpolation::linear});
             ++total_keys;
         }
         tracks.push_back(std::move(decoded));
@@ -796,7 +796,7 @@ content::Result<std::string> encode_state(const State& s, bool include_editor_vi
             o << "            { time = " << key.time << "; value = ";
             animation_value(o, key.value);
             o << "; incoming = "
-              << quote_string(key.incoming == timeline::Interpolation::hold ? "hold" : "linear")
+              << quote_string(key.incoming == timeline::Interpolation::hold ? "hold" : key.incoming == timeline::Interpolation::cubic ? "cubic" : "linear")
               << "; },\n";
         }
         o << "        ]; },\n";

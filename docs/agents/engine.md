@@ -413,7 +413,7 @@ To iterate on one area, run a single binary with a Catch2 filter, for example
     helpers, and there is no shared vector math library (`rig/math.hpp` has only rigging helpers:
     `Mat4` `multiply`, `transform_point`/`transform_vector`, `inverse_affine`, `normal_matrix`).
 15. **Timeline values are a variant.** `Value = variant<bool,i32,u32,f32,Vec3,string>`.
-    - Only f32 and Vec3 interpolate linearly.
+    - Only f32 and Vec3 interpolate: linear or shape-preserving cubic (Smooth in the editor).
     - The *arriving* key owns the interpolation of the segment before it, and the default is `hold`.
     - For the key limits, see [limits-and-non-features.md](limits-and-non-features.md).
 16. **The editor's 64 MiB scene limit is an engine constant.** It is `vng::editor::max_document_bytes`

@@ -25,7 +25,7 @@ inline constexpr std::size_t max_label_bytes = 256;
 inline constexpr std::size_t max_layer_bytes = 128;
 inline constexpr std::size_t max_string_value_bytes = 4096;
 
-enum class Interpolation { hold, linear };
+enum class Interpolation { hold, linear, cubic };
 
 struct Target final {
     u64 object{};
@@ -49,6 +49,11 @@ struct Track final {
     std::vector<Keyframe> keys;
     friend bool operator==(const Track&, const Track&) = default;
 };
+
+// Sample sorted, validated keys. Cubic uses time-aware, shape-preserving
+// Hermite slopes: no overshoot, no smoothing across a hold/cut. Exact key
+// values and the before/after-track rules are identical to Timeline::sample.
+[[nodiscard]] std::optional<Value> sample_keys(std::span<const Keyframe>, f32 time);
 
 enum class ErrorCode {
     invalid_target,
@@ -74,6 +79,12 @@ struct Diagnostic final {
 
 template<class T>
 using Result = std::expected<T, Diagnostic>;
+
+// Offline reduction. Keeps cuts; verifies replacement curves against the
+// original at keys and quarter-segment samples. Runtime keeps only the sparse
+// result, not a second dense sample cache. tolerance is in value-space units.
+[[nodiscard]] Result<Track> simplify(Track, f32 tolerance,
+                                    Interpolation = Interpolation::linear);
 
 // An owning, backend-independent collection of property tracks. Objects and
 // properties are application identities; evaluation returns values, never
@@ -122,7 +133,7 @@ public:
 
     // Before the first key (or for invalid query times) there is no override.
     // Exact keys return their own value; after the final key its value is held.
-    // Linear interpolation is supported only for f32 and Vec3. Other types step.
+    // Linear/cubic interpolation support f32 and Vec3. Other types step.
     [[nodiscard]] std::optional<Value> sample(const Target&, f32 time) const;
     friend bool operator==(const Timeline& a, const Timeline& b) { return a.tracks_ == b.tracks_; }
 

@@ -261,10 +261,12 @@ TEST_CASE("Readable timeline serialization round trips deterministically and ret
     REQUIRE(key_property(state, {2, "white_spots"}, 7, true));
     REQUIRE(key_property(state, {1, "position"}, 4, Vec3{4, -2, 1}, Interpolation::linear));
     REQUIRE(key_property(state, {1, "position"}, 9, Vec3{-3, 1, 4}, Interpolation::hold));
+    REQUIRE(key_property(state, {1, "position"}, 11, Vec3{3, 2, 5}, Interpolation::cubic));
     const auto source = serialized(state);
     CHECK(source.find("timeline = {") != std::string::npos);
     CHECK(source.find("property = \"position\"") != std::string::npos);
     CHECK(source.find("incoming = \"linear\"") != std::string::npos);
+    CHECK(source.find("incoming = \"cubic\"") != std::string::npos);
     auto decoded = decode(source);
     INFO((decoded ? "Decoded timeline" : decoded.error().message));
     REQUIRE(decoded);
@@ -295,7 +297,7 @@ TEST_CASE(
           track("1", "scale", "{ time = 2; value = true; incoming = \"linear\"; }"),
           track("1", "scale", "{ time = 2; value = 1000001; incoming = \"linear\"; }"),
           track("1", "scale", "{ time = 11; value = 1; incoming = \"linear\"; }"),
-          track("1", "scale", "{ time = 2; value = 1; incoming = \"cubic\"; }"),
+          track("1", "scale", "{ time = 2; value = 1; incoming = \"unknown\"; }"),
           track("1", "visible", "{ time = 2; value = false; incoming = \"linear\"; }"),
           track("1", "position", "{ time = 2; value = [0,0]; incoming = \"linear\"; }"),
           track("1", "position", "{ time = 2; value = [0,1000001,0]; incoming = \"hold\"; }"),
