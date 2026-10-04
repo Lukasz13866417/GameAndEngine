@@ -610,6 +610,90 @@ def smooth_shoulders(scene, character, radius=0.15, rounds=4):
             changed += len(near)
     return changed
 
+def flatten_deltoids(scene, character, start=0.02, end=0.20, allow=0.003):
+    """--flatten-deltoids: the soldier's sleeves bulge on top 8-11 cm out from
+    the shoulder joint, about 2 cm above a straight taper. With the arm held
+    forward and down, the part nearer the joint follows the arm only partly,
+    and the bulge stands out of the arm's top line as a step. Per direction
+    around each upper arm, the sleeve's distance from the bone may not exceed
+    the straight line from its distance `start` metres along the arm to its
+    distance at `end` (+ allow); vertices beyond it move toward the bone.
+    Whatever lies on the sleeve there (the soldier's shoulder yoke) moves with
+    the sleeve under it, and normals turn with their faces. Edits the scene's
+    meshes in place. Returns the sleeve vertices moved and the largest move in
+    metres."""
+    bind = scene.bind_globals(); names = {b: display_name(scene.models[b]) for b in scene.models}
+    sectors = np.radians(np.arange(-180, 180, 30) + 15)
+    points = {id(mesh): character.point(Character.bind_points(mesh, bind)) for mesh in scene.meshes}
+    shift = {id(mesh): np.zeros_like(points[id(mesh)]) for mesh in scene.meshes}
+    moved_count = 0
+    for side in ("L", "R"):
+        try: joint, elbow = (character.rest[character.names.index(f"DEF-{n}.{side}")][:3, 3] for n in ("upper_arm", "forearm"))
+        except ValueError: continue
+        axis = (elbow - joint) / np.linalg.norm(elbow - joint)
+        up = np.array([0.0, 1.0, 0.0]) - axis[1] * axis; up /= np.linalg.norm(up); front = np.cross(axis, up)
+        on_arm = {id(mesh): np.array([any(names.get(b, "").startswith(f"DEF-upper_arm.{side}") for b, _ in inf) for inf in mesh["influences"]])
+                  for mesh in scene.meshes}
+        def place(p):
+            along = (p - joint) @ axis; radial = p - joint - np.outer(along, axis)
+            return along, radial, np.linalg.norm(radial, axis=1), np.arctan2(radial @ front, radial @ up)
+        def profile(at):                                  # largest distance from the bone per direction, in a 2 cm slab
+            best = np.full(len(sectors), np.nan)
+            for mesh in scene.meshes:
+                along, _, distance, angle = place(points[id(mesh)][on_arm[id(mesh)]])
+                for k, c in enumerate(sectors):
+                    pick = (np.abs(along - at) < 0.01) & (distance < 0.16) & (np.abs((angle - c + np.pi) % (2 * np.pi) - np.pi) < np.radians(25))
+                    if pick.any(): best[k] = np.fmax(best[k], distance[pick].max())
+            known = np.nonzero(~np.isnan(best))[0]
+            return np.interp(np.arange(len(best)), known, best[known], period=len(best)) if len(known) else None
+        near, far = profile(start), profile(end)
+        if near is None or far is None: continue
+        sleeve, pulled = [], []
+        for mesh in scene.meshes:
+            vertices = np.nonzero(on_arm[id(mesh)])[0]
+            along, radial, distance, angle = place(points[id(mesh)][vertices])
+            k = (angle - sectors[0]) / np.radians(30) % len(sectors); i = k.astype(int) % len(sectors); j = (i + 1) % len(sectors); f = k - np.floor(k)
+            x = (along - start) / (end - start)
+            cap = (near[i] * (1 - f) + near[j] * f) * (1 - x) + (far[i] * (1 - f) + far[j] * f) * x + allow
+            pull = (x > 0) & (x < 1) & (distance < 0.16) & (distance > cap)
+            shift[id(mesh)][vertices[pull]] = (radial[pull] * (cap[pull] / distance[pull] - 1)[:, None])
+            moved_count += int(pull.sum())
+            sleeve.append(points[id(mesh)][vertices]); pulled.append(shift[id(mesh)][vertices])
+        sleeve, pulled = np.concatenate(sleeve), np.concatenate(pulled)
+        # Off-arm vertices within 4 cm of the sleeve follow its nearest vertices (fading out from 2 cm).
+        for mesh in scene.meshes:
+            others = np.nonzero(~on_arm[id(mesh)])[0]
+            along, _, distance, _ = place(points[id(mesh)][others])
+            zone = others[(along > start - 0.02) & (along < end + 0.02) & (distance < 0.2)]
+            for v in zone:
+                gap = np.linalg.norm(sleeve - points[id(mesh)][v], axis=1); nearest = np.argsort(gap)[:4]
+                if gap[nearest[0]] > 0.04: continue
+                weights = 1 / (gap[nearest] + 1e-3)
+                shift[id(mesh)][v] = (weights @ pulled[nearest]) / weights.sum() * np.clip((0.04 - gap[nearest[0]]) / 0.02, 0, 1)
+    largest = 0.0
+    for mesh in scene.meshes:
+        d = shift[id(mesh)]
+        if not d.any(): continue
+        largest = max(largest, float(np.linalg.norm(d, axis=1).max()))
+        # Back to the mesh's own FBX space; each corner normal turns as its vertex's faces did.
+        world = ((points[id(mesh)] + d - character.offset) / character.scale) @ character.linear
+        local = (np.c_[world, np.ones(len(world))] @ np.linalg.inv(bind[mesh["model"]]).T)[:, :3]
+        corners = mesh["corners"].reshape(-1, 3)
+        def vertex_normals(p):
+            faces = np.cross(p[corners[:, 1]] - p[corners[:, 0]], p[corners[:, 2]] - p[corners[:, 0]])
+            out = np.zeros_like(p)
+            for c in range(3): np.add.at(out, corners[:, c], faces)
+            return out / (np.linalg.norm(out, axis=1, keepdims=True) + 1e-12)
+        before, after = vertex_normals(mesh["positions"]), vertex_normals(local)
+        normals = mesh["normals"].reshape(-1, 3).copy()
+        for corner, v in enumerate(mesh["corners"]):
+            a, b = before[v], after[v]; c = a @ b
+            if c > 1 - 1e-9 or c < -0.5: continue
+            cross = np.cross(a, b); skew = np.array([[0, -cross[2], cross[1]], [cross[2], 0, -cross[0]], [-cross[1], cross[0], 0]])
+            normals[corner] = (np.eye(3) + skew + skew @ skew / (1 + c)) @ normals[corner]
+        mesh["positions"] = local; mesh["normals"] = normals.reshape(mesh["normals"].shape)
+    return moved_count, largest
+
 def held_mesh(scene, character):
     """The mesh bound wholly to one hand (the soldier's rifle) and that hand's bone index, or None."""
     for mesh in scene.meshes:
@@ -783,6 +867,8 @@ def main():
     parser.add_argument("--gait", default="", help="re-keyed walk settings, e.g. crouch=0.035,bob=0.02 (walk_cycle.Gait)")
     parser.add_argument("--hole-closer", type=float, default=0.0,
                         help="move the held mesh's far hand-hole this many metres nearer its near one")
+    parser.add_argument("--flatten-deltoids", action="store_true",
+                        help="flatten the bulge on top of each upper arm near the shoulder to a straight taper")
     args = parser.parse_args()
     source = pathlib.Path(args.source); out = pathlib.Path(args.output); out.mkdir(parents=True, exist_ok=True)
     name = args.name or source.stem.lower()
@@ -792,6 +878,7 @@ def main():
     character.add_half_joints()
     evened = even_elbows(scene, character)
     smoothed = smooth_shoulders(scene, character)
+    flattened = flatten_deltoids(scene, character) if args.flatten_deltoids else (0, 0.0)
     if args.hole_closer and not shorten_held(scene, character, args.hole_closer):
         print("  --hole-closer: no mesh held by one hand has two holes; nothing moved")
     overrides = json.loads(pathlib.Path(args.colors).read_text()) if args.colors else {}
@@ -842,6 +929,7 @@ def main():
     if filled: print(f"  {filled} vertices had no skin weights; they take their nearest weighted neighbour's")
     if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
     if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")
+    if flattened[0]: print(f"  {flattened[0]} sleeve vertices of the deltoid bulges moved toward the bone, by at most {flattened[1] * 100:.1f} cm")
     for note in notes: print("  " + note)
     authored = next((c for c in clips if c["name"] != "walk" or not args.rekey_walk), None)
     report_fidelity(scene, character, authored["worlds"] if authored else [])

@@ -47,7 +47,7 @@ window can be made.
 
 ```sh
 python3 examples/tools/import_model.py Soldier.fbx examples/assets/soldier --name soldier \
-    --colors examples/assets/soldier/colors.json --rekey-walk --hole-closer 0.06
+    --colors examples/assets/soldier/colors.json --rekey-walk --hole-closer 0.06 --flatten-deltoids
 ```
 
 `--hole-closer M` edits the model: a mesh held wholly by one hand that has
@@ -56,6 +56,15 @@ its far hole moved M metres nearer the near one. The stretch between them is
 shortened; the near hole and what lies behind it, and the far hole and what
 lies beyond it, keep their shape. The soldier's rifle is 6 cm shorter, so his
 right hand reaches its front hole with the rifle at the authored aim height.
+
+`--flatten-deltoids` edits the model too. The soldier's sleeves bulge on top,
+8 to 11 cm out from each shoulder joint, about 2 cm above a straight taper.
+With his arms held forward and down, that bulge stood out of the arm's top
+line as a step behind the shoulder. In every direction around each upper arm,
+the sleeve may now come no further from the bone than the straight line from
+its distance 2 cm along the arm to its distance at 20 cm. For the soldier, 61
+sleeve vertices move in, by at most 2.9 cm, and the shoulder yoke lying on
+them moves with them.
 
 The tool needs Python 3 and numpy. It writes three files into the output
 directory:
