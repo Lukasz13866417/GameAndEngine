@@ -249,8 +249,10 @@ std::string fit_line(const text::Font& font, std::string_view text, f32 width, u
 // "upper arm (right)", "DEF-spine.002" (Rigify's chest) is "chest". Notes
 // keep the bone's own name.
 std::string body_part(std::string name) {
-    for (const std::string_view prefix : {"DEF-", "ORG-", "HALF-", "MCH-"})
-        if (name.starts_with(prefix)) name.erase(0, prefix.size());
+    // A capitalised prefix says what kind of bone it is (DEF-, ORG-, HALF-, QUARTER-...).
+    if (const auto dash = name.find('-'); dash != std::string::npos && dash > 0 &&
+        std::ranges::all_of(name.substr(0, dash), [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; }))
+        name.erase(0, dash + 1);
     std::string side;
     for (const auto& [suffix, said] : {std::pair{".L", " (left)"}, std::pair{".R", " (right)"}})
         if (const auto at = name.find(suffix); at != std::string::npos && (at + 2 == name.size() || name[at + 2] == '.')) {
@@ -591,15 +593,24 @@ private:
     // Shows a note as it was pinned: its time and candidate, and on a character its clip and camera.
     void visit(const review::Note& note) {
         const auto i = candidate_index(note.candidate);
-        if (auto* body = slots_[i].character()) {
-            if (!note.clip.empty() && note.clip != body->clip() && body->clip(note.clip)) {
-                if (controls_[i]) controls_[i]->clip.value(note.clip);
-                fit_range();
-            }
-            if (note.camera) body->orbit({(*note.camera)[0], (*note.camera)[1], (*note.camera)[2], (*note.camera)[3]});
+        if (const auto* body = slots_[i].character()) {
+            if (!note.clip.empty() && note.clip != body->clip()) play_clip(note.clip);
+            if (note.camera) turn({(*note.camera)[0], (*note.camera)[1], (*note.camera)[2], (*note.camera)[3]});
         }
         at(note.time);
         select_candidate(i);
+    }
+    // Character views share a camera and a clip, so a comparison of
+    // characters always shows them alike.
+    void turn(review::Orbit orbit) {
+        for (auto& slot : slots_)
+            if (auto* body = slot.character()) body->orbit(orbit);
+    }
+    void play_clip(const std::string& name) {
+        for (auto& slot : slots_)
+            if (auto* body = slot.character()) body->clip(name);
+        if (controls_) controls_->clip.value(name);
+        fit_range();
     }
     // The character view under a window point, if any.
     std::optional<std::size_t> character_at(Vec2 position) const {
@@ -616,17 +627,7 @@ private:
             headers_.push_back(header);
             header_buttons_.push_back(header.button(c.id + "  " + c.label));
             header_counts_.push_back(header.label(""));
-            controls_.emplace_back();
-            if (const auto* body = slots_[i].character()) {
-                // A character's clip, and cameras to jump to; dragging turns it.
-                std::vector<ui::Choice<std::string>> clips;
-                for (const auto& name : body->clips()) clips.push_back({name, name});
-                auto clip = header.dropdown<std::string>("Clip", std::span<const ui::Choice<std::string>>{clips}).width(240);
-                clip.value(body->clip());
-                std::vector<ui::Button> views;
-                for (const auto& preset : presets) views.push_back(header.button(preset.name).width(74));
-                controls_.back().emplace(Controls{std::move(clip), std::move(views)});
-            }
+            if (slots_[i].character() && slots_.size() == 1) header.label("Drag to turn, right-drag to raise, wheel to zoom");
             images_.push_back(root.image());
             shown_revision_.push_back(0);
         }
@@ -638,8 +639,23 @@ private:
         loop_box_ = controls.checkbox("Loop").value(loop_).width(100);
         clock_ = controls.label("").width(150);
         const bool characters = std::ranges::any_of(slots_, [](const Slot& slot) { return slot.character() != nullptr; });
-        controls.label(characters ? "Click to pin a note, drag to turn, wheel to zoom.  Space: play"
-                                  : "Click a view to pin a note.  Space: play").width(characters ? 560 : 420);
+        if (!characters) controls.label("Click a view to pin a note.  Space: play").width(420);
+        else {
+            // The characters' clip, and cameras to jump to; all character views share both.
+            std::vector<ui::Choice<std::string>> clips;
+            std::string playing;
+            for (const auto& slot : slots_)
+                if (const auto* body = slot.character()) {
+                    if (playing.empty()) playing = body->clip();
+                    for (const auto& name : body->clips())
+                        if (std::ranges::find(clips, name, &ui::Choice<std::string>::value) == clips.end()) clips.push_back({name, name});
+                }
+            auto clip = controls.dropdown<std::string>("Clip", std::span<const ui::Choice<std::string>>{clips}).width(230);
+            clip.value(playing);
+            std::vector<ui::Button> views;
+            for (const auto& preset : presets) views.push_back(controls.button(preset.name).width(70));
+            controls_.emplace(Controls{std::move(clip), std::move(views)});
+        }
         strip_ = bar_.image().height(12);
         auto pixel = std::make_shared<gfx::ImageData>();
         pixel->extent = {1, 1};
@@ -856,21 +872,18 @@ private:
             review_.summary = std::string(*text);
             touched();
         }
-        for (std::size_t i = 0; i < controls_.size(); ++i) {
-            auto* body = slots_[i].character();
-            if (!controls_[i] || !body) continue;
-            if (const auto name = controls_[i]->clip.changedValue(); name && body->clip(*name)) {
-                select_candidate(i);
-                fit_range();
-            }
+        if (controls_) {
+            if (const auto name = controls_->clip.changedValue()) play_clip(*name);
             for (std::size_t k = 0; k < presets.size(); ++k)
-                if (controls_[i]->views[k].clicked()) {
-                    auto orbit = body->orbit();
-                    orbit.yaw = presets[k].yaw.value_or(orbit.yaw);
-                    orbit.pitch = presets[k].pitch;
-                    body->orbit(orbit);
-                    select_candidate(i);
-                }
+                if (controls_->views[k].clicked())
+                    for (const auto& slot : slots_)
+                        if (const auto* body = slot.character()) {
+                            auto orbit = body->orbit();
+                            orbit.yaw = presets[k].yaw.value_or(orbit.yaw);
+                            orbit.pitch = presets[k].pitch;
+                            turn(orbit);
+                            break;
+                        }
         }
         // Presses the UI left alone, in order with every move and release: a
         // turn follows the pointer anywhere and ends wherever the button is released.
@@ -884,14 +897,14 @@ private:
                 const Vec2 step{event.position.x - drag_->last.x, event.position.y - drag_->last.y};
                 drag_->last = event.position;
                 drag_->moved = drag_->moved || std::hypot(event.position.x - drag_->start.x, event.position.y - drag_->start.y) > 4;
-                if (auto* body = slots_[drag_->slot].character(); body && drag_->moved) {
+                if (const auto* body = slots_[drag_->slot].character(); body && drag_->moved) {
                     auto orbit = body->orbit();
                     if (drag_->button == 0) {
                         orbit.yaw -= step.x * .4F;
                         orbit.pitch += step.y * .3F;
                     } else
                         orbit.look += step.y * orbit.distance * .002F;
-                    body->orbit(orbit);
+                    turn(orbit);
                 }
             } else if (drag_ && ((event.kind == input::EventKind::pointer_up && event.button == drag_->button) ||
                                  event.kind == input::EventKind::focus_lost)) {
@@ -902,10 +915,9 @@ private:
         for (const auto& event : unhandled) {
             if (event.kind == input::EventKind::scroll)
                 if (const auto i = character_at(event.position)) {
-                    auto* body = slots_[*i].character();
-                    auto orbit = body->orbit();
+                    auto orbit = slots_[*i].character()->orbit();
                     orbit.distance *= std::pow(.88F, event.scroll.y);
-                    body->orbit(orbit);
+                    turn(orbit);
                 }
             if (event.kind == input::EventKind::key_down && !input.capturesKeyboard) {
                 if (event.key == input::Key::space && !event.repeat) playing_ = !playing_;
@@ -1077,7 +1089,7 @@ private:
     std::vector<ui::Button> note_rows_;
     std::vector<u32> note_row_ids_;
     u32 open_note_{};
-    std::vector<std::optional<Controls>> controls_;
+    std::optional<Controls> controls_;
     std::optional<Drag> drag_;
 };
 

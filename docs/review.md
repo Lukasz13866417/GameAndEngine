@@ -122,7 +122,7 @@ A candidate can be a skinned character instead of a scene: the `.vmesh` that
     --candidate "Soldier" examples/assets/soldier/soldier.vmesh
 ```
 
-He walks on the spot over a treadmill floor. His view's header adds:
+He walks on the spot over a treadmill floor. The time bar adds:
 
 - **Clip**: which of his clips plays, such as `walk` or `walk_authored`. The
   clock covers that clip.
@@ -135,6 +135,10 @@ In the view:
 - right-drag to raise or lower it;
 - use the wheel to zoom;
 - click without dragging to pin a note.
+
+In a comparison of characters (variants of one, say), the views share one
+camera and one clip: turning, zooming or picking a clip in one view does the
+same in all.
 
 A note on him keeps the clip, the time and the camera it was pinned with.
 Opening it, from its row or with *Go to*, brings all three back. Its marker
