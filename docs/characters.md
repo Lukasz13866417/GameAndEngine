@@ -124,9 +124,20 @@ What the conversion does:
   more than a quarter of the elbow's fold; the elbow pads turn as rigid caps.
 - **Elbow weights.** The sleeves handed over from upper arm to forearm
   unevenly, from 9 cm above the elbow to 12 cm below it. The weight the two
-  arm bones share is re-split by a smoothstep over 12 cm either side of the
-  joint, so the arm bends at the elbow; rigid pieces such as the elbow pads
-  keep their weights.
+  arm bones share is re-split by a smoothstep centred on the joint, so the
+  arm bends at the elbow. It spans 12 cm either side on the inside of the
+  fold (the crease, toward the front of a T-posed arm) but 5 cm on the
+  outside: the back of a forearm stays with the forearm up to the point of
+  the elbow, so a folded arm keeps its thickness to the joint instead of
+  pinching there. A rigid piece such as an elbow pad stays rigid and takes
+  the share the sleeve has under its middle.
+- **Underarm weights.** Near the armpit, the back and underside of each
+  upper arm (the tricep, opposite the elbow's fold) were shared with the
+  torso 10 cm out along the arm. With the arm raised to the rifle that skin
+  lagged toward the body, and the arm's underside sagged into a hollow. There,
+  fading out toward the sides, the arm's share rises to a smoothstep from 2
+  to 10 cm out from the shoulder joint, so the tricep keeps its shape; the
+  armpit itself stays blended, so it does not tear away from the back.
 - **Shoulder weights.** Where the chest meets the upper arm, the soldier's
   weights jumped between neighbouring vertices, and with the arm raised the
   jumps folded the skin into bumps. Within 15 cm of each shoulder joint, every
