@@ -673,7 +673,7 @@ def even_elbows(scene, character, width=0.12, outer_width=0.05):
         names = {b: display_name(scene.models[b]) for b in scene.models}
         upper = lambda b: names.get(b, "").startswith(f"DEF-upper_arm.{side}")
         fore = lambda b: names.get(b, "").startswith(f"DEF-forearm.{side}")
-        for mesh in scene.meshes:
+        for mesh in editable(scene):
             points = character.point(Character.bind_points(mesh, bind))
             shares, picks = [], []
             for v, inf in enumerate(mesh["influences"]):
@@ -707,6 +707,10 @@ def even_elbows(scene, character, width=0.12, outer_width=0.05):
                 mesh["influences"][v] = new; changed += 1
     return changed
 
+def editable(scene):
+    """The meshes the weight and shape fixes apply to: not one remodelled by body.py."""
+    return [m for m in scene.meshes if not m.get("generated")]
+
 def smooth_shoulders(scene, character, radius=0.15, rounds=4):
     """Around each shoulder joint, skin weights are blended toward their mesh
     neighbours' (half-strength at the joint, fading to nothing at `radius`
@@ -718,7 +722,7 @@ def smooth_shoulders(scene, character, radius=0.15, rounds=4):
     for side in ("L", "R"):
         if f"DEF-upper_arm.{side}" not in character.names: continue
         joint = character.rest[character.names.index(f"DEF-upper_arm.{side}")][:3, 3]
-        for mesh in scene.meshes:
+        for mesh in editable(scene):
             if len({b for inf in mesh["influences"] for b, _ in inf}) < 2: continue
             points = character.point(Character.bind_points(mesh, bind))
             reach = 1 - np.linalg.norm(points - joint, axis=1) / radius
@@ -762,7 +766,7 @@ def firm_underarms(scene, character, start=0.02, end=0.10, reach=0.11, length=0.
         down = down - (down @ axis) * axis; down /= np.linalg.norm(down)
         arm = lambda b: names.get(b, "").startswith((f"DEF-upper_arm.{side}", f"DEF-forearm.{side}"))
         default = next((b for b in scene.models if names[b] == f"DEF-upper_arm.{side}"), None)
-        for mesh in scene.meshes:
+        for mesh in editable(scene):
             points = character.point(Character.bind_points(mesh, bind))
             if not any(arm(b) for inf in mesh["influences"] for b, _ in inf): continue
             for v, inf in enumerate(mesh["influences"]):
@@ -840,7 +844,7 @@ def flatten_deltoids(scene, character, start=0.02, end=0.20, allow=0.003):
             return along, radial, np.linalg.norm(radial, axis=1), np.arctan2(radial @ front, radial @ up)
         def profile(at):                                  # largest distance from the bone per direction, in a 2 cm slab
             best = np.full(len(sectors), np.nan)
-            for mesh in scene.meshes:
+            for mesh in editable(scene):
                 along, _, distance, angle = place(points[id(mesh)][on_arm[id(mesh)]])
                 for k, c in enumerate(sectors):
                     pick = (np.abs(along - at) < 0.01) & (distance < 0.16) & (np.abs((angle - c + np.pi) % (2 * np.pi) - np.pi) < np.radians(25))
@@ -850,7 +854,7 @@ def flatten_deltoids(scene, character, start=0.02, end=0.20, allow=0.003):
         near, far = profile(start), profile(end)
         if near is None or far is None: continue
         sleeve, pulled = [], []
-        for mesh in scene.meshes:
+        for mesh in editable(scene):
             vertices = np.nonzero(on_arm[id(mesh)])[0]
             along, radial, distance, angle = place(points[id(mesh)][vertices])
             k = (angle - sectors[0]) / np.radians(30) % len(sectors); i = k.astype(int) % len(sectors); j = (i + 1) % len(sectors); f = k - np.floor(k)
@@ -862,7 +866,7 @@ def flatten_deltoids(scene, character, start=0.02, end=0.20, allow=0.003):
             sleeve.append(points[id(mesh)][vertices]); pulled.append(shift[id(mesh)][vertices])
         sleeve, pulled = np.concatenate(sleeve), np.concatenate(pulled)
         # Off-arm vertices within 4 cm of the sleeve follow its nearest vertices (fading out from 2 cm).
-        for mesh in scene.meshes:
+        for mesh in editable(scene):
             others = np.nonzero(~on_arm[id(mesh)])[0]
             along, _, distance, _ = place(points[id(mesh)][others])
             zone = others[(along > start - 0.02) & (along < end + 0.02) & (distance < 0.2)]
@@ -898,7 +902,7 @@ def shape_arms(scene, character, tricep=0.015, slim=0.2):
         up_dir = (e0 - s0) / np.linalg.norm(e0 - s0); fore_dir = (w0 - e0) / np.linalg.norm(w0 - e0)
         back = np.array([0.0, -1.0, -1.0]) - (np.array([0.0, -1.0, -1.0]) @ up_dir) * up_dir; back /= np.linalg.norm(back)
         on = lambda inf, prefix: sum(w for b, w in inf if names.get(b, "").startswith(prefix)) / max(sum(w for _, w in inf), 1e-9)
-        for mesh in scene.meshes:
+        for mesh in editable(scene):
             p = points[id(mesh)]; inf = mesh["influences"]
             upper = np.array([on(i, f"DEF-upper_arm.{side}") for i in inf]); fore = np.array([on(i, f"DEF-forearm.{side}") for i in inf])
             if not (upper.any() or fore.any()): continue
@@ -1099,6 +1103,8 @@ def main():
                         help="flatten the bulge on top of each upper arm near the shoulder to a straight taper")
     parser.add_argument("--shape-arms", action="store_true",
                         help="give each upper arm a tricep and slim each forearm next to the elbow")
+    parser.add_argument("--rebuild-suit", metavar="MESH",
+                        help="remodel this mesh (the body suit) as a ring sweep along the bones, weighted ring by ring (body.py)")
     args = parser.parse_args()
     source = pathlib.Path(args.source); out = pathlib.Path(args.output); out.mkdir(parents=True, exist_ok=True)
     name = args.name or source.stem.lower()
@@ -1107,6 +1113,12 @@ def main():
     doubled = drop_doubled_faces(scene)
     unfaced = keep_face_weights_on_head(scene)
     character = Character(scene, args.height)
+    rebuilt = None
+    if args.rebuild_suit:
+        import body
+        suit = next((m for m in scene.meshes if m["name"] == args.rebuild_suit), None)
+        if suit is None: sys.exit(f"--rebuild-suit: no mesh named {args.rebuild_suit}")
+        rebuilt = body.rebuild_suit(scene, character, suit)
     character.add_half_joints()
     evened = even_elbows(scene, character)
     smoothed = smooth_shoulders(scene, character)
@@ -1165,6 +1177,7 @@ def main():
         print("no colour in the FBX for: " + ", ".join(sorted(missing)) + " (grey; pass --colors or textures)")
     if filled: print(f"  {filled} vertices had no skin weights; they take their nearest weighted neighbour's")
     if doubled: print(f"  {doubled} triangles were there twice, facing opposite ways; the inward copies are dropped")
+    if rebuilt: print(f"  {rebuilt}")
     if unfaced: print(f"  {unfaced} vertices off the head followed face bones; they follow their strongest other bone instead")
     if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
     if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")

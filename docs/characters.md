@@ -48,8 +48,34 @@ window can be made.
 ```sh
 python3 examples/tools/import_model.py Soldier.fbx examples/assets/soldier --name soldier \
     --colors examples/assets/soldier/colors.json --lights examples/assets/soldier/lights.json \
-    --rekey-walk --hole-closer 0.06 --flatten-deltoids --shape-arms
+    --rekey-walk --hole-closer 0.06 --rebuild-suit Armor
 ```
+
+`--rebuild-suit MESH` remodels the body suit from scratch (`body.py`). The
+soldier's suit is a plain tube round each limb, with no edge loops at the
+joints and weights that spread across them, so a folded elbow pinched and
+swelled whatever the weights did. The rebuilt suit is a ring sweep along the
+bones:
+
+- rings of 16 vertices round each limb and 24 round the torso and hood, every
+  3 to 4.5 cm;
+- a ring at every joint, perpendicular to the joint's bisector, and at the
+  elbows rings 3 and 6 cm either side too, so the elbow's quarter, half and
+  three-quarter helpers each own one ring and the fold stays even;
+- each ring copies its size, centre and shape from the original suit there
+  (rays cast from the bone, fitted as low Fourier modes and smoothed along the
+  sweep), so he keeps his proportions. The sleeves are not centred on the
+  bones: the upper arm's sits 3 cm behind its bone;
+- weights set ring by ring: a joint ring is shared half and half, a bone owns
+  the middle of its stretch, and the rings inside the torso belong to the
+  collarbone. The legs run from inside the pelvis to the ankle, the arms from
+  inside the torso to the wrist, the torso from the crotch to the crown;
+- a tricep swell of up to 1.5 cm on the back of each upper arm, and sleeves
+  6% narrower under the elbow pads.
+
+The other meshes (hands, boots, belt, pads, yoke, rifle) are kept, and the
+weight and shape fixes below skip a rebuilt mesh. For the soldier it writes
+2,216 vertices and 4,384 triangles in place of the suit's 1,601 and 3,176.
 
 `--hole-closer M` edits the model: a mesh held wholly by one hand that has
 two holes through it (the soldier's rifle: a rear and a front hand-hole) gets
@@ -58,7 +84,7 @@ shortened; the near hole and what lies behind it, and the far hole and what
 lies beyond it, keep their shape. The soldier's rifle is 6 cm shorter, so his
 right hand reaches its front hole with the rifle at the authored aim height.
 
-`--flatten-deltoids` edits the model too. The soldier's sleeves bulge on top,
+`--flatten-deltoids` edits an original suit (not one rebuilt by `--rebuild-suit`). The soldier's sleeves bulge on top,
 8 to 11 cm out from each shoulder joint, about 2 cm above a straight taper.
 With his arms held forward and down, that bulge stood out of the arm's top
 line as a step behind the shoulder. In every direction around each upper arm,
@@ -67,7 +93,7 @@ its distance 2 cm along the arm to its distance at 20 cm. For the soldier, 61
 sleeve vertices move in, by at most 2.9 cm, and the shoulder yoke lying on
 them moves with them.
 
-`--shape-arms` edits the model too: the soldier's sleeves are plain tubes
+`--shape-arms` edits an original suit too: the soldier's sleeves were plain tubes
 along the bones. Each upper arm gets a tricep, a swell of up to 1.5 cm on
 its back and underside, highest midway between shoulder and elbow, so with
 his arm raised the underside is gently convex instead of a straight line
@@ -97,7 +123,7 @@ directory:
 | `NAME_pose.vmesh` | The mesh deformed at one clip frame (`--pose-frame N`, default 0), with no skin. It is for static scenes and the editor's mesh import. |
 
 For the soldier, it reads 9 meshes, 11 materials, a 278-bone Rigify rig and six
-identical copies of one walk. It writes 17,265 vertices, 9,601 triangles, 109
+identical copies of one walk. It writes 17,880 vertices, 10,809 triangles, 109
 bones (98 from the rig, a root and 10 joint helpers) and two 24-frame clips at
 24 fps, one-second loops:
 
@@ -375,6 +401,8 @@ lights = [
   which builds the armature and skin binding from the mesh and its rig.
   `pose(clip, seconds, pose)` sets each animated bone, blending neighbouring
   frames: linear translation and scale, and shortest-path rotation.
+- **`examples/tools/body.py`** rebuilds a body suit as a ring sweep along
+  the bones (`--rebuild-suit`).
 - **`examples/character/stage.{hpp,cpp}`** is the floor a character walks
   on when shown alone, bound to a single bone so the same skinned renderer
   draws it.
