@@ -781,6 +781,36 @@ def firm_underarms(scene, character, start=0.02, end=0.10, reach=0.11, length=0.
                 mesh["influences"][v] = [(b, w) for b, w in new if w > 1e-6]; changed += 1
     return changed
 
+def move_vertices(scene, character, points, shift):
+    """Moves each mesh's vertices by `shift` ({id(mesh): offsets in character
+    space}, from `points`, its bind-pose points there) back in its own FBX
+    space; each corner normal turns as its vertex's faces did. Returns the
+    largest move in metres."""
+    bind = scene.bind_globals()
+    largest = 0.0
+    for mesh in scene.meshes:
+        d = shift[id(mesh)]
+        if not d.any(): continue
+        largest = max(largest, float(np.linalg.norm(d, axis=1).max()))
+        # Back to the mesh's own FBX space; each corner normal turns as its vertex's faces did.
+        world = ((points[id(mesh)] + d - character.offset) / character.scale) @ character.linear
+        local = (np.c_[world, np.ones(len(world))] @ np.linalg.inv(bind[mesh["model"]]).T)[:, :3]
+        corners = mesh["corners"].reshape(-1, 3)
+        def vertex_normals(p):
+            faces = np.cross(p[corners[:, 1]] - p[corners[:, 0]], p[corners[:, 2]] - p[corners[:, 0]])
+            out = np.zeros_like(p)
+            for c in range(3): np.add.at(out, corners[:, c], faces)
+            return out / (np.linalg.norm(out, axis=1, keepdims=True) + 1e-12)
+        before, after = vertex_normals(mesh["positions"]), vertex_normals(local)
+        normals = mesh["normals"].reshape(-1, 3).copy()
+        for corner, v in enumerate(mesh["corners"]):
+            a, b = before[v], after[v]; c = a @ b
+            if c > 1 - 1e-9 or c < -0.5: continue
+            cross = np.cross(a, b); skew = np.array([[0, -cross[2], cross[1]], [cross[2], 0, -cross[0]], [-cross[1], cross[0], 0]])
+            normals[corner] = (np.eye(3) + skew + skew @ skew / (1 + c)) @ normals[corner]
+        mesh["positions"] = local; mesh["normals"] = normals.reshape(mesh["normals"].shape)
+    return largest
+
 def flatten_deltoids(scene, character, start=0.02, end=0.20, allow=0.003):
     """--flatten-deltoids: the soldier's sleeves bulge on top 8-11 cm out from
     the shoulder joint, about 2 cm above a straight taper. With the arm held
@@ -841,29 +871,54 @@ def flatten_deltoids(scene, character, start=0.02, end=0.20, allow=0.003):
                 if gap[nearest[0]] > 0.04: continue
                 weights = 1 / (gap[nearest] + 1e-3)
                 shift[id(mesh)][v] = (weights @ pulled[nearest]) / weights.sum() * np.clip((0.04 - gap[nearest[0]]) / 0.02, 0, 1)
-    largest = 0.0
-    for mesh in scene.meshes:
-        d = shift[id(mesh)]
-        if not d.any(): continue
-        largest = max(largest, float(np.linalg.norm(d, axis=1).max()))
-        # Back to the mesh's own FBX space; each corner normal turns as its vertex's faces did.
-        world = ((points[id(mesh)] + d - character.offset) / character.scale) @ character.linear
-        local = (np.c_[world, np.ones(len(world))] @ np.linalg.inv(bind[mesh["model"]]).T)[:, :3]
-        corners = mesh["corners"].reshape(-1, 3)
-        def vertex_normals(p):
-            faces = np.cross(p[corners[:, 1]] - p[corners[:, 0]], p[corners[:, 2]] - p[corners[:, 0]])
-            out = np.zeros_like(p)
-            for c in range(3): np.add.at(out, corners[:, c], faces)
-            return out / (np.linalg.norm(out, axis=1, keepdims=True) + 1e-12)
-        before, after = vertex_normals(mesh["positions"]), vertex_normals(local)
-        normals = mesh["normals"].reshape(-1, 3).copy()
-        for corner, v in enumerate(mesh["corners"]):
-            a, b = before[v], after[v]; c = a @ b
-            if c > 1 - 1e-9 or c < -0.5: continue
-            cross = np.cross(a, b); skew = np.array([[0, -cross[2], cross[1]], [cross[2], 0, -cross[0]], [-cross[1], cross[0], 0]])
-            normals[corner] = (np.eye(3) + skew + skew @ skew / (1 + c)) @ normals[corner]
-        mesh["positions"] = local; mesh["normals"] = normals.reshape(mesh["normals"].shape)
+    largest = move_vertices(scene, character, points, shift)
     return moved_count, largest
+
+def shape_arms(scene, character, tricep=0.015, slim=0.2):
+    """--shape-arms: two changes to the soldier's sleeves, which are plain
+    tubes along the bones.
+    - A tricep: the back and underside of each upper arm (opposite the
+      elbow's fold) swells by up to `tricep` metres between 4 and 22 cm out
+      from the shoulder, highest in the middle, so with the arm raised its
+      underside is gently convex rather than a straight line sagging into the
+      armpit.
+    - A slimmer forearm by the elbow: from 2 cm past the elbow, each forearm's
+      cross-section narrows by up to `slim` (a share of its width) about its
+      own middle, most at 6 to 10 cm and none from 18 cm, so the forearm is
+      no wider than the elbow it folds against.
+    Returns the vertices moved and the largest move in metres."""
+    bind = scene.bind_globals(); names = {b: display_name(scene.models[b]) for b in scene.models}
+    points = {id(mesh): character.point(Character.bind_points(mesh, bind)) for mesh in scene.meshes}
+    shift = {id(mesh): np.zeros_like(points[id(mesh)]) for mesh in scene.meshes}
+    smooth = lambda x: (lambda c: c * c * (3 - 2 * c))(np.clip(x, 0, 1))
+    moved = 0
+    for side in ("L", "R"):
+        try: s0, e0, w0 = (character.rest[character.names.index(f"DEF-{n}.{side}")][:3, 3] for n in ("upper_arm", "forearm", "hand"))
+        except ValueError: continue
+        up_dir = (e0 - s0) / np.linalg.norm(e0 - s0); fore_dir = (w0 - e0) / np.linalg.norm(w0 - e0)
+        back = np.array([0.0, -1.0, -1.0]) - (np.array([0.0, -1.0, -1.0]) @ up_dir) * up_dir; back /= np.linalg.norm(back)
+        on = lambda inf, prefix: sum(w for b, w in inf if names.get(b, "").startswith(prefix)) / max(sum(w for _, w in inf), 1e-9)
+        for mesh in scene.meshes:
+            p = points[id(mesh)]; inf = mesh["influences"]
+            upper = np.array([on(i, f"DEF-upper_arm.{side}") for i in inf]); fore = np.array([on(i, f"DEF-forearm.{side}") for i in inf])
+            if not (upper.any() or fore.any()): continue
+            # The tricep: a smooth swell on the back-under side of the upper arm.
+            d = p - s0; along = d @ up_dir; radial = d - np.outer(along, up_dir); distance = np.linalg.norm(radial, axis=1)
+            facing = (radial @ back) / (distance + 1e-9)
+            profile = np.sin(np.pi * np.clip((along - 0.04) / 0.18, 0, 1))
+            swell = tricep * profile * smooth((facing - 0.1) / 0.6) * (upper > 0.5) * (distance < 0.16)
+            pick = swell > 1e-4
+            shift[id(mesh)][pick] += radial[pick] / distance[pick, None] * swell[pick, None]
+            # The forearm by the elbow: narrower about the middle of its own cross-section.
+            d = p - e0; along = d @ fore_dir; radial = d - np.outer(along, fore_dir)
+            sleeve = (fore > 0.5) & (along > 0) & (along < 0.2) & (np.linalg.norm(radial, axis=1) < 0.16)
+            if sleeve.any():
+                middles = np.array([radial[sleeve & (np.abs(along - a) < 0.015)].mean(0) for a in along[sleeve]])
+                amount = slim * smooth((along[sleeve] - 0.02) / 0.04) * (1 - smooth((along[sleeve] - 0.10) / 0.08))
+                shift[id(mesh)][sleeve] += -(radial[sleeve] - middles) * amount[:, None]
+            moved += int(pick.sum() + sleeve.sum())
+    largest = move_vertices(scene, character, points, shift)
+    return moved, largest
 
 def held_mesh(scene, character):
     """The mesh bound wholly to one hand (the soldier's rifle) and that hand's bone index, or None."""
@@ -1042,6 +1097,8 @@ def main():
                         help="move the held mesh's far hand-hole this many metres nearer its near one")
     parser.add_argument("--flatten-deltoids", action="store_true",
                         help="flatten the bulge on top of each upper arm near the shoulder to a straight taper")
+    parser.add_argument("--shape-arms", action="store_true",
+                        help="give each upper arm a tricep and slim each forearm next to the elbow")
     args = parser.parse_args()
     source = pathlib.Path(args.source); out = pathlib.Path(args.output); out.mkdir(parents=True, exist_ok=True)
     name = args.name or source.stem.lower()
@@ -1055,6 +1112,7 @@ def main():
     smoothed = smooth_shoulders(scene, character)
     firmed = firm_underarms(scene, character)
     flattened = flatten_deltoids(scene, character) if args.flatten_deltoids else (0, 0.0)
+    shaped = shape_arms(scene, character) if args.shape_arms else (0, 0.0)
     if args.hole_closer and not shorten_held(scene, character, args.hole_closer):
         print("  --hole-closer: no mesh held by one hand has two holes; nothing moved")
     overrides = json.loads(pathlib.Path(args.colors).read_text()) if args.colors else {}
@@ -1112,6 +1170,7 @@ def main():
     if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")
     if firmed: print(f"  {firmed} vertices under the upper arms follow the arm from closer to the armpit")
     if flattened[0]: print(f"  {flattened[0]} sleeve vertices of the deltoid bulges moved toward the bone, by at most {flattened[1] * 100:.1f} cm")
+    if shaped[0]: print(f"  {shaped[0]} sleeve vertices shaped into triceps and slimmer forearms, by at most {shaped[1] * 100:.1f} cm")
     for note in notes: print("  " + note)
     authored = next((c for c in clips if c["name"] != "walk" or not args.rekey_walk), None)
     report_fidelity(scene, character, authored["worlds"] if authored else [])
