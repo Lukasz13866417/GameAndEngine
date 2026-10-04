@@ -574,6 +574,42 @@ def even_elbows(scene, character, width=0.12):
                 mesh["influences"][v] = new; changed += 1
     return changed
 
+def smooth_shoulders(scene, character, radius=0.15, rounds=4):
+    """Around each shoulder joint, skin weights are blended toward their mesh
+    neighbours' (half-strength at the joint, fading to nothing at `radius`
+    metres), a few rounds. Where the chest meets the upper arm the soldier's
+    weights jump between neighbouring vertices, and with the arm swung far
+    from the T-pose those jumps fold the skin into bumps. Meshes bound to a
+    single bone are left alone. Returns the vertices changed."""
+    bind = scene.bind_globals(); changed = 0
+    for side in ("L", "R"):
+        if f"DEF-upper_arm.{side}" not in character.names: continue
+        joint = character.rest[character.names.index(f"DEF-upper_arm.{side}")][:3, 3]
+        for mesh in scene.meshes:
+            if len({b for inf in mesh["influences"] for b, _ in inf}) < 2: continue
+            points = character.point(Character.bind_points(mesh, bind))
+            reach = 1 - np.linalg.norm(points - joint, axis=1) / radius
+            near = np.nonzero(reach > 0)[0]
+            if not len(near): continue
+            neighbours = [set() for _ in range(len(points))]
+            for a, b, c in mesh["corners"].reshape(-1, 3):
+                for x, y in ((a, b), (b, c), (c, a)): neighbours[x].add(y); neighbours[y].add(x)
+            weights = [{b: w / sum(x for _, x in inf) for b, w in inf} if inf else {} for inf in mesh["influences"]]
+            for _ in range(rounds):
+                blended = list(weights)
+                for v in near:
+                    if not neighbours[v]: continue
+                    mean = {}
+                    for n in neighbours[v]:
+                        for b, w in weights[n].items(): mean[b] = mean.get(b, 0.0) + w / len(neighbours[v])
+                    k = 0.5 * reach[v]
+                    mix = {b: (1 - k) * weights[v].get(b, 0.0) + k * mean.get(b, 0.0) for b in set(weights[v]) | set(mean)}
+                    total = sum(mix.values()); blended[v] = {b: w / total for b, w in mix.items() if w / total > 1e-3}
+                weights = blended
+            for v in near: mesh["influences"][v] = sorted(weights[v].items(), key=lambda x: -x[1])[:8]
+            changed += len(near)
+    return changed
+
 def held_mesh(scene, character):
     """The mesh bound wholly to one hand (the soldier's rifle) and that hand's bone index, or None."""
     for mesh in scene.meshes:
@@ -755,6 +791,7 @@ def main():
     character = Character(scene, args.height)
     character.add_half_joints()
     evened = even_elbows(scene, character)
+    smoothed = smooth_shoulders(scene, character)
     if args.hole_closer and not shorten_held(scene, character, args.hole_closer):
         print("  --hole-closer: no mesh held by one hand has two holes; nothing moved")
     overrides = json.loads(pathlib.Path(args.colors).read_text()) if args.colors else {}
@@ -804,6 +841,7 @@ def main():
         print("no colour in the FBX for: " + ", ".join(sorted(missing)) + " (grey; pass --colors or textures)")
     if filled: print(f"  {filled} vertices had no skin weights; they take their nearest weighted neighbour's")
     if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
+    if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")
     for note in notes: print("  " + note)
     authored = next((c for c in clips if c["name"] != "walk" or not args.rekey_walk), None)
     report_fidelity(scene, character, authored["worlds"] if authored else [])

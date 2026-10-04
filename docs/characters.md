@@ -102,6 +102,12 @@ What the conversion does:
   arm bones share is re-split by a smoothstep over 12 cm either side of the
   joint, so the arm bends at the elbow; rigid pieces such as the elbow pads
   keep their weights.
+- **Shoulder weights.** Where the chest meets the upper arm, the soldier's
+  weights jumped between neighbouring vertices, and with the arm raised the
+  jumps folded the skin into bumps. Within 15 cm of each shoulder joint, every
+  vertex's weights are blended toward its neighbours' four times: by half at
+  the joint, fading to nothing at 15 cm. Meshes bound to a single bone keep
+  their weights.
 - **Unweighted vertices.** Blender leaves unweighted vertices in place. Here
   they take their nearest weighted neighbour's weights, so they move with what
   they touch. The soldier's front belt pouch had 74 such vertices.
@@ -159,6 +165,14 @@ The re-keyed walk:
     right shoulder rolls forward 10 degrees; the rifle keeps its aim and the
     neck turns the head back to the front. That gives the right arm the reach
     to the rifle's front hole with a relaxed elbow.
+  - The collarbones follow the arms: each turns by a quarter of its arm's
+    swing away from the T-pose, as a shoulder blade does (in people it takes
+    about a third). The soldier's turn 22 degrees on the right and 27 on the
+    left, which brings each shoulder joint about 8 cm forward. Before, the
+    whole swing happened at the shoulder joint and folded the skin around it.
+    With the shoulder weights, folds that sharpen by more than 30 degrees
+    near the right shoulder fell from 18 edges to 7, and on the left from 12
+    to 2.
   - The elbows hang rather than wing out. The holding elbow points out and a
     little down; the support elbow points out and down, clear of the chest.
   - If what the hands hold still sinks into the torso or head, it is pulled
@@ -207,7 +221,8 @@ The re-keyed walk:
 `--gait` tunes it, for example `--gait crouch=0.02,bob=0.02`. The settings are
 the fields of `walk_cycle.Gait`: `speed`, `stance`, `crouch`, `bob`, `sway`,
 `turn`, `hip_drop`, `counter`, `lean`, `lift`, `heel_strike`, `toe_off`, and
-for a two-handed hold `blade`, `protract`, `dip` and `lower`.
+for a two-handed hold `blade`, `protract`, `dip` and `lower`, and
+`shoulder_follow` for the collarbones.
 With the defaults, the soldier's lowest point stays within 1 cm of the floor in
 every frame, and his hips rise and fall by 3 cm.
 

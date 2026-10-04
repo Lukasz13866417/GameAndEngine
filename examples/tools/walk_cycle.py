@@ -46,6 +46,7 @@ class Gait:
     protract: float = 10.0        # degrees the support shoulder rolls forward
     dip: float = 0.0              # degrees the held mesh's far end dips from the authored aim
     lower: float = 0.0            # m the held mesh sits below the authored aim
+    shoulder_follow: float = 0.25 # share of the arm's swing from the T-pose the collarbone takes
 
 
 def _rotation(axis, degrees):
@@ -141,6 +142,7 @@ class WalkRig:
             self.arms[side] = dict(bones=arm,
                                    rest_upper=(self.head(arm[2]) - self.head(arm[0])) / np.linalg.norm(self.head(arm[2]) - self.head(arm[0])),
                                    rest_lower=(self.head(arm[4]) - self.head(arm[2])) / np.linalg.norm(self.head(arm[4]) - self.head(arm[2])),
+                                   rest_reach=(self.head(arm[4]) - self.head(arm[0])) / np.linalg.norm(self.head(arm[4]) - self.head(arm[0])),
                                    upper=np.linalg.norm(self.head(arm[2]) - self.head(arm[0])),
                                    lower=np.linalg.norm(self.head(arm[4]) - self.head(arm[2])),
                                    middle=[np.linalg.norm(self.head(arm[1]) - self.head(arm[0])),
@@ -308,6 +310,21 @@ def rekey_walk(character, original_worlds, fps, sole_points, gait=Gait(), hands=
                 holder = rig.index["DEF-hand." + ("L" if side == "R" else "R")]
                 hand = _rigid(worlds[holder] @ np.linalg.inv(character.rest[holder]) @ hands[side]["support"])
                 pole = outward - up
+            # The collarbone follows part of the arm's swing from the T-pose, as
+            # a shoulder blade does, so the skin between chest and arm folds less.
+            collar = character.parents[b[0]]
+            if gait.shoulder_follow and collar > 0:
+                carried = worlds[collar][:3, :3] @ character.rest[collar][:3, :3].T
+                swing = _align(carried @ arm["rest_reach"], hand[:3, 3] - shoulder)
+                angle = np.degrees(np.arccos(np.clip((np.trace(swing) - 1) / 2, -1, 1)))
+                if angle > 1e-3:
+                    axis = np.array([swing[2, 1] - swing[1, 2], swing[0, 2] - swing[2, 0], swing[1, 0] - swing[0, 1]])
+                    turn = _rotation(axis / np.linalg.norm(axis), angle * gait.shoulder_follow)
+                    worlds[collar] = _delta(worlds[collar][:3, 3], np.zeros(3), turn) @ worlds[collar]
+                    for child in range(len(worlds)):   # what hangs from it (not the arm, solved next)
+                        if character.parents[child] == collar and child != b[0] and worlds[child] is not None:
+                            worlds[child] = hang(child)
+                    shoulder = joint(b[0])
             elbow, wrist = _two_bone(shoulder, hand[:3, 3], arm["upper"], arm["lower"], chest[:3, :3] @ pole)
             short = max(short, float(np.linalg.norm(hand[:3, 3] - wrist)))
             # A twist-free chain: the upper arm swings from where the collarbone
