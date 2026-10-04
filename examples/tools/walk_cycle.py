@@ -139,6 +139,8 @@ class WalkRig:
                                    middle=[np.linalg.norm(self.head(leg[1]) - self.head(leg[0])),
                                            np.linalg.norm(self.head(leg[3]) - self.head(leg[2]))])
             self.arms[side] = dict(bones=arm,
+                                   rest_upper=(self.head(arm[2]) - self.head(arm[0])) / np.linalg.norm(self.head(arm[2]) - self.head(arm[0])),
+                                   rest_lower=(self.head(arm[4]) - self.head(arm[2])) / np.linalg.norm(self.head(arm[4]) - self.head(arm[2])),
                                    upper=np.linalg.norm(self.head(arm[2]) - self.head(arm[0])),
                                    lower=np.linalg.norm(self.head(arm[4]) - self.head(arm[2])),
                                    middle=[np.linalg.norm(self.head(arm[1]) - self.head(arm[0])),
@@ -308,30 +310,28 @@ def rekey_walk(character, original_worlds, fps, sole_points, gait=Gait(), hands=
                 pole = outward - up
             elbow, wrist = _two_bone(shoulder, hand[:3, 3], arm["upper"], arm["lower"], chest[:3, :3] @ pole)
             short = max(short, float(np.linalg.norm(hand[:3, 3] - wrist)))
-            # Each segment points exactly at the next joint, so no joint opens a gap.
-            for (first, second), start, end, length in (((b[0], b[1]), shoulder, elbow, arm["middle"][0]),
-                                                        ((b[2], b[3]), elbow, wrist, arm["middle"][1])):
-                direction = (end - start) / np.linalg.norm(end - start)
-                worlds[first] = _pose(_aim(_rigid(chest @ original[first])[:3, :3], rig.axis[first], direction), start)
-                worlds[second] = _pose(_aim(_rigid(chest @ original[second])[:3, :3], rig.axis[second], direction),
-                                       start + direction * length)
+            # A twist-free chain: the upper arm swings from where the collarbone
+            # carries it, the forearm from where the upper arm carries it, each
+            # by the least turn that points it at the next joint. Both halves of
+            # each part share one turn, so neither the upper arm nor the forearm
+            # rolls in its middle (on low-poly sleeves, a roll between two rings
+            # folds them into a point).
+            rest = character.rest
+            carried = worlds[character.parents[b[0]]][:3, :3] @ rest[character.parents[b[0]]][:3, :3].T
+            upper_dir, fore_dir = (elbow - shoulder) / np.linalg.norm(elbow - shoulder), (wrist - elbow) / np.linalg.norm(wrist - elbow)
+            upper_turn = _align(carried @ arm["rest_upper"], upper_dir) @ carried
+            swing = lambda turn: _align(turn @ arm["rest_lower"], fore_dir) @ turn
+            hand_twist = lambda turn: _twist(hand[:3, :3] @ (turn @ rest[b[4]][:3, :3]).T, fore_dir)
+            # The hand's twist from where the arm carries it is shared by the
+            # shoulder, the elbow and the wrist, a third each: the upper arm
+            # rolls a third, the forearm the next third.
+            upper_turn = _rotation(upper_dir, hand_twist(swing(upper_turn)) / 3) @ upper_turn
+            fore_turn = swing(upper_turn)
+            fore_turn = _rotation(fore_dir, hand_twist(fore_turn) / 2) @ fore_turn
+            for bone, turn, start, direction, at in ((b[0], upper_turn, shoulder, upper_dir, 0.0), (b[1], upper_turn, shoulder, upper_dir, arm["middle"][0]),
+                                                     (b[2], fore_turn, elbow, fore_dir, 0.0), (b[3], fore_turn, elbow, fore_dir, arm["middle"][1])):
+                worlds[bone] = _pose(turn @ rest[bone][:3, :3], start + direction * at)
             worlds[b[4]] = _pose(hand[:3, :3], wrist)
-            # The authored upper arm rolls about 100 degrees between its two
-            # halves, which pinches it in the middle; the shoulder takes half.
-            def roll(parent, child, along):
-                change = (worlds[parent][:3, :3].T @ worlds[child][:3, :3]) @ \
-                         (character.rest[parent][:3, :3].T @ character.rest[child][:3, :3]).T
-                return _twist(change, worlds[parent][:3, :3].T @ along)
-            upper = (elbow - shoulder) / np.linalg.norm(elbow - shoulder)
-            share = (roll(b[0], b[1], upper) - roll(character.parents[b[0]], b[0], upper)) / 2
-            worlds[b[0]][:3, :3] = _rotation(upper, share) @ worlds[b[0]][:3, :3]
-            # A wrist barely twists; the forearm does. Its lower half turns two
-            # thirds of the way with the hand, so the middle of the forearm and
-            # the wrist share the twist. The elbow (with its rigid pad) keeps none.
-            rest_hand = worlds[b[3]][:3, :3] @ character.rest[b[3]][:3, :3].T @ character.rest[b[4]][:3, :3]
-            along = (wrist - elbow) / np.linalg.norm(wrist - elbow)
-            twist = _twist(hand[:3, :3] @ rest_hand.T, along)
-            worlds[b[3]][:3, :3] = _rotation(along, twist * 2 / 3) @ worlds[b[3]][:3, :3]
         for side, grip in hands.items():
             worlds_by_bone = grip["hand"].worlds(grip["curls"], worlds[rig.index["DEF-hand." + side]])
             for bone, world in worlds_by_bone.items(): worlds[bone] = world

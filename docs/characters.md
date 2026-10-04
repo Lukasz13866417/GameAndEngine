@@ -67,8 +67,8 @@ directory:
 | `NAME_pose.vmesh` | The mesh deformed at one clip frame (`--pose-frame N`, default 0), with no skin. It is for static scenes and the editor's mesh import. |
 
 For the soldier, it reads 9 meshes, 11 materials, a 278-bone Rigify rig and six
-identical copies of one walk. It writes 17,667 vertices, 9,735 triangles, 103
-bones (98 from the rig, a root and 4 joint helpers) and two 24-frame clips at
+identical copies of one walk. It writes 17,667 vertices, 9,735 triangles, 105
+bones (98 from the rig, a root and 6 joint helpers) and two 24-frame clips at
 24 fps, one-second loops:
 
 - `walk`, re-keyed at 0.95 m/s (see [re-keying a walk](#re-keying-a-walk));
@@ -90,13 +90,18 @@ What the conversion does:
     that copies it. So the face hangs from the head, and the arms hang from the
     shoulders.
   - Only the hips hang from `root`.
-- **Joint helpers.** Each elbow and knee gets a `HALF-` bone that turns half
-  as far as the joint, at the joint. Linear blend skinning averages the two
-  bones' matrices across a joint, so a bent elbow shrinks toward its centre:
-  the soldier's sleeves lost up to half their thickness at the elbow, in
-  Blender as well. A vertex shared by the two bones gives the shared weight
-  to the helper instead, so it turns rigidly and keeps its distance from the
-  joint; the elbow pads turn as rigid caps.
+- **Joint helpers.** Each elbow, knee and shoulder gets a `HALF-` bone that
+  moves half as far as the joint's two bones do, about the joint. Linear
+  blend skinning averages the two bones' matrices across a joint, so a bent
+  elbow shrinks toward its centre: the soldier's sleeves lost up to half
+  their thickness at the elbow, in Blender as well. A vertex shared by the two
+  bones gives the shared weight to the helper instead, so it turns rigidly and
+  keeps its distance from the joint; the elbow pads turn as rigid caps.
+- **Elbow weights.** The sleeves handed over from upper arm to forearm
+  unevenly, from 9 cm above the elbow to 12 cm below it. The weight the two
+  arm bones share is re-split by a smoothstep over 12 cm either side of the
+  joint, so the arm bends at the elbow; rigid pieces such as the elbow pads
+  keep their weights.
 - **Unweighted vertices.** Blender leaves unweighted vertices in place. Here
   they take their nearest weighted neighbour's weights, so they move with what
   they touch. The soldier's front belt pouch had 74 such vertices.
@@ -156,8 +161,6 @@ The re-keyed walk:
     to the rifle's front hole with a relaxed elbow.
   - The elbows hang rather than wing out. The holding elbow points out and a
     little down; the support elbow points out and down, clear of the chest.
-  - The authored upper arms roll about 100 degrees between their two halves,
-    which pinched them; the shoulder now takes half of that roll.
   - If what the hands hold still sinks into the torso or head, it is pulled
     along its length until it clears (measured by skinning both meshes). The
     authored aim pressed the butt 4.2 cm into his chin, so the rifle sits
@@ -165,8 +168,14 @@ The re-keyed walk:
   - That removes the authored right arm's 1.53x stretch, which the uniform-scale
     fit had turned into a hand 16% too large and a wrist torn 9 cm open.
   - Each limb bone points exactly at the next joint.
-  - The forearm's lower half turns two thirds of the way with the hand, so the
-    wrist and the middle of the forearm share the hand's twist.
+  - The arms are a twist-free chain: the upper arm swings from where the
+    collarbone carries it, the forearm from where the upper arm carries it,
+    each by the least turn. Both halves of each part share one turn, so
+    neither rolls in its middle. The authored rolls are not used: they turned
+    each upper arm's two halves about 100 degrees apart, and on the low-poly
+    sleeves a roll between two rings folds them into a point.
+  - The hand's own twist is shared by the shoulder, elbow and wrist, a third
+    each (about 30 degrees for the soldier).
 - **Everything else** (the neck, head, face and shoulders) hangs from the spine
   with the original's turns. Every re-keyed bone has a scale of 1 and sits at
   its modelled place on its parent, so no joint opens.

@@ -97,7 +97,7 @@ TEST_CASE("Frames blend linearly, rotations by the shortest path", "[character][
 TEST_CASE("The soldier loads with his armature, skin and walk", "[character][soldier]") {
     auto soldier = character::Character::load(VNG_SOLDIER_MESH);
     REQUIRE(soldier);
-    CHECK(soldier->armature().bone_count() == 103); // 98 from the rig, a root, 4 joint helpers
+    CHECK(soldier->armature().bone_count() == 105); // 98 from the rig, a root, 6 joint helpers
     CHECK(soldier->binding().mesh().vertex_count() > 10'000);
     const auto* walk = soldier->clip("walk");
     REQUIRE(walk);
@@ -278,4 +278,18 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
         }
     }
     CHECK(helpers == 4);
+    // Neither half of an upper arm or forearm rolls against the other: on
+    // low-poly sleeves a roll between two rings folds them into a point.
+    for (const auto* name : {"DEF-upper_arm.L.001", "DEF-upper_arm.R.001", "DEF-forearm.L.001", "DEF-forearm.R.001"}) {
+        const auto found = std::ranges::find(rig.bones, std::string_view{name}, &character::Bone::name);
+        REQUIRE(found != rig.bones.end());
+        const auto index = static_cast<std::size_t>(found - rig.bones.begin());
+        const auto track = std::ranges::find(walk.tracks, index, &character::Track::bone);
+        REQUIRE(track != walk.tracks.end());
+        for (const auto& frame : track->frames) {
+            const auto& a = frame.rotation;
+            const auto& b = found->rest.rotation;
+            CHECK(std::abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w) == Catch::Approx(1).margin(1e-4));
+        }
+    }
 }

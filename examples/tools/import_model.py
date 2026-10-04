@@ -335,7 +335,9 @@ class Character:
         return self.with_halves(worlds)
 
     # Joints that get a half-angle helper: (name, upper bone, lower bone).
-    HALF_JOINTS = (("elbow", "DEF-upper_arm.{}.001", "DEF-forearm.{}"), ("knee", "DEF-thigh.{}.001", "DEF-shin.{}"))
+    HALF_STRENGTH = 1.0   # share of a joint's shared weight the helper takes (1: a 50/50 vertex turns rigidly by half)
+    HALF_JOINTS = (("elbow", "DEF-upper_arm.{}.001", "DEF-forearm.{}"), ("knee", "DEF-thigh.{}.001", "DEF-shin.{}"),
+                   ("shoulder", "DEF-shoulder.{}", "DEF-upper_arm.{}"))
 
     def add_half_joints(self):
         """Volume helpers: at each elbow and knee, a bone that turns half as far
@@ -352,9 +354,17 @@ class Character:
         self.rest = self.with_halves(self.rest)
 
     def with_halves(self, worlds):
-        """Bone worlds with the half-angle helpers set from their joints' bones."""
+        """Bone worlds with the half-angle helpers set from their joints' bones:
+        each moves (from its rest) halfway between how the two bones moved,
+        about the joint. A helper's rest is halfway between the bones' rests."""
         worlds = list(worlds[:len(self.deforming) + 1])
-        for _, u, l in self.halves: worlds.append(halfway(worlds[u], worlds[l]))
+        for h, u, l in self.halves:
+            if h >= len(self.rest):                         # setting up the helper's own rest
+                worlds.append(halfway(worlds[u], worlds[l])); continue
+            move = halfway(worlds[u] @ np.linalg.inv(self.rest[u]), worlds[l] @ np.linalg.inv(self.rest[l]))
+            joint_rest, joint_now = self.rest[l][:3, 3], worlds[l][:3, 3]
+            move[:3, 3] = joint_now - move[:3, :3] @ joint_rest
+            worlds.append(move @ self.rest[h])
         return worlds
 
     def share_halves(self, skin):
@@ -364,7 +374,7 @@ class Character:
         half the joint's angle."""
         skin = dict(skin)
         for h, u, l in self.halves:
-            shared = min(skin.get(u, 0.0), skin.get(l, 0.0))
+            shared = min(skin.get(u, 0.0), skin.get(l, 0.0)) * self.HALF_STRENGTH
             if shared < 0.01: continue
             skin[u] -= shared; skin[l] -= shared; skin[h] = skin.get(h, 0.0) + 2 * shared
         return [(b, w) for b, w in sorted(skin.items(), key=lambda x: -x[1]) if w > 1e-6]
@@ -522,6 +532,47 @@ def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0):
         return {side: dict(hand=holding, curls=holding.close(triangles), support=None, carry=carry),
                 other: dict(hand=support, curls=support.close(triangles, on_support), support=placement)}
     return {}
+
+def even_elbows(scene, character, width=0.12):
+    """The soldier's sleeves hand over from upper arm to forearm unevenly, from
+    9 cm above the elbow to 12 cm below it, so a bent arm folds off the joint.
+    On each arm vertex the weight the two arm bones share is re-split by a
+    smoothstep of the distance along the arm from the elbow, over +-width
+    metres: an even handover centred on the joint. Rigid pieces (an elbow pad
+    whose forearm share barely varies) keep their weights; other bones'
+    weights are untouched. Returns the vertices changed."""
+    bind = scene.bind_globals(); rest = character.rest; changed = 0
+    for side in ("L", "R"):
+        try: s0, e0, w0 = (rest[character.names.index(f"DEF-{n}.{side}")][:3, 3] for n in ("upper_arm", "forearm", "hand"))
+        except ValueError: continue
+        up_dir = (e0 - s0) / np.linalg.norm(e0 - s0); fore_dir = (w0 - e0) / np.linalg.norm(w0 - e0)
+        names = {b: display_name(scene.models[b]) for b in scene.models}
+        upper = lambda b: names.get(b, "").startswith(f"DEF-upper_arm.{side}")
+        fore = lambda b: names.get(b, "").startswith(f"DEF-forearm.{side}")
+        for mesh in scene.meshes:
+            points = character.point(Character.bind_points(mesh, bind))
+            shares, picks = [], []
+            for v, inf in enumerate(mesh["influences"]):
+                u = sum(w for b, w in inf if upper(b)); f = sum(w for b, w in inf if fore(b)); total = sum(w for _, w in inf)
+                if total > 0 and (u + f) / total > 0.5 and u + f > 0: shares.append(f / (u + f)); picks.append(v)
+            if not picks or np.ptp(shares) < 0.2: continue          # no arm here, or a rigid piece
+            joint_upper = next((b for b in mesh["links"] if names[b] == f"DEF-upper_arm.{side}.001"), None)
+            joint_fore = next((b for b in mesh["links"] if names[b] == f"DEF-forearm.{side}"), None)
+            for v in picks:
+                inf = mesh["influences"][v]; d = points[v] - e0
+                along = d @ fore_dir if d @ fore_dir > 0 else d @ up_dir
+                x = np.clip((along + width) / (2 * width), 0, 1); target = x * x * (3 - 2 * x)
+                u = sum(w for b, w in inf if upper(b)); f = sum(w for b, w in inf if fore(b))
+                if abs(f / (u + f) - target) < 0.02: continue
+                # Keep each side's split between its two segments; a side that had no weight gets the joint's segment.
+                new = [(b, w) for b, w in inf if not upper(b) and not fore(b)]
+                for keep, share, joint in ((upper, (1 - target) * (u + f), joint_upper), (fore, target * (u + f), joint_fore)):
+                    own = [(b, w) for b, w in inf if keep(b)]; total = sum(w for _, w in own)
+                    if share <= 1e-6: continue
+                    if total > 0: new += [(b, share * w / total) for b, w in own]
+                    elif joint is not None: new.append((joint, share))
+                mesh["influences"][v] = new; changed += 1
+    return changed
 
 def held_mesh(scene, character):
     """The mesh bound wholly to one hand (the soldier's rifle) and that hand's bone index, or None."""
@@ -703,6 +754,7 @@ def main():
     filled = fill_unweighted(scene)
     character = Character(scene, args.height)
     character.add_half_joints()
+    evened = even_elbows(scene, character)
     if args.hole_closer and not shorten_held(scene, character, args.hole_closer):
         print("  --hole-closer: no mesh held by one hand has two holes; nothing moved")
     overrides = json.loads(pathlib.Path(args.colors).read_text()) if args.colors else {}
@@ -751,6 +803,7 @@ def main():
     if missing:
         print("no colour in the FBX for: " + ", ".join(sorted(missing)) + " (grey; pass --colors or textures)")
     if filled: print(f"  {filled} vertices had no skin weights; they take their nearest weighted neighbour's")
+    if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
     for note in notes: print("  " + note)
     authored = next((c for c in clips if c["name"] != "walk" or not args.rekey_walk), None)
     report_fidelity(scene, character, authored["worlds"] if authored else [])
