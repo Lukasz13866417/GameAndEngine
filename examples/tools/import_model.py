@@ -250,15 +250,19 @@ def rotation_matrix(q):
                      [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
 
-def halfway(upper, lower):
-    """A joint's half-angle frame: the rotation halfway from the upper bone's
-    to the lower bone's, at the lower bone's head; the bones' mean scale."""
+def between(upper, lower, f):
+    """A frame part way through a joint: the rotation a fraction f of the way
+    from the upper bone's to the lower bone's (slerp), at the lower bone's
+    head; the scale as far between the bones'."""
     su, sl = np.cbrt(np.linalg.det(upper[:3, :3])), np.cbrt(np.linalg.det(lower[:3, :3]))
     qu, ql = quaternion(upper[:3, :3] / su), quaternion(lower[:3, :3] / sl)
     if qu @ ql < 0: ql = -ql
-    out = np.eye(4); out[:3, :3] = rotation_matrix((qu + ql) / np.linalg.norm(qu + ql)) * (su + sl) / 2
+    angle = np.arccos(np.clip(qu @ ql, -1, 1))
+    q = qu if angle < 1e-6 else (np.sin((1 - f) * angle) * qu + np.sin(f * angle) * ql) / np.sin(angle)
+    out = np.eye(4); out[:3, :3] = rotation_matrix(q / np.linalg.norm(q)) * (su + (sl - su) * f)
     out[:3, 3] = lower[:3, 3]
     return out
+
 
 def decompose(m):
     """(translation, quaternion, uniform scale) of a similarity matrix."""
@@ -335,48 +339,65 @@ class Character:
         return self.with_halves(worlds)
 
     # Joints that get a half-angle helper: (name, upper bone, lower bone).
-    HALF_STRENGTH = 1.0   # share of a joint's shared weight the helper takes (1: a 50/50 vertex turns rigidly by half)
-    HALF_JOINTS = (("elbow", "DEF-upper_arm.{}.001", "DEF-forearm.{}"), ("knee", "DEF-thigh.{}.001", "DEF-shin.{}"),
-                   ("shoulder", "DEF-shoulder.{}", "DEF-upper_arm.{}"))
+    # Joints with volume helpers, and how far through each joint its helpers
+    # turn. An elbow folds furthest (the soldier's holding arm by 128
+    # degrees), so it gets three; knees and shoulders one, at the half.
+    HALF_JOINTS = (("elbow", "DEF-upper_arm.{}.001", "DEF-forearm.{}", (.25, .5, .75)),
+                   ("knee", "DEF-thigh.{}.001", "DEF-shin.{}", (.5,)),
+                   ("shoulder", "DEF-shoulder.{}", "DEF-upper_arm.{}", (.5,)))
+    HELPER_NAMES = {.25: "QUARTER", .5: "HALF", .75: "THREEQUARTER"}
 
     def add_half_joints(self):
-        """Volume helpers: at each elbow and knee, a bone that turns half as far
-        as the joint does. Linear blend skinning averages the two bones'
-        matrices across a joint, which shrinks a bent elbow to half its
-        thickness; skin shared by the two bones moves onto the helper
-        (share_halves), which turns rigidly and keeps it."""
-        for joint, upper, lower in self.HALF_JOINTS:
+        """Volume helpers: at each elbow, knee and shoulder, bones that turn a
+        set fraction of the way through the joint (HALF- at one half;
+        QUARTER- and THREEQUARTER- too at the elbows). Linear blend skinning
+        averages the two bones' matrices across a joint, which shrinks a bent
+        elbow toward its centre; skin shared by the two bones moves onto the
+        helpers nearest its share (share_halves), which turn rigidly, so no
+        blend spans more than the gap between two of them."""
+        for joint, upper, lower, steps in self.HALF_JOINTS:
             for side in "LR":
                 u, l = upper.format(side), lower.format(side)
                 if u not in self.names or l not in self.names: continue
-                self.names.append(f"HALF-{joint}.{side}"); self.parents.append(self.names.index(u))
-                self.halves.append((len(self.names) - 1, self.names.index(u), self.names.index(l)))
+                for f in steps:
+                    self.names.append(f"{self.HELPER_NAMES[f]}-{joint}.{side}"); self.parents.append(self.names.index(u))
+                    self.halves.append((len(self.names) - 1, self.names.index(u), self.names.index(l), f))
         self.rest = self.with_halves(self.rest)
 
     def with_halves(self, worlds):
-        """Bone worlds with the half-angle helpers set from their joints' bones:
-        each moves (from its rest) halfway between how the two bones moved,
-        about the joint. A helper's rest is halfway between the bones' rests."""
+        """Bone worlds with the joint helpers set from their joints' bones:
+        each moves (from its rest) its fraction of the way between how the two
+        bones moved, about the joint. A helper's rest is that far between the
+        bones' rests."""
         worlds = list(worlds[:len(self.deforming) + 1])
-        for h, u, l in self.halves:
+        for h, u, l, f in self.halves:
             if h >= len(self.rest):                         # setting up the helper's own rest
-                worlds.append(halfway(worlds[u], worlds[l])); continue
-            move = halfway(worlds[u] @ np.linalg.inv(self.rest[u]), worlds[l] @ np.linalg.inv(self.rest[l]))
+                worlds.append(between(worlds[u], worlds[l], f)); continue
+            move = between(worlds[u] @ np.linalg.inv(self.rest[u]), worlds[l] @ np.linalg.inv(self.rest[l]), f)
             joint_rest, joint_now = self.rest[l][:3, 3], worlds[l][:3, 3]
             move[:3, 3] = joint_now - move[:3, :3] @ joint_rest
             worlds.append(move @ self.rest[h])
         return worlds
 
     def share_halves(self, skin):
-        """Skin [(bone, weight)] with each joint's shared weight on its helper:
-        a vertex weighted a to the upper bone and b to the lower gives
-        min(a, b) of each to the helper, so a 50/50 vertex turns rigidly by
-        half the joint's angle."""
+        """Skin [(bone, weight)] with each joint's shared weight on its helpers.
+        A vertex weighted a to the upper bone and b to the lower should turn
+        b / (a + b) of the way through the joint; its a + b goes to the two
+        steps either side of that share (the bones at 0 and 1, the helpers
+        between), so a 50/50 vertex turns rigidly with the half helper."""
         skin = dict(skin)
-        for h, u, l in self.halves:
-            shared = min(skin.get(u, 0.0), skin.get(l, 0.0)) * self.HALF_STRENGTH
-            if shared < 0.01: continue
-            skin[u] -= shared; skin[l] -= shared; skin[h] = skin.get(h, 0.0) + 2 * shared
+        joints = {}
+        for h, u, l, f in self.halves: joints.setdefault((u, l), []).append((f, h))
+        for (u, l), helpers in joints.items():
+            a, b = skin.get(u, 0.0), skin.get(l, 0.0)
+            if min(a, b) < 0.01: continue
+            steps = [(0.0, u)] + sorted(helpers) + [(1.0, l)]
+            share, total = b / (a + b), a + b
+            k = next(k for k in range(len(steps) - 1) if share <= steps[k + 1][0])
+            (f0, b0), (f1, b1) = steps[k], steps[k + 1]
+            t = (share - f0) / (f1 - f0)
+            del skin[u], skin[l]
+            skin[b0] = skin.get(b0, 0.0) + (1 - t) * total; skin[b1] = skin.get(b1, 0.0) + t * total
         return [(b, w) for b, w in sorted(skin.items(), key=lambda x: -x[1]) if w > 1e-6]
 
     def locals(self, worlds):
@@ -496,12 +517,54 @@ def fill_unweighted(scene):
             mesh["influences"][v] = list(mesh["influences"][nearest]); filled += 1
     return filled
 
-def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0):
+def drop_doubled_faces(scene):
+    """A Blender mesh can hold the same triangle twice, facing opposite ways:
+    the soldier's shoulder flashlight is a shell built twice over. Drawn
+    together, the two copies fight for the same pixels and the surface comes
+    out in stripes of light and dark. Of each such pair, the triangle facing
+    away from the middle of its doubled region is kept. Returns the
+    triangles dropped."""
+    dropped = 0
+    for mesh in scene.meshes:
+        p = mesh["positions"]
+        key = {}; same = np.array([key.setdefault(tuple(q), v) for v, q in enumerate(np.round(p, 6))])
+        triangles = same[mesh["corners"].reshape(-1, 3)]
+        groups = {}
+        for f, t in enumerate(triangles): groups.setdefault(frozenset(t), []).append(f)
+        pairs = [fs for fs in groups.values() if len(fs) == 2 and len(frozenset(triangles[fs[0]])) == 3]
+        if not pairs: continue
+        # Doubled regions: pairs that share a vertex, and the middle of each.
+        parent = {}
+        def root(a):
+            while parent.setdefault(a, a) != a: a = parent[a]
+            return a
+        for fs in pairs:
+            a, b, c = triangles[fs[0]]; parent[root(b)] = root(a); parent[root(c)] = root(a)
+        region = {}
+        for fs in pairs: region.setdefault(root(triangles[fs[0]][0]), []).append(fs)
+        drop = set()
+        for members in region.values():
+            middle = np.mean([p[mesh["corners"][3 * fs[0]:3 * fs[0] + 3]].mean(0) for fs in members], axis=0)
+            for fs in members:
+                def outward(f):
+                    a, b, c = p[mesh["corners"][3 * f:3 * f + 3]]
+                    return np.cross(b - a, c - a) @ ((a + b + c) / 3 - middle)
+                drop.add(min(fs, key=outward))
+        keep = np.array([f for f in range(len(triangles)) if f not in drop])
+        corners = (3 * keep[:, None] + np.arange(3)).reshape(-1)
+        mesh["corners"] = mesh["corners"][corners]
+        mesh["normals"] = mesh["normals"][corners]
+        mesh["face_material"] = np.asarray(mesh["face_material"])[keep]
+        dropped += len(drop)
+    return dropped
+
+def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0, reach=0.0):
     """Grips for a mesh held wholly by one hand (the soldier's rifle): that
     hand's fingers close on it, and the other hand takes its far hole the way
     the holding hand takes the near one (or, without two holes, supports it
     from below). The held mesh's far end dips `dip` degrees about its rear,
-    and the whole of it sits `lower` metres lower."""
+    and the whole of it sits `lower` metres lower and `reach` metres further
+    forward along its length."""
     import grip
     bind = scene.bind_globals()
     hands_mesh = next((m for m in scene.meshes if m["name"].lower().startswith("hand")), None)
@@ -522,7 +585,7 @@ def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0):
         frame = grip.held_frame(held, character.rest[h][:3, 3], holding_world)
         rear = frame[:3, 3] + frame[:3, 0] * ((held - frame[:3, 3]) @ frame[:3, 0]).min()
         carry = np.eye(4); carry[:3, :3] = grip._rotation(frame[:3, 2], -dip)
-        carry[:3, 3] = rear - carry[:3, :3] @ rear - frame[:3, 1] * lower
+        carry[:3, 3] = rear - carry[:3, :3] @ rear - frame[:3, 1] * lower + frame[:3, 0] * reach
         # Both thumbs point along it, toward its far end (the muzzle), drooping
         # toward the floor of the clip's first frame where they can.
         forward = grip.long_axis(held, character.rest[h][:3, 3])
@@ -874,6 +937,7 @@ def main():
     name = args.name or source.stem.lower()
     scene = FbxScene(read_fbx(source))
     filled = fill_unweighted(scene)
+    doubled = drop_doubled_faces(scene)
     character = Character(scene, args.height)
     character.add_half_joints()
     evened = even_elbows(scene, character)
@@ -902,7 +966,7 @@ def main():
         if args.rekey_walk and clip_name == "walk":
             import walk_cycle
             gait = walk_cycle.Gait(**{k: float(v) for k, v in (item.split("=") for item in args.gait.split(",") if item)})
-            hands = hand_grips(scene, character, worlds[0], gait.dip, gait.lower)
+            hands = hand_grips(scene, character, worlds[0], gait.dip, gait.lower, gait.reach)
             new_worlds, short = walk_cycle.rekey_walk(character, worlds, fps, sole_points(character, rows), gait, hands)
             reach = held_out_of_body(scene, character, hands, new_worlds[0])
             if reach:
@@ -927,6 +991,7 @@ def main():
     if missing:
         print("no colour in the FBX for: " + ", ".join(sorted(missing)) + " (grey; pass --colors or textures)")
     if filled: print(f"  {filled} vertices had no skin weights; they take their nearest weighted neighbour's")
+    if doubled: print(f"  {doubled} triangles were there twice, facing opposite ways; the inward copies are dropped")
     if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
     if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")
     if flattened[0]: print(f"  {flattened[0]} sleeve vertices of the deltoid bulges moved toward the bone, by at most {flattened[1] * 100:.1f} cm")

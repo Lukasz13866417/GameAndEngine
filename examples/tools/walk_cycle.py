@@ -46,6 +46,7 @@ class Gait:
     protract: float = 10.0        # degrees the support shoulder rolls forward
     dip: float = 0.0              # degrees the held mesh's far end dips from the authored aim
     lower: float = 0.0            # m the held mesh sits below the authored aim
+    reach: float = 0.0            # m the held mesh sits further forward along its length
     shoulder_follow: float = 0.25 # share of the arm's swing from the T-pose the collarbone takes
 
 

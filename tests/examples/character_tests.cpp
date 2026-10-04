@@ -97,7 +97,7 @@ TEST_CASE("Frames blend linearly, rotations by the shortest path", "[character][
 TEST_CASE("The soldier loads with his armature, skin and walk", "[character][soldier]") {
     auto soldier = character::Character::load(VNG_SOLDIER_MESH);
     REQUIRE(soldier);
-    CHECK(soldier->armature().bone_count() == 105); // 98 from the rig, a root, 6 joint helpers
+    CHECK(soldier->armature().bone_count() == 109); // 98 from the rig, a root, 10 joint helpers
     CHECK(soldier->binding().mesh().vertex_count() > 10'000);
     const auto* walk = soldier->clip("walk");
     REQUIRE(walk);
@@ -251,8 +251,8 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
             for (std::size_t row = 0; row < 3; ++row) drift = std::max(drift, std::abs(relative[c][row] - (*first)[c][row]));
     }
     CHECK(drift < 1e-3F);
-    // Each elbow and knee helper turns half as far as its joint: in every
-    // frame it is as far (in angle) from the bone above as from the bone below.
+    // Each joint helper turns its share of the way through its joint: in
+    // every frame its angle from the bone above is that share of the joint's.
     const auto angle = [](const Mat4& a, const Mat4& b) {
         f32 dot = 0;
         for (std::size_t c = 0; c < 3; ++c)
@@ -260,9 +260,11 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
         return std::acos(std::clamp((dot - 1) / 2, -1.F, 1.F));
     };
     std::size_t helpers = 0;
-    for (const auto& [helper, upper, lower] : {std::tuple{"HALF-elbow.L", "DEF-upper_arm.L.001", "DEF-forearm.L"},
-             std::tuple{"HALF-elbow.R", "DEF-upper_arm.R.001", "DEF-forearm.R"},
-             std::tuple{"HALF-knee.L", "DEF-thigh.L.001", "DEF-shin.L"}, std::tuple{"HALF-knee.R", "DEF-thigh.R.001", "DEF-shin.R"}}) {
+    for (const auto& [helper, upper, lower, share] : {std::tuple{"HALF-elbow.L", "DEF-upper_arm.L.001", "DEF-forearm.L", .5F},
+             std::tuple{"HALF-elbow.R", "DEF-upper_arm.R.001", "DEF-forearm.R", .5F},
+             std::tuple{"QUARTER-elbow.L", "DEF-upper_arm.L.001", "DEF-forearm.L", .25F},
+             std::tuple{"THREEQUARTER-elbow.R", "DEF-upper_arm.R.001", "DEF-forearm.R", .75F},
+             std::tuple{"HALF-knee.L", "DEF-thigh.L.001", "DEF-shin.L", .5F}, std::tuple{"HALF-knee.R", "DEF-thigh.R.001", "DEF-shin.R", .5F}}) {
         const auto h = soldier->armature().bone(helper), u = soldier->armature().bone(upper), d = soldier->armature().bone(lower);
         REQUIRE(h);
         REQUIRE(u);
@@ -274,10 +276,10 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
             REQUIRE(globals);
             const auto& g = *globals;
             const auto at = [&](rig::BoneId id) { return g[*soldier->armature().index(id)]; };
-            CHECK(angle(at(*h), at(*u)) == Catch::Approx(angle(at(*h), at(*d))).margin(.01));
+            CHECK(angle(at(*h), at(*u)) == Catch::Approx(share * angle(at(*u), at(*d))).margin(.01));
         }
     }
-    CHECK(helpers == 4);
+    CHECK(helpers == 6);
     // Neither half of an upper arm or forearm rolls against the other: on
     // low-poly sleeves a roll between two rings folds them into a point.
     for (const auto* name : {"DEF-upper_arm.L.001", "DEF-upper_arm.R.001", "DEF-forearm.L.001", "DEF-forearm.R.001"}) {

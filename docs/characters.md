@@ -76,8 +76,8 @@ directory:
 | `NAME_pose.vmesh` | The mesh deformed at one clip frame (`--pose-frame N`, default 0), with no skin. It is for static scenes and the editor's mesh import. |
 
 For the soldier, it reads 9 meshes, 11 materials, a 278-bone Rigify rig and six
-identical copies of one walk. It writes 17,667 vertices, 9,735 triangles, 105
-bones (98 from the rig, a root and 6 joint helpers) and two 24-frame clips at
+identical copies of one walk. It writes 17,265 vertices, 9,601 triangles, 109
+bones (98 from the rig, a root and 10 joint helpers) and two 24-frame clips at
 24 fps, one-second loops:
 
 - `walk`, re-keyed at 0.95 m/s (see [re-keying a walk](#re-keying-a-walk));
@@ -100,12 +100,16 @@ What the conversion does:
     shoulders.
   - Only the hips hang from `root`.
 - **Joint helpers.** Each elbow, knee and shoulder gets a `HALF-` bone that
-  moves half as far as the joint's two bones do, about the joint. Linear
-  blend skinning averages the two bones' matrices across a joint, so a bent
-  elbow shrinks toward its centre: the soldier's sleeves lost up to half
-  their thickness at the elbow, in Blender as well. A vertex shared by the two
-  bones gives the shared weight to the helper instead, so it turns rigidly and
-  keeps its distance from the joint; the elbow pads turn as rigid caps.
+  moves half as far as the joint's two bones do, about the joint. The elbows
+  also get `QUARTER-` and `THREEQUARTER-` bones, a quarter and three quarters
+  of the way: they fold furthest, the soldier's holding elbow by 128 degrees.
+  Linear blend skinning averages the two bones' matrices across a joint, so
+  a bent elbow shrinks toward its centre: the soldier's sleeves lost up to
+  half their thickness at the elbow, in Blender as well. A vertex shared by
+  the two bones should turn part of the way through the joint, by its share
+  of the lower bone; its weight goes to the two helpers (or bones) either
+  side of that share instead. It turns rigidly with them, so no blend spans
+  more than a quarter of the elbow's fold; the elbow pads turn as rigid caps.
 - **Elbow weights.** The sleeves handed over from upper arm to forearm
   unevenly, from 9 cm above the elbow to 12 cm below it. The weight the two
   arm bones share is re-split by a smoothstep over 12 cm either side of the
@@ -117,6 +121,11 @@ What the conversion does:
   vertex's weights are blended toward its neighbours' four times: by half at
   the joint, fading to nothing at 15 cm. Meshes bound to a single bone keep
   their weights.
+- **Doubled triangles.** A mesh can hold the same triangle twice, facing
+  opposite ways. Drawn together, the two copies fight over the same pixels
+  and the surface shows stripes of light and dark. The soldier's shoulder
+  flashlight was built twice over (134 such pairs). Of each pair the copy
+  facing away from the middle of its doubled region is kept.
 - **Unweighted vertices.** Blender leaves unweighted vertices in place. Here
   they take their nearest weighted neighbour's weights, so they move with what
   they touch. The soldier's front belt pouch had 74 such vertices.
@@ -230,8 +239,9 @@ The re-keyed walk:
 `--gait` tunes it, for example `--gait crouch=0.02,bob=0.02`. The settings are
 the fields of `walk_cycle.Gait`: `speed`, `stance`, `crouch`, `bob`, `sway`,
 `turn`, `hip_drop`, `counter`, `lean`, `lift`, `heel_strike`, `toe_off`, and
-for a two-handed hold `blade`, `protract`, `dip` and `lower`, and
-`shoulder_follow` for the collarbones.
+for a two-handed hold `blade`, `protract`, `dip`, `lower` and `reach` (metres
+the held mesh sits further forward along its length), and `shoulder_follow`
+for the collarbones.
 With the defaults, the soldier's lowest point stays within 1 cm of the floor in
 every frame, and his hips rise and fall by 3 cm.
 
