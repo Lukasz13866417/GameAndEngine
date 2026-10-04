@@ -122,7 +122,8 @@ A candidate can be a skinned character instead of a scene: the `.vmesh` that
     --candidate "Soldier" examples/assets/soldier/soldier.vmesh
 ```
 
-He walks on the spot over a treadmill floor. The time bar adds:
+He walks on the spot over a treadmill floor, lit by any light he carries
+(the soldier's flashlight). The time bar adds:
 
 - **Clip**: which of his clips plays, such as `walk` or `walk_authored`. The
   clock covers that clip.

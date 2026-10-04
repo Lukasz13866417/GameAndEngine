@@ -134,10 +134,13 @@ resources::Result<void> CharacterView::update(opengl::Device& device, f32 time, 
     auto view = render::RenderView::create(camera_of(orbit_), extent);
     if (!view) return std::unexpected(failure(view.error().message));
     // Walking on the spot: the floor moves back as fast as the clip walks.
+    // A light he carries (his flashlight) lights him and the floor.
     const Vec3 treadmill{0, 0, character::Stage::scroll(clip_->speed, time)};
-    if (auto drawn = floor_->render(*target, *view, render::SkinnedDraw{.pose = floor_pose_, .transform = {.translation = treadmill}}); !drawn)
+    std::optional<render::SpotLight> spot;
+    if (const auto spots = character_.spots(pose_); !spots.empty()) spot = spots.front();
+    if (auto drawn = floor_->render(*target, *view, render::SkinnedDraw{.pose = floor_pose_, .transform = {.translation = treadmill}, .spot = spot}); !drawn)
         return std::unexpected(resources::to_diagnostic(drawn.error()));
-    if (auto drawn = body_->render(*target, *view, render::SkinnedDraw{.pose = pose_}); !drawn)
+    if (auto drawn = body_->render(*target, *view, render::SkinnedDraw{.pose = pose_, .spot = spot}); !drawn)
         return std::unexpected(resources::to_diagnostic(drawn.error()));
     if (auto ended = target->end(); !ended) return std::unexpected(resources::to_diagnostic(ended.error()));
     const auto id = next_id_++;
