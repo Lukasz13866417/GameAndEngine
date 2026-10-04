@@ -63,7 +63,7 @@
                     ] }),
                   ui("mesh-navigation", "Mesh-view controls", "MeshNavigationControls", "Mesh-centered camera and camera-transform baking.",
                     "Owns the small mesh-view controls, not the camera gesture logic. It describes local choices and exposes bake requests to its parent.", "mesh_navigation.hpp"),
-                  ui("blueprint-panel", "Blueprint geometry panel", "BlueprintMeshPanel", "Draft controls, cloud formations and Earth addons.",
+                  ui("blueprint-panel", "Blueprint geometry panel", "BlueprintMeshPanel", "Draft controls, colours, cloud formations and Earth addons.",
                     "Owns blueprint-specific widgets and local editing work. Pending results are drained by the workspace, which applies them to the authoritative session.", "blueprint_mesh_panel.hpp"),
                   ui("interaction", "Viewport interaction", "ViewportToolsUI", "Owns tools and arbitrates who receives input.",
                     "One tool owns document editing at a time. Camera navigation may temporarily borrow pointer input during a transform. Handled input does not fall through to selection; lack of input does not hide a passive gizmo.", "viewport_tools_ui.hpp", { borrows: ["const EditingSession& (observations, not mutation)"], children: [

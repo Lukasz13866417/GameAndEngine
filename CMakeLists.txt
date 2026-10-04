@@ -119,7 +119,7 @@ if(VNG_BUILD_EDITOR)
         examples/editor/rotation_edits.cpp examples/editor/scale_edits.cpp examples/editor/transform_pivot.cpp examples/editor/edit_clipboard.cpp
         examples/editor/selection_edits.cpp examples/editor/document_patch.cpp)
     target_link_libraries(vng_editor_project PUBLIC vng_editor vng_timeline vng_earth_assets)
-    target_sources(vng_editor_project PRIVATE examples/editor/blueprint_mesh_controls.cpp examples/editor/earth_infrastructure_controls.cpp examples/editor/earth_scaffold_gizmos.cpp examples/editor/earth_bezier_gizmo.cpp)
+    target_sources(vng_editor_project PRIVATE examples/editor/blueprint_mesh_controls.cpp examples/editor/mesh_colours.cpp examples/editor/earth_infrastructure_controls.cpp examples/editor/earth_scaffold_gizmos.cpp examples/editor/earth_bezier_gizmo.cpp)
     target_sources(vng_editor_project PRIVATE examples/editor/editing_session.cpp examples/editor/session_operations.cpp
         examples/editor/regions.cpp examples/editor/region_geometry.cpp examples/editor/region_edits.cpp
         examples/editor/region_instances.cpp examples/editor/camera_instances.cpp)

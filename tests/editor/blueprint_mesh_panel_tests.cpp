@@ -21,7 +21,8 @@ State initial() {
     REQUIRE(mesh);State state{.document={.mesh=std::move(*mesh)}};state.viewport.mode=ViewMode::mesh;return state;
 }
 struct Fixture {
-    EditingSession editing{initial()};
+    explicit Fixture(State start=initial()) : editing{std::move(start)} {}
+    EditingSession editing;
     ui::Screen screen{ui::dark_theme(font())};
     BlueprintMeshPanel panel{screen.column().width(600),editing};
     input::Frame frame{.logical_size={800,1000},.framebuffer={800,1000}};
@@ -79,6 +80,29 @@ struct Fixture {
         FAIL("Missing part text field: "<<name);
     }
 };
+}
+TEST_CASE("A flat-coloured mesh recolours from the blueprint panel, undoably", "[editor][ui][colours]") {
+    namespace vm=content::vmesh;
+    // A quad, two vertices red and two blue.
+    auto quad=editor::EditableMesh::create({.metadata={{"name","quad"}},.vertex_count=4,.vertex_fields={
+        {"position",{vm::ScalarType::Float32,3},std::vector<f32>{0,0,0,1,0,0,1,1,0,0,1,0}},
+        {"color/0",{vm::ScalarType::Float32,4},std::vector<f32>{1,0,0,1,1,0,0,1,0,0,1,1,0,0,1,1}}},
+        .faces={{0,1,2},{0,2,3}}});
+    REQUIRE(quad);
+    State state{.document={.mesh=std::move(*quad)}};state.viewport.mode=ViewMode::mesh;
+    Fixture f{std::move(state)};f.pump();
+    CHECK(f.widget("Colour 1 / #FF0000 / 2 vertices").visible);
+    CHECK(f.widget("Colour 2 / #0000FF / 2 vertices").visible);
+    const auto original=editable_mesh(f.editing.state())->document();
+    f.fill("Red","255");f.fill("Green","255");f.fill("Blue","0"); // the first colour's channels: red to yellow
+    CHECK(editable_mesh(f.editing.state())->document()==original); // staged until Recolour
+    f.click("Recolour");f.finish();f.pump();
+    const auto colours=std::get<std::vector<f32>>(editable_mesh(f.editing.state())->document().vertex_fields[1].values);
+    CHECK(colours==std::vector<f32>{1,1,0,1,1,1,0,1,0,0,1,1,0,0,1,1});
+    CHECK(f.editing.state().document.mesh.document()==original); // a draft until applied to the scene
+    CHECK(f.widget("Colour 1 / #FFFF00 / 2 vertices").visible); // recoloured in place
+    REQUIRE(f.editing.undo());f.pump();
+    CHECK(editable_mesh(f.editing.state())->document()==original);
 }
 TEST_CASE("Earth infrastructure controls stage locally and rebuild only the undoable mesh draft", "[editor][ui][infrastructure]") {
     Fixture f;f.frame.logical_size={800,2400};f.frame.framebuffer={800,2400};f.pump();
