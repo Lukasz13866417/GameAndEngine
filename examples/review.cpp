@@ -5,12 +5,14 @@
 // is written to it elsewhere while it is open, and reloads a scene whose
 // file changes.
 #include "review/candidate_view.hpp"
+#include "review/character_view.hpp"
 #include "review/review_file.hpp"
 #include "support/glfw_opengl_session.hpp"
 #include "support/presentation.hpp"
 #include "support/window_loop.hpp"
 #include <vng/ui_opengl/ui_renderer.hpp>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <format>
@@ -20,6 +22,7 @@
 #include <memory>
 #include <tuple>
 #include <utility>
+#include <variant>
 
 namespace {
 using namespace vng;
@@ -36,6 +39,9 @@ constexpr std::string_view help = R"(vng_review: review saved scenes, alone or s
              [--title TEXT] [--range FROM TO] [--replace] [--no-open]
       Create a review (1 candidate: a single review; 2 to 4: a comparison), then open it.
       --about and --offset apply to the candidate before them. --range limits the clock.
+      A candidate can also be a skinned character (.vmesh with its .vrig): turn the
+      camera by dragging, zoom with the wheel, raise or lower it with a right-drag,
+      and pick its clip in the view's header.
 
   --at SECONDS       start the clock here            --play        start playing
   --select N         open note N: its candidate, its time, its text and actions
@@ -238,27 +244,75 @@ std::string fit_line(const text::Font& font, std::string_view text, f32 width, u
     }
     return "...";
 }
-// A notes list row: number, candidate, time, state and the note's first line.
+// A notes list row: number, candidate, state, clip and time, and the note's first line.
+// A bone name as a person would say it, for labels: "DEF-upper_arm.R.001" is
+// "upper arm (right)", "DEF-spine.002" (Rigify's chest) is "chest". Notes
+// keep the bone's own name.
+std::string body_part(std::string name) {
+    for (const std::string_view prefix : {"DEF-", "ORG-", "HALF-", "MCH-"})
+        if (name.starts_with(prefix)) name.erase(0, prefix.size());
+    std::string side;
+    for (const auto& [suffix, said] : {std::pair{".L", " (left)"}, std::pair{".R", " (right)"}})
+        if (const auto at = name.find(suffix); at != std::string::npos && (at + 2 == name.size() || name[at + 2] == '.')) {
+            side = said;
+            name.erase(at, 2);
+        }
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 7> spine{{{"spine", "hips"}, {"spine.001", "belly"},
+        {"spine.002", "chest"}, {"spine.003", "upper chest"}, {"spine.004", "neck"}, {"spine.005", "neck"}, {"spine.006", "head"}}};
+    for (const auto& [bone, part] : spine)
+        if (name == bone) return std::string(part) + side;
+    const bool finger = name.starts_with("f_");
+    if (finger) name.erase(0, 2);
+    while (name.size() > 2 && std::isdigit(static_cast<unsigned char>(name.back()))) name.pop_back();
+    while (!name.empty() && (name.back() == '.' || name.back() == '0')) name.pop_back();
+    std::ranges::replace(name, '_', ' ');
+    std::ranges::replace(name, '.', ' ');
+    return name + (finger ? " finger" : "") + side;
+}
 std::string row_text(const text::Font& font, const review::Note& n, f32 width) {
     const auto what = n.text.empty() ? (n.object ? n.object_name : std::string("background")) : n.text;
     const auto state = n.status == "resolved" ? "resolved, " : n.reply.empty() ? "" : "replied, ";
-    return fit_line(font, std::format("#{}  {}  {}{}  {}", n.id, n.candidate, state, clock_text(n.time), what), width, 18);
+    const auto clip = n.clip.empty() ? std::string{} : n.clip + " ";
+    return fit_line(font, std::format("#{}  {}  {}{}{}  {}", n.id, n.candidate, state, clip, clock_text(n.time), what), width, 18);
 }
 
-// A candidate's view, or why it has none, and the version of the scene file it shows.
+// A candidate's view, or why it has none, and the version of the file it shows.
 struct Slot {
     std::filesystem::path scene;
     std::optional<review::FileStamp> stamp;
-    std::optional<review::CandidateView> view;
+    std::unique_ptr<review::View> view;
     std::string error;
+    [[nodiscard]] review::CharacterView* character() const { return dynamic_cast<review::CharacterView*>(view.get()); }
 };
-// Loads the candidates' scenes in parallel (the heavy ones take seconds),
-// carrying over the views of scene files that have not changed. A scene that
-// does not load leaves its slot without a view, saying why; the rest open.
+// What a candidate's file holds: a scene, or a skinned character (.vmesh).
+using Subject = std::variant<project::State, character::Character>;
+content::Result<Subject> load_subject(const std::filesystem::path& path) {
+    if (path.extension() == ".vmesh") {
+        auto body = review::CharacterView::load(path);
+        if (!body) return std::unexpected(body.error());
+        return Subject{std::move(*body)};
+    }
+    auto state = review::CandidateView::load_scene(path);
+    if (!state) return std::unexpected(state.error());
+    return Subject{std::move(*state)};
+}
+resources::Result<std::unique_ptr<review::View>> create_view(opengl::Device& device, Subject subject) {
+    if (auto* body = std::get_if<character::Character>(&subject)) {
+        auto view = review::CharacterView::create(device, std::move(*body));
+        if (!view) return std::unexpected(view.error());
+        return std::unique_ptr<review::View>{std::move(*view)};
+    }
+    auto view = review::CandidateView::create(device, std::move(std::get<project::State>(subject)));
+    if (!view) return std::unexpected(view.error());
+    return std::unique_ptr<review::View>{std::make_unique<review::CandidateView>(std::move(*view))};
+}
+// Loads the candidates' files in parallel (the heavy scenes take seconds),
+// carrying over the views of files that have not changed. A file that does
+// not load leaves its slot without a view, saying why; the rest open.
 std::vector<Slot> load_slots(opengl::Device& device, const review::Review& r, std::vector<Slot> reusable,
                              const std::function<void(std::size_t)>& loading_count) {
     std::vector<Slot> slots(r.candidates.size());
-    std::vector<std::future<content::Result<project::State>>> loading(slots.size());
+    std::vector<std::future<content::Result<Subject>>> loading(slots.size());
     std::size_t count{};
     for (std::size_t i = 0; i < slots.size(); ++i) {
         auto& slot = slots[i];
@@ -268,23 +322,22 @@ std::vector<Slot> load_slots(opengl::Device& device, const review::Review& r, st
             return old.view && old.stamp && old.scene == slot.scene && old.stamp == slot.stamp;
         });
         if (same != reusable.end()) {
-            slot.view.emplace(std::move(*same->view));
-            same->view.reset();
+            slot.view = std::move(same->view);
             continue;
         }
-        loading[i] = std::async(std::launch::async, [scene = slot.scene] { return review::CandidateView::load_scene(scene); });
+        loading[i] = std::async(std::launch::async, [scene = slot.scene] { return load_subject(scene); });
         ++count;
     }
     if (count) loading_count(count);
     for (std::size_t i = 0; i < slots.size(); ++i) {
         if (!loading[i].valid()) continue;
-        auto state = loading[i].get();
-        if (!state) {
-            slots[i].error = describe(state.error());
+        auto subject = loading[i].get();
+        if (!subject) {
+            slots[i].error = describe(subject.error());
             continue;
         }
-        auto view = review::CandidateView::create(device, std::move(*state));
-        if (view) slots[i].view.emplace(std::move(*view));
+        auto view = create_view(device, std::move(*subject));
+        if (view) slots[i].view = std::move(*view);
         else slots[i].error = view.error().message;
     }
     return slots;
@@ -310,6 +363,7 @@ struct Carry {
     bool playing{}, loop{true};
     std::string candidate, status;
     u32 note{};
+    bool go_to_note{}; // also take the note's clip and camera (--select)
 };
 
 class App {
@@ -324,10 +378,7 @@ public:
           }())) {
         dirty_ = review_ != disk_;
         edited_ = Clock::now();
-        f32 end{};
-        for (std::size_t i = 0; i < slots_.size(); ++i)
-            if (slots_[i].view) end = std::max(end, slots_[i].view->duration() - review_.candidates[i].offset);
-        range_ = review_.range.value_or(std::array{0.F, std::max(end, .1F)});
+        fit_range();
         speed_ = carry.speed;
         loop_ = carry.loop;
         build();
@@ -335,6 +386,8 @@ public:
         playing_ = carry.playing;
         select_candidate(candidate_index(carry.candidate));
         show_note(carry.note);
+        if (carry.go_to_note)
+            if (const auto* note = selected_note()) visit(*note);
         say(carry.status);
     }
     void at(f32 t) { time_ = std::clamp(t, range_[0], range_[1]); playing_ = false; }
@@ -526,6 +579,35 @@ private:
         show_note(note_);
     }
 
+    // The clock covers the longest view (a character's clip), unless the review sets it.
+    void fit_range() {
+        f32 end{};
+        for (std::size_t i = 0; i < slots_.size(); ++i)
+            if (slots_[i].view) end = std::max(end, slots_[i].view->duration() - review_.candidates[i].offset);
+        range_ = review_.range.value_or(std::array{0.F, std::max(end, .1F)});
+        time_ = std::clamp(time_, range_[0], range_[1]);
+        if (playhead_.valid()) playhead_.range(range_[0], range_[1]);
+    }
+    // Shows a note as it was pinned: its time and candidate, and on a character its clip and camera.
+    void visit(const review::Note& note) {
+        const auto i = candidate_index(note.candidate);
+        if (auto* body = slots_[i].character()) {
+            if (!note.clip.empty() && note.clip != body->clip() && body->clip(note.clip)) {
+                if (controls_[i]) controls_[i]->clip.value(note.clip);
+                fit_range();
+            }
+            if (note.camera) body->orbit({(*note.camera)[0], (*note.camera)[1], (*note.camera)[2], (*note.camera)[3]});
+        }
+        at(note.time);
+        select_candidate(i);
+    }
+    // The character view under a window point, if any.
+    std::optional<std::size_t> character_at(Vec2 position) const {
+        for (std::size_t i = 0; i < images_.size(); ++i)
+            if (slots_[i].character() && images_[i].bounds().contains(position)) return i;
+        return {};
+    }
+
     void build() {
         auto root = screen_.root();
         for (std::size_t i = 0; i < slots_.size(); ++i) {
@@ -534,6 +616,17 @@ private:
             headers_.push_back(header);
             header_buttons_.push_back(header.button(c.id + "  " + c.label));
             header_counts_.push_back(header.label(""));
+            controls_.emplace_back();
+            if (const auto* body = slots_[i].character()) {
+                // A character's clip, and cameras to jump to; dragging turns it.
+                std::vector<ui::Choice<std::string>> clips;
+                for (const auto& name : body->clips()) clips.push_back({name, name});
+                auto clip = header.dropdown<std::string>("Clip", std::span<const ui::Choice<std::string>>{clips}).width(240);
+                clip.value(body->clip());
+                std::vector<ui::Button> views;
+                for (const auto& preset : presets) views.push_back(header.button(preset.name).width(74));
+                controls_.back().emplace(Controls{std::move(clip), std::move(views)});
+            }
             images_.push_back(root.image());
             shown_revision_.push_back(0);
         }
@@ -544,7 +637,9 @@ private:
         speed_box_.value(speed_);
         loop_box_ = controls.checkbox("Loop").value(loop_).width(100);
         clock_ = controls.label("").width(150);
-        controls.label("Click a view to pin a note.  Space: play").width(420);
+        const bool characters = std::ranges::any_of(slots_, [](const Slot& slot) { return slot.character() != nullptr; });
+        controls.label(characters ? "Click to pin a note, drag to turn, wheel to zoom.  Space: play"
+                                  : "Click a view to pin a note.  Space: play").width(characters ? 560 : 420);
         strip_ = bar_.image().height(12);
         auto pixel = std::make_shared<gfx::ImageData>();
         pixel->extent = {1, 1};
@@ -651,7 +746,8 @@ private:
             }
         note_ = id;
         if (const auto* note = selected_note()) {
-            const auto where = note->object ? note->object_name : std::string("the background");
+            const auto where = !note->object ? std::string("the background")
+                             : note->clip.empty() ? note->object_name : "the " + body_part(note->object_name);
             note_label_.text(std::format("On {}", first_line(where, 30)));
             if (note_text_.getText() != note->text) note_text_.value(note->text);
             resolve_.text(note->status == "resolved" ? "Reopen" : "Resolve");
@@ -696,7 +792,7 @@ private:
         }
     }
 
-    void interact(const ui::UpdateResult& input, const input::Frame&) {
+    void interact(const ui::UpdateResult& input, const input::Frame& raw) {
         if (play_.clicked()) playing_ = !playing_;
         if (const auto s = speed_box_.changedValue()) speed_ = *s;
         if (const auto l = loop_box_.changedValue()) loop_ = *l;
@@ -726,10 +822,7 @@ private:
                     if (note_row_ids_[i] == note->id) note_rows_[i].text(row_text(font_, *note, row_width));
             }
         if (auto* note = selected_note()) {
-            if (go_to_.clicked()) {
-                at(note->time);
-                select_candidate(candidate_index(note->candidate));
-            }
+            if (go_to_.clicked()) visit(*note);
             if (resolve_.clicked()) {
                 note->status = note->status == "resolved" ? "open" : "resolved";
                 touched();
@@ -749,8 +842,7 @@ private:
                 const auto id = note_row_ids_[i];
                 show_note(id == note_ ? 0 : id);
                 if (const auto* note = selected_note()) {
-                    at(note->time);
-                    select_candidate(candidate_index(note->candidate));
+                    visit(*note);
                     note_text_.focus();
                 }
                 break;
@@ -759,8 +851,57 @@ private:
             review_.summary = std::string(*text);
             touched();
         }
-        for (const auto& event : input.unhandled()) {
-            if (event.kind == input::EventKind::pointer_down && event.button == 0) click(event.position);
+        for (std::size_t i = 0; i < controls_.size(); ++i) {
+            auto* body = slots_[i].character();
+            if (!controls_[i] || !body) continue;
+            if (const auto name = controls_[i]->clip.changedValue(); name && body->clip(*name)) {
+                select_candidate(i);
+                fit_range();
+            }
+            for (std::size_t k = 0; k < presets.size(); ++k)
+                if (controls_[i]->views[k].clicked()) {
+                    auto orbit = body->orbit();
+                    orbit.yaw = presets[k].yaw.value_or(orbit.yaw);
+                    orbit.pitch = presets[k].pitch;
+                    body->orbit(orbit);
+                    select_candidate(i);
+                }
+        }
+        // Presses the UI left alone, in order with every move and release: a
+        // turn follows the pointer anywhere and ends wherever the button is released.
+        const auto unhandled = input.unhandled();
+        for (const auto& event : raw.events) {
+            if (event.kind == input::EventKind::pointer_down && (event.button == 0 || event.button == 1) &&
+                std::ranges::find(unhandled, event) != unhandled.end()) {
+                if (const auto i = character_at(event.position)) drag_ = Drag{*i, event.button, event.position, event.position};
+                else if (event.button == 0) click(event.position);
+            } else if (drag_ && event.kind == input::EventKind::pointer_move) {
+                const Vec2 step{event.position.x - drag_->last.x, event.position.y - drag_->last.y};
+                drag_->last = event.position;
+                drag_->moved = drag_->moved || std::hypot(event.position.x - drag_->start.x, event.position.y - drag_->start.y) > 4;
+                if (auto* body = slots_[drag_->slot].character(); body && drag_->moved) {
+                    auto orbit = body->orbit();
+                    if (drag_->button == 0) {
+                        orbit.yaw -= step.x * .4F;
+                        orbit.pitch += step.y * .3F;
+                    } else
+                        orbit.look += step.y * orbit.distance * .002F;
+                    body->orbit(orbit);
+                }
+            } else if (drag_ && ((event.kind == input::EventKind::pointer_up && event.button == drag_->button) ||
+                                 event.kind == input::EventKind::focus_lost)) {
+                if (!drag_->moved && drag_->button == 0 && event.kind == input::EventKind::pointer_up) click(drag_->start);
+                drag_.reset();
+            }
+        }
+        for (const auto& event : unhandled) {
+            if (event.kind == input::EventKind::scroll)
+                if (const auto i = character_at(event.position)) {
+                    auto* body = slots_[*i].character();
+                    auto orbit = body->orbit();
+                    orbit.distance *= std::pow(.88F, event.scroll.y);
+                    body->orbit(orbit);
+                }
             if (event.kind == input::EventKind::key_down && !input.capturesKeyboard) {
                 if (event.key == input::Key::space && !event.repeat) playing_ = !playing_;
                 if (event.key == input::Key::left) at(time_ - 1.F / 30);
@@ -780,7 +921,11 @@ private:
         const Vec2 p{b.x + spot->x * b.width, b.y + spot->y * b.height};
         return b.contains(p) ? std::optional{p} : std::nullopt;
     }
-    bool marker_visible(const review::Note& n) const { return n.id == note_ || std::abs(n.time - time_) <= 1.F; }
+    bool marker_visible(const review::Note& n) const {
+        if (const auto* body = slots_[candidate_index(n.candidate)].character(); body && !n.clip.empty() && n.clip != body->clip())
+            return false;
+        return n.id == note_ || std::abs(n.time - time_) <= 1.F;
+    }
     void click(Vec2 position, bool pin_only = false) {
         for (std::size_t i = 0; i < images_.size(); ++i) {
             const auto b = images_[i].bounds();
@@ -811,8 +956,13 @@ private:
             note.created = review::timestamp();
             if (const auto hit = slots_[i].view ? slots_[i].view->pick(normalized) : std::nullopt) {
                 note.object = hit->object;
-                note.object_name = slots_[i].view->name_of(hit->object);
+                note.object_name = hit->name;
                 note.point = hit->point;
+            }
+            if (const auto* body = slots_[i].character()) {
+                note.clip = body->clip();
+                const auto& orbit = body->orbit();
+                note.camera = std::array{orbit.yaw, orbit.pitch, orbit.distance, orbit.look};
             }
             review_.notes.push_back(std::move(note));
             show_note(review_.notes.back().id);
@@ -832,7 +982,7 @@ private:
             const auto b = images_[i].bounds();
             list.commands.emplace_back(ui::BoxDraw{b, b, {.06F, .06F, .08F, 1}, {.55F, .25F, .22F, 1}, 4, 1});
             f32 y = b.y + 16;
-            for (const auto& line : wrap(font_, "This scene did not load. " + slots_[i].error, b.width - 32, 16)) {
+            for (const auto& line : wrap(font_, "This candidate did not load. " + slots_[i].error, b.width - 32, 16)) {
                 list.commands.emplace_back(ui::TextDraw{line, {b.x + 16, y}, b, font_, 16, {.95F, .78F, .72F, 1}});
                 y += 22;
             }
@@ -869,6 +1019,24 @@ private:
         }
     }
 
+    struct Preset {
+        std::string_view name;
+        std::optional<f32> yaw;
+        f32 pitch;
+    };
+    static constexpr std::array<Preset, 5> presets{{{"Front", 0.F, 8}, {"Left", 90.F, 8}, {"Back", 180.F, 8}, {"Right", -90.F, 8}, {"Above", {}, 70}}};
+    struct Controls {
+        ui::Dropdown<std::string> clip;
+        std::vector<ui::Button> views;
+    };
+    // A press on a character's view: a click if it does not move, else a turn (left button) or a lift (right).
+    struct Drag {
+        std::size_t slot;
+        u32 button;
+        Vec2 start, last;
+        bool moved{};
+    };
+
     std::filesystem::path file_;
     review::Review review_, disk_;
     std::optional<review::FileStamp> disk_stamp_, unreadable_;
@@ -902,6 +1070,8 @@ private:
     std::vector<ui::Button> note_rows_;
     std::vector<u32> note_row_ids_;
     u32 open_note_{};
+    std::vector<std::optional<Controls>> controls_;
+    std::optional<Drag> drag_;
 };
 
 struct WindowClipboard final : input::Clipboard {
@@ -947,7 +1117,8 @@ int main(int argc, char** argv) {
         if (found == notes.end()) return fail(std::format("The review has no note {}", *options->select));
         carry.note = found->id;
         carry.candidate = found->candidate;
-        if (!options->at) carry.time = found->time;
+        carry.go_to_note = true;
+        if (options->at) carry.time = options->at;
     }
     auto font = text::Font::load(VNG_EXAMPLE_FONT_PATH);
     if (!font) return fail(font.error().message);
@@ -982,12 +1153,12 @@ int main(int argc, char** argv) {
     };
     // A line of text in an otherwise empty window while scenes load.
     const auto loading = [&](std::size_t count) {
-        std::cout << "Loading " << count << " scene" << (count == 1 ? "" : "s") << "...\n";
+        std::cout << "Loading " << count << " candidate" << (count == 1 ? "" : "s") << "...\n";
         if (hidden) return;
         const auto input = window.take_input();
         if (!input.framebuffer.width || !input.framebuffer.height) return;
         ui::DrawList list{input.logical_size, input.framebuffer, {}};
-        list.commands.emplace_back(ui::TextDraw{std::format("Loading {} scene{}...", count, count == 1 ? "" : "s"), {24, 20},
+        list.commands.emplace_back(ui::TextDraw{std::format("Loading {} candidate{}...", count, count == 1 ? "" : "s"), {24, 20},
             {0, 0, input.logical_size.x, input.logical_size.y}, *font, 22, {.8F, .82F, .86F, 1}});
         if (draw(list)) (void)window.present();
     };

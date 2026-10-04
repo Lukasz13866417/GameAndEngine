@@ -22,19 +22,24 @@ struct Candidate {
     vng::f32 offset{};
     friend bool operator==(const Candidate&, const Candidate&) = default;
 };
-// A note pinned to what the reviewer clicked in a candidate's view.
+// A note pinned to what the reviewer clicked in a candidate's view. On a
+// character (a skinned .vmesh rather than a scene) the note also keeps the
+// clip and the camera, the object is 1 for the character, its name is the
+// bone that moves the skin there most, and the point is in the bind pose.
 struct Note {
     vng::u32 id{};
     std::string candidate;
     vng::f32 time{};                  // on the review clock
-    vng::u32 object{};                // scene instance, 0 for the background
+    vng::u32 object{};                // scene instance (or 1 for a character), 0 for the background
     std::string object_name;
-    std::optional<vng::Vec3> point;   // where the click met the object, scene units
+    std::optional<vng::Vec3> point;   // where the click met the object: scene units, or a character's bind pose
     vng::Vec2 view{};                 // where the click was, normalized top-left
     std::string text;
     std::string created;              // UTC, ISO 8601
     std::string status{"open"};       // "open" or "resolved"
     std::string reply;                // the author's answer
+    std::string clip;                 // a character's clip, "" for a scene
+    std::optional<std::array<vng::f32, 4>> camera; // a character's camera: yaw and pitch (degrees), distance and height looked at (m)
     friend bool operator==(const Note&, const Note&) = default;
 };
 struct Review {

@@ -68,11 +68,13 @@ resources::Result<void> CandidateView::update(opengl::Device& device, f32 time, 
     return {};
 }
 
-std::optional<project::Pick> CandidateView::pick(Vec2 normalized) {
+std::optional<Hit> CandidateView::pick(Vec2 normalized) {
     if (!shown_) return {};
     state_->viewport.time = shown_->time;
-    return project::pick(*state_, normalized, shown_->extent, &shown_->camera,
-                         nullptr, {.camera_glyphs = false});
+    const auto hit = project::pick(*state_, normalized, shown_->extent, &shown_->camera, nullptr, {.camera_glyphs = false});
+    if (!hit) return {};
+    const auto* instance = project::find_instance(*state_, hit->object);
+    return Hit{hit->object, instance ? instance->name : std::string{}, hit->point};
 }
 
 std::optional<Vec2> CandidateView::project(Vec3 point) const {
@@ -86,10 +88,5 @@ std::optional<Vec2> CandidateView::project(Vec3 point) const {
             clip[row] += double(snapshot->view_projection[column][row]) * world[column];
     if (clip[3] <= 1e-9) return {};
     return Vec2{static_cast<f32>((clip[0] / clip[3] + 1) * .5), static_cast<f32>((1 - clip[1] / clip[3]) * .5)};
-}
-
-std::string CandidateView::name_of(u32 object) const {
-    const auto* instance = project::find_instance(*state_, object);
-    return instance ? instance->name : std::string{};
 }
 } // namespace review

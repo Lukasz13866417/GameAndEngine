@@ -4,7 +4,7 @@
 // turn slowly in front of a fixed camera: the skinned renderer's light is
 // fixed in the world, so turning him keeps him lit from the key side. The
 // rig's skinned renderer deforms the bind-pose mesh on the GPU from a pose.
-#include "character/character.hpp"
+#include "character/stage.hpp"
 #include "support/diagnostics.hpp"
 #include "support/glfw_opengl_session.hpp"
 #include "support/options.hpp"
@@ -29,7 +29,6 @@ int fail(std::string_view message) {
     std::cerr << message << '\n';
     return 1;
 }
-int fail(const rig::Diagnostic& error) { return fail(error.message); }
 constexpr std::string_view usage = R"(vng_soldier_demo [options]
   --mesh PATH          skinned .vmesh to show (default: the soldier)
   --clip NAME          clip to play (default: the first)
@@ -82,41 +81,6 @@ std::optional<Options> parse(int argc, char** argv) {
     return o;
 }
 
-// A checkerboard of one-metre tiles, bound to a one-bone armature so the
-// skinned renderer can draw it too; it scrolls by its draw transform. Beyond
-// 10 m the tiles fade into the sky: lit by the renderer's fixed light, the
-// fade colour lands exactly on the clear colour, so the floor has no edge.
-constexpr f32 tile = 1.F;
-constexpr int tiles = 80;
-constexpr Vec4 sky{.33F, .40F, .48F, 1};
-character::Mesh floor_mesh() {
-    // An up-facing surface receives 0.75 * dot(up, light) + 0.25 of its colour.
-    const f32 lit = .75F * .6F / std::sqrt(.3F * .3F + .6F * .6F + 1.F) + .25F;
-    character::Mesh mesh{static_cast<std::size_t>(tiles * tiles * 4)};
-    std::vector<gfx::TriangleFace> faces;
-    const f32 start = -tile * tiles / 2;
-    for (int row = 0; row < tiles; ++row)
-        for (int column = 0; column < tiles; ++column) {
-            const auto base = static_cast<u32>((row * tiles + column) * 4);
-            const f32 x = start + tile * static_cast<f32>(column), z = start + tile * static_cast<f32>(row);
-            const Vec4 color = (row + column) % 2 ? Vec4{.40F, .41F, .38F, 1} : Vec4{.47F, .48F, .45F, 1};
-            const std::array<Vec3, 4> corners{Vec3{x, 0, z}, Vec3{x + tile, 0, z}, Vec3{x + tile, 0, z + tile}, Vec3{x, 0, z + tile}};
-            for (u32 k = 0; k < 4; ++k) {
-                const auto distance = std::hypot(corners[k].x, corners[k].z);
-                const auto t = std::clamp((distance - 10.F) / 28.F, 0.F, 1.F);
-                const auto fade = t * t * (3 - 2 * t);
-                const auto mix = [&](f32 a, f32 b) { return a + (b - a) * fade; };
-                auto& vertex = mesh.vertices()[base + k];
-                vertex.set(gfx::Position{}, corners[k]);
-                vertex.set(gfx::Normal{}, Vec3{0, 1, 0});
-                vertex.set(gfx::Color{}, Vec4{mix(color.x, sky.x / lit), mix(color.y, sky.y / lit), mix(color.z, sky.z / lit), 1});
-            }
-            faces.push_back({base, base + 2, base + 1});
-            faces.push_back({base, base + 3, base + 2});
-        }
-    mesh.faces() = std::move(faces);
-    return mesh;
-}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -133,15 +97,8 @@ int main(int argc, char** argv) {
                                              : soldier->clip(options->clip);
     if (!clip) return example::fail(example::UsageError{"no such clip in " + options->mesh.string()});
 
-    rig::ArmatureBuilder floor_bones;
-    (void)floor_bones.add_bone("floor");
-    auto floor_armature = floor_bones.build();
-    if (!floor_armature) return fail(floor_armature.error());
-    auto floor = rig::bind(floor_mesh(), *floor_armature);
-    if (!floor) return fail(floor.error());
-    const auto floor_bone = floor_armature->bone("floor").value();
-    for (std::size_t v = 0; v < floor->mesh().vertex_count(); ++v)
-        if (auto weight = floor->set_weights(v, {{floor_bone, 1.F}}); !weight) return fail(weight.error());
+    auto stage = character::Stage::create();
+    if (!stage) return example::fail(stage.error());
 
     const bool recording = options->record.has_value();
     const bool hidden = options->screenshot.has_value() || recording;
@@ -157,13 +114,13 @@ int main(int argc, char** argv) {
     auto& device = app->device();
     auto renderer = render::make_skinned_mesh_renderer(device, soldier->binding(), render::SkinnedRendererOptions{.max_influences = 8});
     if (!renderer) return example::fail(renderer.error());
-    auto floor_renderer = render::make_skinned_mesh_renderer(device, *floor);
+    auto floor_renderer = render::make_skinned_mesh_renderer(device, stage->floor);
     if (!floor_renderer) return example::fail(floor_renderer.error());
     auto display = example::DisplaySurface::create(device, app->window().framebuffer_extent(), true);
     if (!display) return fail(display.error().message);
 
     auto pose = soldier->armature().rest_pose();
-    const auto floor_pose = floor_armature->rest_pose();
+    const auto floor_pose = stage->armature.rest_pose();
     std::cout << soldier->rig().name << ": " << soldier->binding().mesh().vertex_count() << " vertices, "
               << soldier->armature().bone_count() << " bones; playing \"" << clip->name << "\" (" << clip->duration()
               << " s, walking " << clip->speed << " m/s).\n";
@@ -192,8 +149,7 @@ int main(int argc, char** argv) {
         if (auto posed = soldier->pose(*clip, time, pose); !posed) return example::fail(posed.error());
 
         // Treadmill: the floor moves back as fast as the clip walks forward.
-        const f32 walked = options->in_place ? 0.F : clip->speed * time;
-        const f32 scroll = -std::fmod(walked, 2 * tile);
+        const f32 scroll = options->in_place ? 0.F : character::Stage::scroll(clip->speed, time);
         // A slow turntable: he and the floor turn together under a fixed camera.
         const f32 turn = options->still ? 0.F : .12F * wall;
         const rig::Quat spin{0, std::sin(turn / 2), 0, std::cos(turn / 2)};
@@ -207,7 +163,7 @@ int main(int argc, char** argv) {
         if (auto resized = display->resize(device, *extent); !resized) return fail(resized.error().message);
         auto frame = render::begin_frame(device, display->target(), {
             .extent = *extent, .color_encoding = render::ColorEncoding::srgb,
-            .clear_color = std::array<f32, 4>{sky.x, sky.y, sky.z, 1}, .clear_depth = 1.F});
+            .clear_color = std::array<f32, 4>{character::Stage::sky.x, character::Stage::sky.y, character::Stage::sky.z, 1}, .clear_depth = 1.F});
         if (!frame) return example::fail(frame.error());
         auto view = render::RenderView::create(camera, *extent);
         if (!view) return example::fail(view.error());

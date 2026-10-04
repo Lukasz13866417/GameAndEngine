@@ -1015,9 +1015,9 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
             add_library(vng_review_file STATIC examples/review/review_file.cpp)
             target_link_libraries(vng_review_file PUBLIC vng_content)
             vng_target_defaults(vng_review_file)
-            add_executable(vng_review examples/review.cpp examples/review/candidate_view.cpp)
+            add_executable(vng_review examples/review.cpp examples/review/candidate_view.cpp examples/review/character_view.cpp)
             target_link_libraries(vng_review PRIVATE vng_review_file vng_editor_runtime vng_ui_opengl
-                vng_example_support vng_example_presentation)
+                vng_character vng_rig_opengl vng_example_support vng_example_presentation)
             target_compile_definitions(vng_review PRIVATE
                 VNG_EXAMPLE_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/fonts/DejaVuSans.ttf")
             vng_target_defaults(vng_review)
@@ -1029,7 +1029,7 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
                 # A one-scene review in a hidden window: a scripted note lands in the file.
                 add_test(NAME vng_review_smoke_test COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/examples/review_smoke.sh
                     $<TARGET_FILE:vng_review> ${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/editor_timeline.vscene
-                    ${CMAKE_CURRENT_BINARY_DIR}/review_smoke)
+                    ${CMAKE_CURRENT_BINARY_DIR}/review_smoke ${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/soldier/soldier.vmesh)
                 set_tests_properties(vng_review_smoke_test PROPERTIES
                     SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "review;opengl;e2e" RUN_SERIAL TRUE)
             endif()
@@ -1078,7 +1078,8 @@ if(VNG_BUILD_EXAMPLES AND VNG_BUILD_OPENGL AND VNG_BUILD_WINDOW_GLFW AND
 
     # Characters imported from Blender (examples/tools/import_model.py): a
     # skinned .vmesh with its .vrig armature and clips, and the walking soldier.
-    add_library(vng_character STATIC examples/character/character_file.cpp examples/character/character.cpp)
+    add_library(vng_character STATIC examples/character/character_file.cpp examples/character/character.cpp
+        examples/character/stage.cpp)
     target_link_libraries(vng_character PUBLIC vng_content vng_rig)
     vng_target_defaults(vng_character)
     add_executable(vng_soldier_demo examples/soldier.cpp)

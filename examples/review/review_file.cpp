@@ -89,7 +89,8 @@ Note merged(const Note& b, const Note& m, const Note& t) {
     return {m.id, side(b.candidate, m.candidate, t.candidate), side(b.time, m.time, t.time),
             side(b.object, m.object, t.object), side(b.object_name, m.object_name, t.object_name),
             side(b.point, m.point, t.point), side(b.view, m.view, t.view), side(b.text, m.text, t.text),
-            side(b.created, m.created, t.created), side(b.status, m.status, t.status), side(b.reply, m.reply, t.reply)};
+            side(b.created, m.created, t.created), side(b.status, m.status, t.status), side(b.reply, m.reply, t.reply),
+            side(b.clip, m.clip, t.clip), side(b.camera, m.camera, t.camera)};
 }
 // Theirs' order, then what only mine has. `clashes` collects entries both
 // sides added under one id, differently; theirs keep the id.
@@ -173,6 +174,9 @@ content::Result<void> validate(const Review& r) {
             return std::unexpected(invalid(where + " has a bad object name or creation time"));
         if (n.status != "open" && n.status != "resolved")
             return std::unexpected(invalid(where + ": status must be \"open\" or \"resolved\""));
+        if (n.clip.size() > 256 || !single_line(n.clip)) return std::unexpected(invalid(where + " has a bad clip name"));
+        if (n.camera && (!std::ranges::all_of(*n.camera, [](f32 v) { return std::isfinite(v); }) || (*n.camera)[2] <= 0))
+            return std::unexpected(invalid(where + ": camera must be four finite numbers with a positive distance"));
     }
     return {};
 }
@@ -197,7 +201,10 @@ content::Result<std::string> encode_review(const Review& r, const std::filesyste
         if (n.point) o << "        point = [" << n.point->x << ", " << n.point->y << ", " << n.point->z << "];\n";
         o << "        view = [" << n.view.x << ", " << n.view.y << "];\n        text = " << quote(n.text)
           << ";\n        created = " << quote(n.created) << ";\n        status = " << quote(n.status)
-          << ";\n        reply = " << quote(n.reply) << ";\n    },\n";
+          << ";\n        reply = " << quote(n.reply) << ";\n";
+        if (!n.clip.empty()) o << "        clip = " << quote(n.clip) << ";\n";
+        if (n.camera) o << "        camera = [" << (*n.camera)[0] << ", " << (*n.camera)[1] << ", " << (*n.camera)[2] << ", " << (*n.camera)[3] << "];\n";
+        o << "    },\n";
     }
     o << "];\n";
     auto result = std::move(o).str();
@@ -247,6 +254,8 @@ content::Result<Review> parse_review(std::string_view source, const std::filesys
                 n.created = entry.get_or<std::string>("created", "");
                 n.status = entry.get_or<std::string>("status", "open");
                 n.reply = entry.get_or<std::string>("reply", "");
+                n.clip = entry.get_or<std::string>("clip", "");
+                if (const auto camera = entry.optional<std::array<f32, 4>>("camera")) n.camera = *camera;
                 result.notes.push_back(std::move(n));
             }
         return result;

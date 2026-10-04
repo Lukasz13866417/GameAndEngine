@@ -1,6 +1,7 @@
 #pragma once
 #include "../editor/runtime.hpp"
 #include "../editor/selection.hpp"
+#include "view.hpp"
 #include <vng/gfx/image.hpp>
 #include <filesystem>
 #include <map>
@@ -11,26 +12,21 @@ namespace review {
 // One candidate's scene, its renderer, and the image it last presented.
 // Clicks and note markers are measured against that image's own time,
 // extent and camera, which may trail the playhead by a frame.
-class CandidateView {
+class CandidateView final : public View {
 public:
     // The CPU half of loading, safe on a worker thread: reads the scene and
     // builds its picking indices so the first click does not stall.
     static vng::content::Result<editor_example::State> load_scene(const std::filesystem::path&);
     static vng::resources::Result<CandidateView> create(vng::opengl::Device&, editor_example::State);
 
-    [[nodiscard]] vng::f32 duration() const { return state_->document.timeline_duration; }
-    // Takes a finished frame if there is one, then renders `time` at `extent`
-    // unless that image is already shown or a frame is still in flight.
-    vng::resources::Result<void> update(vng::opengl::Device&, vng::f32 time, vng::Extent2D);
-    [[nodiscard]] const std::shared_ptr<const vng::gfx::ImageData>& image() const { return image_; }
-    [[nodiscard]] vng::u64 revision() const { return revision_; }
-    [[nodiscard]] std::optional<vng::f32> shown_time() const;
-
-    // What lies under a normalized top-left point of the shown image.
-    [[nodiscard]] std::optional<editor_example::Pick> pick(vng::Vec2 normalized);
-    // Where a scene point appears in the shown image, normalized, when it is in front of the camera.
-    [[nodiscard]] std::optional<vng::Vec2> project(vng::Vec3) const;
-    [[nodiscard]] std::string name_of(vng::u32 object) const;
+    [[nodiscard]] vng::f32 duration() const override { return state_->document.timeline_duration; }
+    vng::resources::Result<void> update(vng::opengl::Device&, vng::f32 time, vng::Extent2D) override;
+    [[nodiscard]] const std::shared_ptr<const vng::gfx::ImageData>& image() const override { return image_; }
+    [[nodiscard]] vng::u64 revision() const override { return revision_; }
+    [[nodiscard]] std::optional<vng::f32> shown_time() const override;
+    // The scene instance under the point, named as in the scene.
+    [[nodiscard]] std::optional<Hit> pick(vng::Vec2 normalized) override;
+    [[nodiscard]] std::optional<vng::Vec2> project(vng::Vec3) const override;
 
 private:
     struct Frame {

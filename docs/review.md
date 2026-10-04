@@ -1,7 +1,8 @@
 # Reviewing scenes
 
 `vng_review` plays saved scenes, alone or side by side, on one shared clock.
-While you watch, you can:
+It also shows an imported character, from any side, in any of his clips (see
+[Reviewing a character](#reviewing-a-character)). While you watch, you can:
 
 - click anything you see to pin a note to it;
 - write down what you think of each candidate;
@@ -110,7 +111,38 @@ with its notes up to about a dozen rows, then scrolls.
 **Saving.** The file saves 0.7 s after your last edit, and again when you
 quit. The status line at the bottom of the sidebar says when it last saved.
 
-## Working with an agent
+## Reviewing a character
+
+A candidate can be a skinned character instead of a scene: the `.vmesh` that
+`examples/tools/import_model.py` writes, with its `.vrig` beside it (see
+[characters.md](characters.md)).
+
+```sh
+./build/vng_review --new soldier.vreview --title "Soldier" \
+    --candidate "Soldier" examples/assets/soldier/soldier.vmesh
+```
+
+He walks on the spot over a treadmill floor. His view's header adds:
+
+- **Clip**: which of his clips plays, such as `walk` or `walk_authored`. The
+  clock covers that clip.
+- **Front**, **Left**, **Back**, **Right** and **Above**: jump the camera to
+  that side of him. *Left* and *Right* are his own.
+
+In the view:
+
+- drag to turn the camera around him;
+- right-drag to raise or lower it;
+- use the wheel to zoom;
+- click without dragging to pin a note.
+
+A note on him keeps the clip, the time and the camera it was pinned with.
+Opening it, from its row or with *Go to*, brings all three back. Its marker
+stays on the spot of his body that was clicked as he moves, and shows only
+while his view plays that note's clip. The note's label names the body part,
+such as *the upper arm (right)*; the file keeps the bone's own name.
+
+
 
 The file is how you and the agent talk:
 
@@ -221,14 +253,16 @@ notes = [
 | `id` | Unique, above 0. |
 | `candidate` | The id of the candidate it is pinned to. |
 | `time` | When it was pinned, on the review clock. |
-| `object` | The scene instance clicked, or `0` for the background. |
-| `object_name` | That instance's name, as the scene gives it. |
-| `point` | Where the click met the object, in scene units. Absent for the background. |
+| `object` | The scene instance clicked, or `0` for the background. On a character, `1`. |
+| `object_name` | That instance's name, as the scene gives it. On a character, the bone that moves the skin there most, such as `"DEF-upper_arm.R"`. |
+| `point` | Where the click met the object, in scene units. On a character, the same place in his bind pose, in metres. Absent for the background. |
 | `view` | Where the click was in the view: `[x, y]` from 0 to 1, from the top left. |
 | `text` | The reviewer's note. |
 | `created` | When it was pinned, in UTC. |
 | `status` | `"open"` or `"resolved"`. |
 | `reply` | The author's answer. |
+| `clip` | On a character: the clip that was playing. Absent on scenes. |
+| `camera` | On a character: `[yaw, pitch, distance, height]`. That is the camera's direction around him in degrees (0 in front, 90 his left), degrees above level, metres from the point it looks at, and that point's height in metres. Absent on scenes. |
 
 **Rules**
 
@@ -252,7 +286,7 @@ These options serve tests and agents:
 | --- | --- |
 | `--at S` | Start the clock at `S`. |
 | `--play` | Start playing once every view shows its first frame. |
-| `--select N` | Open note `N` at its time and candidate, as a click on its row would. |
+| `--select N` | Open note `N` at its time and candidate, as a click on its row would. On a character, also its clip and camera. |
 | `--note ID X Y TEXT` | Pin a note on candidate `ID` at the view point `X,Y` (0 to 1, from the top left), as a click there would. |
 | `--screenshot NEW.png` | Wait until every view shows the start time and any `--note` is pinned, then save a picture of the whole window and exit. The window stays hidden. |
 | `--hidden` | Keep the window off screen. |
@@ -270,17 +304,26 @@ be made, so a test harness can skip the run. For example:
 - `examples/review/review_file.{hpp,cpp}`, the `vng_review_file` library,
   holds the format and needs no OpenGL. It reads, writes, validates and merges
   reviews, and stamps files to notice changes.
+- `examples/review/view.hpp` is what the app needs from a candidate's view:
+  render a time into an image, say what lies under a point of it, and place a
+  point on it.
 - `examples/review/candidate_view.{hpp,cpp}` runs one candidate's scene. It
   renders offscreen and reads the frames back. Clicks and markers are measured
   against the frame that is on screen: its time, size and camera.
+- `examples/review/character_view.{hpp,cpp}` shows a character on
+  `character::Stage` (`examples/character/stage.hpp`, the floor that
+  `vng_soldier_demo` also walks on). A click skins the mesh on the CPU and
+  finds the triangle under it. A marker follows the bind-pose vertex nearest
+  its point.
 - `examples/review.cpp` is the app: layout, notes, file sync, and reopening
   the review.
 - `editor_example::pick` in `examples/editor/selection.hpp` is the editor's
   picking, extended with the point where the view ray meets the object.
 - Tests:
   - `vng_review_tests` covers the format, the merge and picking.
-  - `vng_review_smoke_test` opens a review in a hidden window and pins a
-    scripted note. It is skipped where no OpenGL window can be made.
+  - `vng_review_smoke_test` opens reviews in a hidden window and pins scripted
+    notes: on a scene, on the soldier, and a note opened with `--select`. It is
+    skipped where no OpenGL window can be made.
 
 ## Limits
 
@@ -289,6 +332,8 @@ be made, so a test harness can skip the run. For example:
   whole gateway. The note's `point` says which part of it.
 - **Background markers.** A background note has no point, so its marker stays
   where it was clicked on screen rather than following the scene.
+- **Characters.** A character can only be shown on its own floor, not inside a
+  scene. A click names one bone, though the skin there may follow several.
 - **Loading.** Views render as fast as the scenes allow. Each shows the
   newest finished frame, so a heavy scene can trail the clock by a frame
   while playing. While a changed scene loads, the window pauses; heavy scenes

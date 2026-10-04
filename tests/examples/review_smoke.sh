@@ -1,8 +1,9 @@
 #!/bin/sh
 # Makes a one-scene review, pins a note in a hidden window by script, saves a
-# screenshot, and checks the note reached the file. Exits 77 (skipped) when
+# screenshot, and checks the note reached the file; then the same for a
+# skinned character, whose notes also name the bone, the clip and the camera. Exits 77 (skipped) when
 # no OpenGL window can be made here.
-review=$1 scene=$2 work=$3
+review=$1 scene=$2 work=$3 character=$4
 mkdir -p "$work" || exit 1
 # Screenshots never overwrite, so clear the previous run's.
 rm -f "$work/smoke.png"
@@ -40,3 +41,13 @@ if grep -q 'text = "Must not save";' "$work/missing.vreview"; then
     exit 1
 fi
 echo "Comparison and failed-load pin tests passed"
+
+# A character review: a click names the bone under it, and keeps the clip and camera.
+rm -f "$work/character.png" "$work/character_select.png"
+"$review" --new "$work/character.vreview" --candidate "Soldier" "$character" --replace --no-open || exit 1
+"$review" "$work/character.vreview" --note A 0.5 0.42 "Chest" --screenshot "$work/character.png" || exit 1
+grep -q 'object_name = "DEF-' "$work/character.vreview" || { echo "The character note names no bone"; exit 1; }
+grep -q 'clip = "walk";' "$work/character.vreview" || { echo "The character note has no clip"; exit 1; }
+grep -q 'camera = \[' "$work/character.vreview" || { echo "The character note has no camera"; exit 1; }
+"$review" "$work/character.vreview" --select 1 --screenshot "$work/character_select.png" || exit 1
+echo "Character review tests passed"

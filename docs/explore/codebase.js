@@ -194,7 +194,7 @@
   // Non-test executables without a card. Their direct links, with the cards',
   // make Used by complete; tests compare both with CMakeLists.txt. PRIVATE links.
   const programs = [
-    ["vng_review", "vng_review_file", "vng_editor_runtime", "vng_ui_opengl", "vng_example_support", "vng_example_presentation"],
+    ["vng_review", "vng_review_file", "vng_editor_runtime", "vng_ui_opengl", "vng_character", "vng_rig_opengl", "vng_example_support", "vng_example_presentation"],
     ["vng_make_spaceship", "vng_content"], ["vng_make_fleet", "vng_content"], ["vng_document_demo", "vng_content"],
     ["vng_make_earth", "vng_earth_scene"], ["vng_make_fleet_scene", "vng_fleet_scene"],
     ["vng_make_asteroid_scene", "vng_asteroid_scene"], ["vng_make_tunnel_scene", "vng_tunnel_scene"],

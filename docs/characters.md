@@ -341,7 +341,8 @@ clips = [
 - **Materials.** No textures and no materials: colour is per vertex.
 - **Scenes and the editor.** The editor does not load skinned characters; use
   `NAME_pose.vmesh` for a static pose there. Characters are not part of
-  `.vscene` scenes.
+  `.vscene` scenes. To look at one from every side in each clip and pin
+  notes on him, open his `.vmesh` in `vng_review` ([review.md](review.md)).
 - **Movement.** There is no root motion beyond the clip's walking speed.
 - **Re-keying.** It knows walk cycles of Rigify bipeds only: it needs the DEF
   leg and arm chains.
