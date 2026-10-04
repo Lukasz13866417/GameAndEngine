@@ -82,10 +82,21 @@ Click a marker to select its note instead of pinning a new one.
 - the selected candidate's description;
 - *Your thoughts on this one*;
 - *Pick this one* in a comparison, or the verdict in a single review;
-- the selected note, with *Go to*, *Resolve* and *Delete*, and the author's
-  reply if there is one;
-- every note in time order: click one to jump there;
+- *Notes*: every note as a row in time order, with its number, candidate,
+  time, whether it was resolved or replied to, and its first line;
 - *Overall*: your summary.
+
+**The notes list.** Click a row to open its note, and click it again to
+close it. Opening a note goes to its time and candidate, and opens it right
+under its row:
+
+- where it is pinned (an object's name, or the background);
+- its text, ready to edit;
+- the author's reply, if there is one;
+- *Go to*, *Resolve* (or *Reopen*) and *Delete*.
+
+A note opened from its marker in a view scrolls into sight. The list grows
+with its notes up to about a dozen rows, then scrolls.
 
 **Keys.** These work when the cursor is not in a text field:
 
@@ -241,6 +252,7 @@ These options serve tests and agents:
 | --- | --- |
 | `--at S` | Start the clock at `S`. |
 | `--play` | Start playing once every view shows its first frame. |
+| `--select N` | Open note `N` at its time and candidate, as a click on its row would. |
 | `--note ID X Y TEXT` | Pin a note on candidate `ID` at the view point `X,Y` (0 to 1, from the top left), as a click there would. |
 | `--screenshot NEW.png` | Wait until every view shows the start time and any `--note` is pinned, then save a picture of the whole window and exit. The window stays hidden. |
 | `--hidden` | Keep the window off screen. |
