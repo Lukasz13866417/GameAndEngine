@@ -737,13 +737,18 @@ private:
         if (verdict_.valid()) verdict_.value(review_.verdict);
         rewrap();
     }
+    // The selected note, if it was never written, is dropped.
+    void drop_unwritten() {
+        if (const auto* old = selected_note(); old && old->text.empty() && old->reply.empty()) {
+            const auto id = old->id;
+            std::erase_if(review_.notes, [&](const review::Note& n) { return n.id == id; });
+            note_ = 0;
+            touched();
+        }
+    }
     // Selecting away from a note that was never written drops it.
     void show_note(u32 id) {
-        if (note_ && note_ != id)
-            if (auto* old = selected_note(); old && old->text.empty() && old->reply.empty()) {
-                std::erase_if(review_.notes, [&](const review::Note& n) { return n.id == old->id; });
-                touched();
-            }
+        if (note_ && note_ != id) drop_unwritten();
         note_ = id;
         if (const auto* note = selected_note()) {
             const auto where = !note->object ? std::string("the background")
@@ -942,6 +947,8 @@ private:
                         return;
                     }
             const Vec2 normalized{(position.x - b.x) / b.width, (position.y - b.y) / b.height};
+            // A click elsewhere replaces an empty note rather than numbering past it.
+            drop_unwritten();
             review::Note note;
             note.id = review_.next_note_id();
             note.candidate = review_.candidates[i].id;

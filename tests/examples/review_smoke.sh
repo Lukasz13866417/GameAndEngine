@@ -51,3 +51,13 @@ grep -q 'clip = "walk";' "$work/character.vreview" || { echo "The character note
 grep -q 'camera = \[' "$work/character.vreview" || { echo "The character note has no camera"; exit 1; }
 "$review" "$work/character.vreview" --select 1 --screenshot "$work/character_select.png" || exit 1
 echo "Character review tests passed"
+
+# A click that replaces an empty note takes its number: no gaps from unwritten notes.
+"$review" --new "$work/numbering.vreview" --candidate "Editor timeline" "$scene" --replace --no-open || exit 1
+"$review" "$work/numbering.vreview" --note A 0.4 0.5 "" --note A 0.6 0.5 "Second click" --hidden --frames 30 || exit 1
+grep -q 'id = 1;' "$work/numbering.vreview" || { echo "The note after an empty one is not number 1"; exit 1; }
+if grep -q 'id = 2;' "$work/numbering.vreview"; then
+    echo "An empty note used up a number"
+    exit 1
+fi
+echo "Note numbering test passed"
