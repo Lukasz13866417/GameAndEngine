@@ -219,6 +219,15 @@ diagnostic. For nonzero blended normals, the shader rescales their magnitude
 before normalization to avoid scale-dependent overflow or loss of lighting.
 Basic lighting can be disabled explicitly with `.lighting = false`.
 
+A lit draw can also take one spot light, `SkinnedDraw::spot`: a world-space
+position and direction, a linear colour times its strength, the inner and
+outer edges of its cone in degrees off its axis, and a range in metres. Light
+is added in proportion to how far inside the cone a surface lies (smoothly
+across its edge), the square of how much of the range is left, and how
+squarely the surface faces the light. Nothing casts shadows. Give every draw
+that the light should reach the same spot, as the soldier demo does for him
+and his floor.
+
 ## Rendering and diagnostics
 
 `SkinnedMeshRenderer` derives from `opengl::Renderer<SkinnedDraw>` and exposes the usual

@@ -97,6 +97,25 @@ content::Result<RigFile> parse_rig(std::string_view source, const std::filesyste
                 if (result.clips.size() == max_clips) entry.fail("Too many clips");
                 result.clips.push_back(std::move(clip));
             }
+        if (r.view().child("lights"))
+            for (const auto entry : r.child("lights").elements()) {
+                Light light;
+                light.name = entry.get<std::string>("name");
+                light.position = entry.get<Vec3>("position");
+                light.direction = entry.get<Vec3>("direction");
+                light.color = entry.get_or<Vec3>("color", Vec3{1, 1, 1});
+                light.inner = entry.get_or<f32>("inner", 12);
+                light.outer = entry.get_or<f32>("outer", 20);
+                light.range = entry.get_or<f32>("range", 8);
+                const auto finite = [](Vec3 v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
+                const auto& d = light.direction;
+                if (!finite(light.position) || !finite(d) || !finite(light.color) || !(d.x * d.x + d.y * d.y + d.z * d.z > 1e-12F))
+                    entry.fail("A light needs a finite position, colour and nonzero direction");
+                if (!(light.inner >= 0 && light.inner <= light.outer && light.outer < 90) || !(light.range > 0 && std::isfinite(light.range)))
+                    entry.fail("A light needs 0 <= inner <= outer < 90 degrees and a positive range");
+                if (result.lights.size() == max_lights) entry.fail("Too many lights");
+                result.lights.push_back(std::move(light));
+            }
         return result;
     });
 }

@@ -80,6 +80,22 @@ TEST_CASE("Rig documents that break the rules are refused", "[character][file]")
     CHECK_FALSE(character::read_rig("missing.vrig"));
 }
 
+TEST_CASE("A rig's lights are read, and broken ones refused", "[character][file]") {
+    const auto light = [](std::string_view fields) {
+        return std::string{small_rig} + "lights = [ { name = \"lamp\"; " + std::string{fields} + " }, ];\n";
+    };
+    const auto rig = character::parse_rig(light(R"(position = [0, 1.5, 0]; direction = [0, 0, 2]; color = [2, 2, 1]; inner = 5; outer = 15; range = 4;)"), "x");
+    REQUIRE(rig);
+    REQUIRE(rig->lights.size() == 1);
+    CHECK(rig->lights[0].position == Vec3{0, 1.5F, 0});
+    CHECK(rig->lights[0].color == Vec3{2, 2, 1});
+    CHECK(rig->lights[0].outer == 15.F);
+    CHECK_FALSE(character::parse_rig(light(R"(position = [0, 0, 0]; direction = [0, 0, 0];)"), "x"));
+    CHECK_FALSE(character::parse_rig(light(R"(position = [0, 0, 0]; direction = [0, 0, 1]; inner = 30; outer = 20;)"), "x"));
+    CHECK_FALSE(character::parse_rig(light(R"(position = [0, 0, 0]; direction = [0, 0, 1]; range = 0;)"), "x"));
+    CHECK_FALSE(character::parse_rig(light(R"(direction = [0, 0, 1];)"), "x"));
+}
+
 TEST_CASE("Frames blend linearly, rotations by the shortest path", "[character][clip]") {
     const rig::Transform a{{0, 0, 0}, {0, 0, 0, 1}, 1};
     const rig::Transform b{{2, 4, 6}, {0, 0, 0.70710677F, 0.70710677F}, 3};
@@ -97,7 +113,7 @@ TEST_CASE("Frames blend linearly, rotations by the shortest path", "[character][
 TEST_CASE("The soldier loads with his armature, skin and walk", "[character][soldier]") {
     auto soldier = character::Character::load(VNG_SOLDIER_MESH);
     REQUIRE(soldier);
-    CHECK(soldier->armature().bone_count() == 105); // 98 from the rig, a root, 6 joint helpers
+    CHECK(soldier->armature().bone_count() == 109); // 98 from the rig, a root, 10 joint helpers
     CHECK(soldier->binding().mesh().vertex_count() > 10'000);
     const auto* walk = soldier->clip("walk");
     REQUIRE(walk);
@@ -114,6 +130,30 @@ TEST_CASE("The soldier loads with his armature, skin and walk", "[character][sol
     // The importer scales the bind pose to 1.8 m. Its top is the muzzle of the
     // rifle raised in his hand, which --hole-closer then shortened by 1.3 cm.
     CHECK(high.y == Catch::Approx(1.8).margin(.02));
+}
+
+TEST_CASE("The soldier's flashlight rides on his right shoulder and lights ahead", "[character][soldier]") {
+    auto soldier = character::Character::load(VNG_SOLDIER_MESH);
+    REQUIRE(soldier);
+    REQUIRE(soldier->rig().lights.size() == 1);
+    const auto& walk = *soldier->clip("walk");
+    auto pose = soldier->armature().rest_pose();
+    const auto shoulder = soldier->armature().bone("DEF-shoulder.R");
+    REQUIRE(shoulder);
+    for (std::size_t frame = 0; frame < walk.frames; frame += 4) {
+        REQUIRE(soldier->pose(walk, static_cast<f32>(frame) / walk.fps, pose));
+        const auto spots = soldier->spots(pose);
+        REQUIRE(spots.size() == 1);
+        const auto globals = pose.globals();
+        REQUIRE(globals);
+        const auto& joint = (*globals)[*soldier->armature().index(*shoulder)][3];
+        // Within the collarbone's reach of its joint, high on his right, pointing forward and down.
+        CHECK(distance(spots[0].position, {joint.x, joint.y, joint.z}) < .25F);
+        CHECK(spots[0].position.x < 0.F);
+        CHECK(spots[0].position.y > 1.4F);
+        CHECK(spots[0].direction.z > .6F);
+        CHECK(spots[0].direction.y < 0.F);
+    }
 }
 
 TEST_CASE("The soldier's rest pose leaves the mesh where it is", "[character][soldier]") {
@@ -251,8 +291,8 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
             for (std::size_t row = 0; row < 3; ++row) drift = std::max(drift, std::abs(relative[c][row] - (*first)[c][row]));
     }
     CHECK(drift < 1e-3F);
-    // Each elbow and knee helper turns half as far as its joint: in every
-    // frame it is as far (in angle) from the bone above as from the bone below.
+    // Each joint helper turns its share of the way through its joint: in
+    // every frame its angle from the bone above is that share of the joint's.
     const auto angle = [](const Mat4& a, const Mat4& b) {
         f32 dot = 0;
         for (std::size_t c = 0; c < 3; ++c)
@@ -260,9 +300,11 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
         return std::acos(std::clamp((dot - 1) / 2, -1.F, 1.F));
     };
     std::size_t helpers = 0;
-    for (const auto& [helper, upper, lower] : {std::tuple{"HALF-elbow.L", "DEF-upper_arm.L.001", "DEF-forearm.L"},
-             std::tuple{"HALF-elbow.R", "DEF-upper_arm.R.001", "DEF-forearm.R"},
-             std::tuple{"HALF-knee.L", "DEF-thigh.L.001", "DEF-shin.L"}, std::tuple{"HALF-knee.R", "DEF-thigh.R.001", "DEF-shin.R"}}) {
+    for (const auto& [helper, upper, lower, share] : {std::tuple{"HALF-elbow.L", "DEF-upper_arm.L.001", "DEF-forearm.L", .5F},
+             std::tuple{"HALF-elbow.R", "DEF-upper_arm.R.001", "DEF-forearm.R", .5F},
+             std::tuple{"QUARTER-elbow.L", "DEF-upper_arm.L.001", "DEF-forearm.L", .25F},
+             std::tuple{"THREEQUARTER-elbow.R", "DEF-upper_arm.R.001", "DEF-forearm.R", .75F},
+             std::tuple{"HALF-knee.L", "DEF-thigh.L.001", "DEF-shin.L", .5F}, std::tuple{"HALF-knee.R", "DEF-thigh.R.001", "DEF-shin.R", .5F}}) {
         const auto h = soldier->armature().bone(helper), u = soldier->armature().bone(upper), d = soldier->armature().bone(lower);
         REQUIRE(h);
         REQUIRE(u);
@@ -274,10 +316,10 @@ TEST_CASE("The re-keyed walk keeps every joint together and both hands on the ri
             REQUIRE(globals);
             const auto& g = *globals;
             const auto at = [&](rig::BoneId id) { return g[*soldier->armature().index(id)]; };
-            CHECK(angle(at(*h), at(*u)) == Catch::Approx(angle(at(*h), at(*d))).margin(.01));
+            CHECK(angle(at(*h), at(*u)) == Catch::Approx(share * angle(at(*u), at(*d))).margin(.01));
         }
     }
-    CHECK(helpers == 4);
+    CHECK(helpers == 6);
     // Neither half of an upper arm or forearm rolls against the other: on
     // low-poly sleeves a roll between two rings folds them into a point.
     for (const auto* name : {"DEF-upper_arm.L.001", "DEF-upper_arm.R.001", "DEF-forearm.L.001", "DEF-forearm.R.001"}) {
