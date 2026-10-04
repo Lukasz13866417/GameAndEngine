@@ -48,7 +48,7 @@ window can be made.
 ```sh
 python3 examples/tools/import_model.py Soldier.fbx examples/assets/soldier --name soldier \
     --colors examples/assets/soldier/colors.json --lights examples/assets/soldier/lights.json \
-    --rekey-walk --hole-closer 0.06 --flatten-deltoids
+    --rekey-walk --hole-closer 0.06 --flatten-deltoids --shape-arms
 ```
 
 `--hole-closer M` edits the model: a mesh held wholly by one hand that has
@@ -66,6 +66,15 @@ the sleeve may now come no further from the bone than the straight line from
 its distance 2 cm along the arm to its distance at 20 cm. For the soldier, 61
 sleeve vertices move in, by at most 2.9 cm, and the shoulder yoke lying on
 them moves with them.
+
+`--shape-arms` edits the model too: the soldier's sleeves are plain tubes
+along the bones. Each upper arm gets a tricep, a swell of up to 1.5 cm on
+its back and underside, highest midway between shoulder and elbow, so with
+his arm raised the underside is gently convex instead of a straight line
+sagging into the armpit. Each forearm narrows by up to a fifth about its own
+middle from 2 cm past the elbow, most at 6 to 10 cm and not at all from
+18 cm, so it is no wider than the elbow it folds against. 345 sleeve vertices
+move, by at most 1.9 cm.
 
 `--lights FILE` adds lights the character carries, from a JSON list. Each
 light has a `name`, a `position` and `direction` in the character's bind pose
