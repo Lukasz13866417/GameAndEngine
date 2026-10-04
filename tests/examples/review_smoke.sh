@@ -14,6 +14,15 @@ grep -q 'text = "Smoke note";' "$work/smoke.vreview" || { echo "The note is not 
 [ -s "$work/smoke.png" ] || { echo "No screenshot"; exit 1; }
 echo "Review smoke test passed"
 
+# --select opens a note in the list; a note the review lacks is refused.
+rm -f "$work/select.png"
+"$review" "$work/smoke.vreview" --select 1 --screenshot "$work/select.png" || exit 1
+[ -s "$work/select.png" ] || { echo "No screenshot with a note open"; exit 1; }
+if "$review" "$work/smoke.vreview" --select 99 --hidden --frames 1 2>/dev/null; then
+    echo "--select of a missing note did not fail"
+    exit 1
+fi
+
 # Comparison pins must name the requested view, not the first view whose
 # uninitialized bounds happen to contain the point.
 rm -f "$work/comparison.png"
