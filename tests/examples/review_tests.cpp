@@ -425,7 +425,7 @@ TEST_CASE("A character's notes keep their clip and camera", "[review][file]") {
     pinned.object_name = "DEF-upper_arm.R";
     pinned.point = Vec3{-.25F, 1.41F, -.03F};
     pinned.clip = "walk";
-    pinned.camera = std::array{-80.F, 5.F, 1.25F, 1.5F};
+    pinned.camera = std::array{-80.F, 5.F, 1.25F, -.25F, 1.5F, .125F};
     r.notes = {pinned, note(2, "A", "Written by hand, without either")};
     REQUIRE(review::save_review(file, r));
     const auto read = review::read_review(file);
@@ -434,15 +434,24 @@ TEST_CASE("A character's notes keep their clip and camera", "[review][file]") {
     const auto text = review::encode_review(r, file);
     REQUIRE(text);
     CHECK(text->contains("clip = \"walk\";"));
-    CHECK(text->contains("camera = [-80, 5, 1.25, 1.5];"));
+    CHECK(text->contains("camera = [-80, 5, 1.25, -0.25, 1.5, 0.125];"));
     // A note without them writes neither field.
     CHECK(std::regex_search(*text, std::regex("reply = \"\";\n    \\},\n\\];")));
+    // Earlier files gave four numbers: a height looked at on his centre line.
+    auto older = *text;
+    older.replace(older.find("camera = [-80, 5, 1.25, -0.25, 1.5, 0.125];"), 44, "camera = [-80, 5, 1.25, 1.5];");
+    const auto old = review::parse_review(older, file);
+    REQUIRE(old);
+    CHECK(old->notes[0].camera == std::array{-80.F, 5.F, 1.25F, 0.F, 1.5F, 0.F});
+    auto wrong = *text;
+    wrong.replace(wrong.find("camera = [-80, 5, 1.25, -0.25, 1.5, 0.125];"), 44, "camera = [-80, 5, 1.25, 1.5, 2];");
+    CHECK_FALSE(review::parse_review(wrong, file));
 
     auto bad = r;
-    bad.notes[0].camera = std::array{0.F, 0.F, 0.F, 1.F};
+    bad.notes[0].camera = std::array{0.F, 0.F, 0.F, 0.F, 1.F, 0.F};
     CHECK(refusal(bad).contains("camera"));
     bad = r;
-    bad.notes[0].camera = std::array{std::numeric_limits<f32>::quiet_NaN(), 0.F, 1.F, 1.F};
+    bad.notes[0].camera = std::array{std::numeric_limits<f32>::quiet_NaN(), 0.F, 1.F, 0.F, 1.F, 0.F};
     CHECK(refusal(bad).contains("camera"));
     bad = r;
     bad.notes[0].clip = "two\nlines";
@@ -451,8 +460,8 @@ TEST_CASE("A character's notes keep their clip and camera", "[review][file]") {
     // They merge like any field: each side's change is kept, mine where both changed one.
     auto theirs = r, mine = r;
     theirs.notes[0].clip = "walk_authored";
-    theirs.notes[0].camera = std::array{10.F, 8.F, 3.F, 1.F};
-    mine.notes[0].camera = std::array{0.F, 8.F, 3.F, 1.F};
+    theirs.notes[0].camera = std::array{10.F, 8.F, 3.F, 0.F, 1.F, 0.F};
+    mine.notes[0].camera = std::array{0.F, 8.F, 3.F, 0.F, 1.F, 0.F};
     const auto merged = review::merge(r, mine, theirs);
     CHECK(merged.notes[0].clip == "walk_authored");
     CHECK(merged.notes[0].camera == mine.notes[0].camera);

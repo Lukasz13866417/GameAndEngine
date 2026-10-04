@@ -129,12 +129,14 @@ He walks on the spot over a treadmill floor, lit by any light he carries
   clock covers that clip.
 - **Front**, **Left**, **Back**, **Right** and **Above**: jump the camera to
   that side of him. *Left* and *Right* are his own.
+- **Whole**: back out to all of him, keeping the side looked from.
 
 In the view:
 
-- drag to turn the camera around him;
-- right-drag to raise or lower it;
-- use the wheel to zoom;
+- drag to turn the camera around the point it looks at;
+- right-drag to pan: the picture slides with the pointer;
+- use the wheel to zoom toward (or away from) what is under the pointer, to
+  look closely at an elbow, say;
 - click without dragging to pin a note.
 
 In a comparison of characters (variants of one, say), the views share one
@@ -267,7 +269,7 @@ notes = [
 | `status` | `"open"` or `"resolved"`. |
 | `reply` | The author's answer. |
 | `clip` | On a character: the clip that was playing. Absent on scenes. |
-| `camera` | On a character: `[yaw, pitch, distance, height]`. That is the camera's direction around him in degrees (0 in front, 90 his left), degrees above level, metres from the point it looks at, and that point's height in metres. Absent on scenes. |
+| `camera` | On a character: `[yaw, pitch, distance, x, y, z]`. That is the camera's direction around the point it looks at in degrees (0 in front of him, 90 his left), degrees above level, metres from that point, and the point, in metres in his space. Earlier files gave four numbers, `[yaw, pitch, distance, height]`, a height on his centre line; those still read. Absent on scenes. |
 
 **Rules**
 

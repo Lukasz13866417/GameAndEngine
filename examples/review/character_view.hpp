@@ -14,11 +14,19 @@
 namespace review {
 // Where a character view looks from: degrees around him (0 in front, 90 his
 // left), degrees above level, metres from the point looked at, and that
-// point's height.
+// point. The default shows all of him.
 struct Orbit {
-    vng::f32 yaw{30}, pitch{8}, distance{3.9F}, look{.92F};
+    vng::f32 yaw{30}, pitch{8}, distance{3.9F};
+    vng::Vec3 target{0, .92F, 0};
     friend bool operator==(const Orbit&, const Orbit&) = default;
 };
+// The orbit after dragging the image by `drag` (normalized image units, x
+// right and y down) in an image `aspect` wide: the point looked at slides
+// with the pointer, as if the picture were grabbed.
+[[nodiscard]] Orbit panned(const Orbit&, vng::Vec2 drag, vng::f32 aspect);
+// The orbit `factor` times as far away, keeping what is under the normalized
+// image point `at` where it is: zooming in toward it, or out from it.
+[[nodiscard]] Orbit zoomed(const Orbit&, vng::f32 factor, vng::Vec2 at, vng::f32 aspect);
 
 // A skinned character walking on the spot over a treadmill floor, seen from
 // an orbit the reviewer turns. It plays one of the character's clips; a click
@@ -44,7 +52,8 @@ public:
     // False, changing nothing, when the character has no clip of that name.
     bool clip(std::string_view name);
     [[nodiscard]] const Orbit& orbit() const { return orbit_; }
-    // Keeps the camera between straight below and straight above, 0.3 to 30 m away.
+    // Keeps the camera between straight below and straight above, 0.15 to 30 m
+    // from a point within 10 m of him.
     void orbit(Orbit);
 
 private:

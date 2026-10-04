@@ -40,8 +40,8 @@ constexpr std::string_view help = R"(vng_review: review saved scenes, alone or s
       Create a review (1 candidate: a single review; 2 to 4: a comparison), then open it.
       --about and --offset apply to the candidate before them. --range limits the clock.
       A candidate can also be a skinned character (.vmesh with its .vrig): turn the
-      camera by dragging, zoom with the wheel, raise or lower it with a right-drag,
-      and pick its clip in the view's header.
+      camera by dragging, pan with a right-drag, zoom toward the pointer with the
+      wheel, and pick its clip in the time bar.
 
   --at SECONDS       start the clock here            --play        start playing
   --select N         open note N: its candidate, its time, its text and actions
@@ -595,7 +595,7 @@ private:
         const auto i = candidate_index(note.candidate);
         if (const auto* body = slots_[i].character()) {
             if (!note.clip.empty() && note.clip != body->clip()) play_clip(note.clip);
-            if (note.camera) turn({(*note.camera)[0], (*note.camera)[1], (*note.camera)[2], (*note.camera)[3]});
+            if (const auto& c = note.camera) turn({(*c)[0], (*c)[1], (*c)[2], {(*c)[3], (*c)[4], (*c)[5]}});
         }
         at(note.time);
         select_candidate(i);
@@ -627,7 +627,7 @@ private:
             headers_.push_back(header);
             header_buttons_.push_back(header.button(c.id + "  " + c.label));
             header_counts_.push_back(header.label(""));
-            if (slots_[i].character() && slots_.size() == 1) header.label("Drag to turn, right-drag to raise, wheel to zoom");
+            if (slots_[i].character() && slots_.size() == 1) header.label("Drag to turn, right-drag to pan, wheel to zoom at the pointer");
             images_.push_back(root.image());
             shown_revision_.push_back(0);
         }
@@ -637,7 +637,7 @@ private:
         speed_box_ = controls.dropdown<f32>("Speed", {{1.F, "1x"}, {.5F, "1/2x"}, {1.F / 3, "1/3x"}, {.25F, "1/4x"}}).width(120);
         speed_box_.value(speed_);
         loop_box_ = controls.checkbox("Loop").value(loop_).width(100);
-        clock_ = controls.label("").width(150);
+        clock_ = controls.label("").width(110);
         const bool characters = std::ranges::any_of(slots_, [](const Slot& slot) { return slot.character() != nullptr; });
         if (!characters) controls.label("Click a view to pin a note.  Space: play").width(420);
         else {
@@ -650,11 +650,12 @@ private:
                     for (const auto& name : body->clips())
                         if (std::ranges::find(clips, name, &ui::Choice<std::string>::value) == clips.end()) clips.push_back({name, name});
                 }
-            auto clip = controls.dropdown<std::string>("Clip", std::span<const ui::Choice<std::string>>{clips}).width(230);
+            auto clip = controls.dropdown<std::string>("Clip", std::span<const ui::Choice<std::string>>{clips}).width(200);
             clip.value(playing);
             std::vector<ui::Button> views;
-            for (const auto& preset : presets) views.push_back(controls.button(preset.name).width(70));
-            controls_.emplace(Controls{std::move(clip), std::move(views)});
+            for (const auto& preset : presets) views.push_back(controls.button(preset.name).width(62));
+            auto all = controls.button("Whole").width(70);
+            controls_.emplace(Controls{std::move(clip), std::move(views), std::move(all)});
         }
         strip_ = bar_.image().height(12);
         auto pixel = std::make_shared<gfx::ImageData>();
@@ -874,6 +875,12 @@ private:
         }
         if (controls_) {
             if (const auto name = controls_->clip.changedValue()) play_clip(*name);
+            if (controls_->whole.clicked())
+                for (const auto& slot : slots_)
+                    if (const auto* body = slot.character()) {
+                        turn(whole(body->orbit()));
+                        break;
+                    }
             for (std::size_t k = 0; k < presets.size(); ++k)
                 if (controls_->views[k].clicked())
                     for (const auto& slot : slots_)
@@ -899,11 +906,12 @@ private:
                 drag_->moved = drag_->moved || std::hypot(event.position.x - drag_->start.x, event.position.y - drag_->start.y) > 4;
                 if (const auto* body = slots_[drag_->slot].character(); body && drag_->moved) {
                     auto orbit = body->orbit();
+                    const auto b = images_[drag_->slot].bounds();
                     if (drag_->button == 0) {
                         orbit.yaw -= step.x * .4F;
                         orbit.pitch += step.y * .3F;
                     } else
-                        orbit.look += step.y * orbit.distance * .002F;
+                        orbit = review::panned(orbit, {step.x / b.width, step.y / b.height}, b.width / b.height);
                     turn(orbit);
                 }
             } else if (drag_ && ((event.kind == input::EventKind::pointer_up && event.button == drag_->button) ||
@@ -915,9 +923,9 @@ private:
         for (const auto& event : unhandled) {
             if (event.kind == input::EventKind::scroll)
                 if (const auto i = character_at(event.position)) {
-                    auto orbit = slots_[*i].character()->orbit();
-                    orbit.distance *= std::pow(.88F, event.scroll.y);
-                    turn(orbit);
+                    const auto b = images_[*i].bounds();
+                    const Vec2 at{(event.position.x - b.x) / b.width, (event.position.y - b.y) / b.height};
+                    turn(review::zoomed(slots_[*i].character()->orbit(), std::pow(.88F, event.scroll.y), at, b.width / b.height));
                 }
             if (event.kind == input::EventKind::key_down && !input.capturesKeyboard) {
                 if (event.key == input::Key::space && !event.repeat) playing_ = !playing_;
@@ -981,7 +989,7 @@ private:
             if (const auto* body = slots_[i].character()) {
                 note.clip = body->clip();
                 const auto& orbit = body->orbit();
-                note.camera = std::array{orbit.yaw, orbit.pitch, orbit.distance, orbit.look};
+                note.camera = std::array{orbit.yaw, orbit.pitch, orbit.distance, orbit.target.x, orbit.target.y, orbit.target.z};
             }
             review_.notes.push_back(std::move(note));
             show_note(review_.notes.back().id);
@@ -1044,11 +1052,14 @@ private:
         f32 pitch;
     };
     static constexpr std::array<Preset, 5> presets{{{"Front", 0.F, 8}, {"Left", 90.F, 8}, {"Back", 180.F, 8}, {"Right", -90.F, 8}, {"Above", {}, 70}}};
+    // Back out to all of him, keeping the direction looked from.
+    static review::Orbit whole(const review::Orbit& from) { return {from.yaw, from.pitch}; }
     struct Controls {
         ui::Dropdown<std::string> clip;
         std::vector<ui::Button> views;
+        ui::Button whole;
     };
-    // A press on a character's view: a click if it does not move, else a turn (left button) or a lift (right).
+    // A press on a character's view: a click if it does not move, else a turn (left button) or a pan (right).
     struct Drag {
         std::size_t slot;
         u32 button;

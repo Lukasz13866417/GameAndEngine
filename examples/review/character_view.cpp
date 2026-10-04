@@ -27,7 +27,7 @@ Vec3 transform(const Mat4& m, Vec3 p) {
 }
 
 constexpr f32 vertical_fov = 38;
-Vec3 target_of(const Orbit& o) { return {0, o.look, 0}; }
+Vec3 target_of(const Orbit& o) { return o.target; }
 Vec3 eye_of(const Orbit& o) {
     const f32 yaw = radians(o.yaw), pitch = radians(o.pitch);
     return target_of(o) + Vec3{std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)} * o.distance;
@@ -47,7 +47,33 @@ Vec3 ray_of(const Orbit& o, Vec2 normalized, Extent2D extent) {
     return unit(forward + right * ((2 * normalized.x - 1) * half * aspect) + up * ((1 - 2 * normalized.y) * half));
 }
 Vec3 position(const character::Mesh& mesh, std::size_t v) { return mesh.vertices()[v].get(gfx::Position{}); }
+// The camera's right and up directions, and the height of the image at the point looked at.
+struct Basis {
+    Vec3 right, up;
+    f32 height;
+};
+Basis basis_of(const Orbit& o) {
+    const auto forward = unit(target_of(o) - eye_of(o));
+    const auto right = unit(cross(forward, {0, 1, 0}));
+    return {right, cross(right, forward), 2 * o.distance * std::tan(radians(vertical_fov) / 2)};
+}
 } // namespace
+
+Orbit panned(const Orbit& o, Vec2 drag, f32 aspect) {
+    const auto b = basis_of(o);
+    auto out = o;
+    out.target = o.target - b.right * (drag.x * b.height * aspect) + b.up * (drag.y * b.height);
+    return out;
+}
+
+Orbit zoomed(const Orbit& o, f32 factor, Vec2 at, f32 aspect) {
+    const auto b = basis_of(o);
+    const auto under = o.target + b.right * ((at.x - .5F) * b.height * aspect) - b.up * ((at.y - .5F) * b.height);
+    auto out = o;
+    out.target = under + (o.target - under) * factor;
+    out.distance = o.distance * factor;
+    return out;
+}
 
 content::Result<character::Character> CharacterView::load(const std::filesystem::path& path) {
     return character::Character::load(path);
@@ -97,8 +123,8 @@ bool CharacterView::clip(std::string_view name) {
 
 void CharacterView::orbit(Orbit o) {
     o.pitch = std::clamp(o.pitch, -89.F, 89.F);
-    o.distance = std::clamp(o.distance, .3F, 30.F);
-    o.look = std::clamp(o.look, -1.F, 4.F);
+    o.distance = std::clamp(o.distance, .15F, 30.F);
+    o.target = {std::clamp(o.target.x, -10.F, 10.F), std::clamp(o.target.y, -1.F, 4.F), std::clamp(o.target.z, -10.F, 10.F)};
     o.yaw = std::remainder(o.yaw, 360.F);
     orbit_ = o;
 }

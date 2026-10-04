@@ -176,7 +176,7 @@ content::Result<void> validate(const Review& r) {
             return std::unexpected(invalid(where + ": status must be \"open\" or \"resolved\""));
         if (n.clip.size() > 256 || !single_line(n.clip)) return std::unexpected(invalid(where + " has a bad clip name"));
         if (n.camera && (!std::ranges::all_of(*n.camera, [](f32 v) { return std::isfinite(v); }) || (*n.camera)[2] <= 0))
-            return std::unexpected(invalid(where + ": camera must be four finite numbers with a positive distance"));
+            return std::unexpected(invalid(where + ": camera must be finite numbers with a positive distance"));
     }
     return {};
 }
@@ -203,7 +203,11 @@ content::Result<std::string> encode_review(const Review& r, const std::filesyste
           << ";\n        created = " << quote(n.created) << ";\n        status = " << quote(n.status)
           << ";\n        reply = " << quote(n.reply) << ";\n";
         if (!n.clip.empty()) o << "        clip = " << quote(n.clip) << ";\n";
-        if (n.camera) o << "        camera = [" << (*n.camera)[0] << ", " << (*n.camera)[1] << ", " << (*n.camera)[2] << ", " << (*n.camera)[3] << "];\n";
+        if (n.camera) {
+            o << "        camera = [";
+            for (std::size_t k = 0; k < n.camera->size(); ++k) o << (k ? ", " : "") << (*n.camera)[k];
+            o << "];\n";
+        }
         o << "    },\n";
     }
     o << "];\n";
@@ -255,7 +259,12 @@ content::Result<Review> parse_review(std::string_view source, const std::filesys
                 n.status = entry.get_or<std::string>("status", "open");
                 n.reply = entry.get_or<std::string>("reply", "");
                 n.clip = entry.get_or<std::string>("clip", "");
-                if (const auto camera = entry.optional<std::array<f32, 4>>("camera")) n.camera = *camera;
+                // Six numbers; the four of earlier files looked at a height on his centre line.
+                if (const auto camera = entry.optional<std::vector<f32>>("camera")) {
+                    if (camera->size() == 6) n.camera = std::array{(*camera)[0], (*camera)[1], (*camera)[2], (*camera)[3], (*camera)[4], (*camera)[5]};
+                    else if (camera->size() == 4) n.camera = std::array{(*camera)[0], (*camera)[1], (*camera)[2], 0.F, (*camera)[3], 0.F};
+                    else fail_at(entry, "camera", "camera must be six numbers: yaw, pitch, distance and the point looked at");
+                }
                 result.notes.push_back(std::move(n));
             }
         return result;

@@ -39,7 +39,8 @@ struct Note {
     std::string status{"open"};       // "open" or "resolved"
     std::string reply;                // the author's answer
     std::string clip;                 // a character's clip, "" for a scene
-    std::optional<std::array<vng::f32, 4>> camera; // a character's camera: yaw and pitch (degrees), distance and height looked at (m)
+    // A character's camera: yaw and pitch (degrees), distance (m), and the point looked at (m).
+    std::optional<std::array<vng::f32, 6>> camera;
     friend bool operator==(const Note&, const Note&) = default;
 };
 struct Review {
