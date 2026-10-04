@@ -650,19 +650,26 @@ def hand_grips(scene, character, first_frame, dip=0.0, lower=0.0, reach=0.0):
                 other: dict(hand=support, curls=support.close(triangles, on_support), support=placement)}
     return {}
 
-def even_elbows(scene, character, width=0.12):
+def even_elbows(scene, character, width=0.12, outer_width=0.05):
     """The soldier's sleeves hand over from upper arm to forearm unevenly, from
     9 cm above the elbow to 12 cm below it, so a bent arm folds off the joint.
     On each arm vertex the weight the two arm bones share is re-split by a
-    smoothstep of the distance along the arm from the elbow, over +-width
-    metres: an even handover centred on the joint. Rigid pieces (an elbow pad
-    whose forearm share barely varies) keep their weights; other bones'
-    weights are untouched. Returns the vertices changed."""
+    smoothstep of the distance along the arm from the elbow, centred on the
+    joint, over +-width metres on the inside of the fold (the crease) and
+    +-outer_width on the outside. The back of a forearm stays with the
+    forearm right up to the point of the elbow, so a folded arm keeps its
+    thickness to the joint. An arm in the T-pose folds toward the front, the
+    way the character faces. A rigid piece (an elbow pad, whose forearm share
+    barely varies) stays rigid and takes the share the sleeve has under its
+    middle, so it stays on it; other bones' weights are untouched. Returns
+    the vertices changed."""
     bind = scene.bind_globals(); rest = character.rest; changed = 0
     for side in ("L", "R"):
         try: s0, e0, w0 = (rest[character.names.index(f"DEF-{n}.{side}")][:3, 3] for n in ("upper_arm", "forearm", "hand"))
         except ValueError: continue
         up_dir = (e0 - s0) / np.linalg.norm(e0 - s0); fore_dir = (w0 - e0) / np.linalg.norm(w0 - e0)
+        # The inside of the fold: the front of the arm (+Z, the way the character faces).
+        inside = np.array([0.0, 0.0, 1.0]) - up_dir[2] * up_dir; inside /= np.linalg.norm(inside)
         names = {b: display_name(scene.models[b]) for b in scene.models}
         upper = lambda b: names.get(b, "").startswith(f"DEF-upper_arm.{side}")
         fore = lambda b: names.get(b, "").startswith(f"DEF-forearm.{side}")
@@ -672,13 +679,22 @@ def even_elbows(scene, character, width=0.12):
             for v, inf in enumerate(mesh["influences"]):
                 u = sum(w for b, w in inf if upper(b)); f = sum(w for b, w in inf if fore(b)); total = sum(w for _, w in inf)
                 if total > 0 and (u + f) / total > 0.5 and u + f > 0: shares.append(f / (u + f)); picks.append(v)
-            if not picks or np.ptp(shares) < 0.2: continue          # no arm here, or a rigid piece
+            if not picks: continue                                  # no arm here
+            rigid = np.ptp(shares) < 0.2                            # an elbow pad, say
             joint_upper = next((b for b in mesh["links"] if names[b] == f"DEF-upper_arm.{side}.001"), None)
             joint_fore = next((b for b in mesh["links"] if names[b] == f"DEF-forearm.{side}"), None)
+            def share_at(p):
+                d = p - e0
+                axis = fore_dir if d @ fore_dir > 0 else up_dir
+                along = d @ axis
+                radial = d - along * axis
+                facing = radial @ inside / (np.linalg.norm(radial) + 1e-9)   # 1 inside the fold, -1 outside
+                reach = outer_width + (width - outer_width) * (1 + facing) / 2
+                x = np.clip((along + reach) / (2 * reach), 0, 1); return x * x * (3 - 2 * x)
+            middle = share_at(points[picks].mean(0)) if rigid else None
             for v in picks:
-                inf = mesh["influences"][v]; d = points[v] - e0
-                along = d @ fore_dir if d @ fore_dir > 0 else d @ up_dir
-                x = np.clip((along + width) / (2 * width), 0, 1); target = x * x * (3 - 2 * x)
+                inf = mesh["influences"][v]
+                target = middle if rigid else share_at(points[v])
                 u = sum(w for b, w in inf if upper(b)); f = sum(w for b, w in inf if fore(b))
                 if abs(f / (u + f) - target) < 0.02: continue
                 # Keep each side's split between its two segments; a side that had no weight gets the joint's segment.
@@ -725,6 +741,44 @@ def smooth_shoulders(scene, character, radius=0.15, rounds=4):
                 weights = blended
             for v in near: mesh["influences"][v] = sorted(weights[v].items(), key=lambda x: -x[1])[:8]
             changed += len(near)
+    return changed
+
+def firm_underarms(scene, character, start=0.02, end=0.10, reach=0.11, length=0.16):
+    """Under the upper arm, near the armpit, the soldier's skin was shared with
+    the torso several centimetres out along the arm, so with the arm raised
+    the underside lagged toward the body and sagged into a hollow where the
+    tricep should bulge. On the tricep's side of the T-pose arm (below and
+    behind, opposite the elbow's fold), fading out toward the sides, the arm's
+    share rises to a smoothstep from `start` to `end` metres along the arm from
+    the shoulder joint, out to `length`; within `reach` of the bone, and only
+    up, never down. Returns the vertices changed."""
+    bind = scene.bind_globals(); names = {b: display_name(scene.models[b]) for b in scene.models}
+    changed = 0
+    for side in ("L", "R"):
+        try: joint, elbow = (character.rest[character.names.index(f"DEF-{n}.{side}")][:3, 3] for n in ("upper_arm", "forearm"))
+        except ValueError: continue
+        axis = (elbow - joint) / np.linalg.norm(elbow - joint)
+        down = np.array([0.0, -1.0, -1.0])                # the tricep: below and behind
+        down = down - (down @ axis) * axis; down /= np.linalg.norm(down)
+        arm = lambda b: names.get(b, "").startswith((f"DEF-upper_arm.{side}", f"DEF-forearm.{side}"))
+        default = next((b for b in scene.models if names[b] == f"DEF-upper_arm.{side}"), None)
+        for mesh in scene.meshes:
+            points = character.point(Character.bind_points(mesh, bind))
+            if not any(arm(b) for inf in mesh["influences"] for b, _ in inf): continue
+            for v, inf in enumerate(mesh["influences"]):
+                d = points[v] - joint; along = d @ axis; radial = d - along * axis; distance = np.linalg.norm(radial)
+                if not (start - 0.02 < along < length) or distance > reach or not inf: continue
+                under = np.clip((radial @ down / (distance + 1e-9) - 0.2) / 0.6, 0, 1)
+                if under <= 0: continue
+                x = np.clip((along - start) / (end - start), 0, 1)
+                total = sum(w for _, w in inf); share = sum(w for b, w in inf if arm(b)) / total
+                target = share + under * (x * x * (3 - 2 * x) - share)
+                if target <= share + 0.01: continue
+                armed = {b: w for b, w in inf if arm(b)}; body = {b: w for b, w in inf if not arm(b)}
+                a, t = sum(armed.values()), sum(body.values())
+                new = [(b, target * total * w / a) for b, w in armed.items()] if a > 0 else [(default, target * total)]
+                new += [(b, (1 - target) * total * w / t) for b, w in body.items()] if t > 0 else []
+                mesh["influences"][v] = [(b, w) for b, w in new if w > 1e-6]; changed += 1
     return changed
 
 def flatten_deltoids(scene, character, start=0.02, end=0.20, allow=0.003):
@@ -999,6 +1053,7 @@ def main():
     character.add_half_joints()
     evened = even_elbows(scene, character)
     smoothed = smooth_shoulders(scene, character)
+    firmed = firm_underarms(scene, character)
     flattened = flatten_deltoids(scene, character) if args.flatten_deltoids else (0, 0.0)
     if args.hole_closer and not shorten_held(scene, character, args.hole_closer):
         print("  --hole-closer: no mesh held by one hand has two holes; nothing moved")
@@ -1055,6 +1110,7 @@ def main():
     if unfaced: print(f"  {unfaced} vertices off the head followed face bones; they follow their strongest other bone instead")
     if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
     if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")
+    if firmed: print(f"  {firmed} vertices under the upper arms follow the arm from closer to the armpit")
     if flattened[0]: print(f"  {flattened[0]} sleeve vertices of the deltoid bulges moved toward the bone, by at most {flattened[1] * 100:.1f} cm")
     for note in notes: print("  " + note)
     authored = next((c for c in clips if c["name"] != "walk" or not args.rekey_walk), None)
