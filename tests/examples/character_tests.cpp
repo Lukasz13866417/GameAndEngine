@@ -113,7 +113,7 @@ TEST_CASE("Frames blend linearly, rotations by the shortest path", "[character][
 TEST_CASE("The soldier loads with his armature, skin and walk", "[character][soldier]") {
     auto soldier = character::Character::load(VNG_SOLDIER_MESH);
     REQUIRE(soldier);
-    CHECK(soldier->armature().bone_count() == 109); // 98 from the rig, a root, 10 joint helpers
+    CHECK(soldier->armature().bone_count() == 80); // 69 designed bones, a root, 10 joint helpers
     CHECK(soldier->binding().mesh().vertex_count() > 10'000);
     const auto* walk = soldier->clip("walk");
     REQUIRE(walk);
