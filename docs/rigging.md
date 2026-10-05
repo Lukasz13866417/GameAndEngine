@@ -4,8 +4,11 @@ Rigging is built around independent mesh and armature assets. A `SkinBinding`
 connects exactly one immutable mesh snapshot to one immutable armature, while
 each character instance has its own mutable `Pose`.
 
-There is no ML integration, asset database, animation graph, or imported skeleton
-format in this implementation.
+There is no ML integration, asset database or animation graph in this
+implementation, and the engine itself reads no skeleton format. The example
+library `vng_character` loads characters imported from Blender (`.vmesh` with
+skin fields plus a `.vrig` armature and clips) into these types; see
+[characters from Blender](characters.md).
 
 ## Small public API
 
@@ -215,6 +218,15 @@ lighting rather than NaNs; the CPU normal reference reports a degenerate-normal
 diagnostic. For nonzero blended normals, the shader rescales their magnitude
 before normalization to avoid scale-dependent overflow or loss of lighting.
 Basic lighting can be disabled explicitly with `.lighting = false`.
+
+A lit draw can also take one spot light, `SkinnedDraw::spot`: a world-space
+position and direction, a linear colour times its strength, the inner and
+outer edges of its cone in degrees off its axis, and a range in metres. Light
+is added in proportion to how far inside the cone a surface lies (smoothly
+across its edge), the square of how much of the range is left, and how
+squarely the surface faces the light. Nothing casts shadows. Give every draw
+that the light should reach the same spot, as the soldier demo does for him
+and his floor.
 
 ## Rendering and diagnostics
 

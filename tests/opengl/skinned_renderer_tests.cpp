@@ -862,3 +862,43 @@ TEST_CASE("buffer upload reports native mapped-storage failure before cacheable 
     require_ok(buffer->read(0, readback));
     CHECK(readback == update);
 }
+
+TEST_CASE("a draw's spot light brightens only what lies inside its cone", "[rig_opengl][light]")
+{
+    auto harness = create_harness();
+    const auto skeleton = armature();
+    // A grey wall facing the camera, lit by the renderer's fixed light.
+    using LitVertex = vng::gfx::Record<vng::gfx::Position, vng::gfx::Normal, vng::gfx::Color>;
+    vng::gfx::Mesh<LitVertex> wall{4};
+    const std::array corners{vng::Vec3{-0.9F, -0.9F, 0}, vng::Vec3{0.9F, -0.9F, 0}, vng::Vec3{0.9F, 0.9F, 0}, vng::Vec3{-0.9F, 0.9F, 0}};
+    for (std::size_t i = 0; i < corners.size(); ++i) {
+        wall.vertices()[i].set(vng::gfx::Position{}, corners[i]);
+        wall.vertices()[i].set(vng::gfx::Normal{}, {0, 0, 1});
+        wall.vertices()[i].set(vng::gfx::Color{}, {.3F, .3F, .3F, 1});
+    }
+    wall.add_face(0, 1, 2);
+    wall.add_face(0, 2, 3);
+    auto binding = vng::rig::bind(wall, skeleton.armature);
+    require_ok(binding);
+    for (std::size_t vertex = 0; vertex < 4; ++vertex) require_ok(binding->set_weights(vertex, {{skeleton.root, 1.0F}}));
+    auto renderer = vng::render::make_skinned_mesh_renderer(harness.device, *binding);
+    require_ok(renderer);
+    const auto pose = skeleton.armature.rest_pose();
+    const auto render = [&](std::optional<vng::render::SpotLight> spot) {
+        auto frame = begin_clear(harness);
+        require_ok(renderer->render(frame, view(), vng::render::SkinnedDraw{.pose = pose, .spot = spot}));
+        require_ok(frame.end());
+        return read_pixels(harness);
+    };
+    const auto unlit = render(std::nullopt);
+    // A beam straight at the wall from in front of x = 0.5: a disc about 0.27 across.
+    const auto lit = render(vng::render::SpotLight{.position = {0.5F, 0, 1}, .direction = {0, 0, -1},
+        .color = {2, 2, 2}, .inner = 10, .outer = 15, .range = 5});
+    CHECK(at_ndc(lit, 0.5F, 0)[0] > at_ndc(unlit, 0.5F, 0)[0] + 40);
+    CHECK(at_ndc(lit, -0.5F, 0) == at_ndc(unlit, -0.5F, 0));
+    CHECK(at_ndc(lit, 0.5F, 0.6F) == at_ndc(unlit, 0.5F, 0.6F));
+    // Out of range, pointing away, or switched off: no light.
+    CHECK(render(vng::render::SpotLight{.position = {0.5F, 0, 1}, .direction = {0, 0, -1}, .color = {2, 2, 2}, .range = .5F}) == unlit);
+    CHECK(render(vng::render::SpotLight{.position = {0.5F, 0, 1}, .direction = {0, 0, 1}, .color = {2, 2, 2}}) == unlit);
+    CHECK(render(vng::render::SpotLight{.position = {0.5F, 0, 1}, .direction = {0, 0, -1}, .color = {0, 0, 0}}) == unlit);
+}
