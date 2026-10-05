@@ -48,34 +48,56 @@ window can be made.
 ```sh
 python3 examples/tools/import_model.py Soldier.fbx examples/assets/soldier --name soldier \
     --colors examples/assets/soldier/colors.json --lights examples/assets/soldier/lights.json \
-    --rekey-walk --hole-closer 0.06 --rebuild-suit Armor
+    --rekey-walk --hole-closer 0.06 --remodel Armor
 ```
 
-`--rebuild-suit MESH` remodels the body suit from scratch (`body.py`). The
-soldier's suit is a plain tube round each limb, with no edge loops at the
-joints and weights that spread across them, so a folded elbow pinched and
-swelled whatever the weights did. The rebuilt suit is a ring sweep along the
-bones:
+`--remodel MESH` models the body suit and the skeleton from scratch
+(`body.py`), keeping the character's look. The soldier's suit came out of
+Blender as a plain tube round each limb, with no edge loops at the joints,
+weights spread across them and the arm bones 1 to 3 cm off the sleeves'
+centres, so a folded elbow pinched and swelled whatever the weights did.
+
+The skeleton is designed anew from the original rig's landmarks: the spine,
+collarbones, arms, hands and legs of a Rigify biped (the same names, so the
+walk, the grips and the tests still find them), with no face or breast bones
+and no pelvis bones. Each collarbone ends at, and each arm bone runs between,
+the centres of the sleeve's cross-sections, found by rays cast from the
+original bone; the hands, legs and spine keep their joints, because their
+meshes are kept. Bone frames point along the bones. Kept meshes' weights on
+dropped bones go to the bone standing for them: the head for the face, the
+chest for the breasts, the hips for the pelvis. Clips authored for the
+original rig are retargeted: each bone turns as its original did, the hips
+keep the original's place, and every other joint hangs from its parent at
+its modelled length.
+
+The suit is swept along the new bones, ring by ring:
 
 - rings of 16 vertices round each limb and 24 round the torso and hood, every
   3 to 4.5 cm;
 - a ring at every joint, perpendicular to the joint's bisector, and at the
   elbows rings 3 and 6 cm either side too, so the elbow's quarter, half and
   three-quarter helpers each own one ring and the fold stays even;
-- each ring copies its size, centre and shape from the original suit there
-  (rays cast from the bone, fitted as low Fourier modes and smoothed along the
-  sweep), so he keeps his proportions. The sleeves are not centred on the
-  bones: the upper arm's sits 3 cm behind its bone;
+- the chest, shoulders and arms are designed: a superelliptic armour plate,
+  deeper than wide, spreading into the shoulders and narrowing to the neck;
+  a deltoid cap 9 cm across; an upper arm slightly taller than deep with a
+  tricep of up to 1.2 cm on its back and underside; an elbow the pad covers
+  (sleeves 6 % narrower under the pads); a forearm no wider than the elbow,
+  tapering to a cuff that meets the hand's wrist. Their sizes come from the
+  original's measurements, so he keeps his proportions;
+- the hips (under the belt), the legs, the neck and the hood copy the
+  original's outlines (rays cast from the bone, fitted as low Fourier modes
+  and smoothed along the sweep, so copied and designed stretches meet without
+  a step);
 - weights set ring by ring: a joint ring is shared half and half, a bone owns
   the middle of its stretch, and the rings inside the torso belong to the
-  collarbone. The legs run from inside the pelvis to the ankle, the arms from
-  inside the torso to the wrist, the torso from the crotch to the crown;
-- a tricep swell of up to 1.5 cm on the back of each upper arm, and sleeves
-  6% narrower under the elbow pads.
+  collarbone, with the arm taking over by 6 cm out. The legs run from inside
+  the pelvis to the ankle, the arms from inside the torso to the cuff, the
+  torso from the crotch to the crown.
 
 The other meshes (hands, boots, belt, pads, yoke, rifle) are kept, and the
-weight and shape fixes below skip a rebuilt mesh. For the soldier it writes
-2,216 vertices and 4,384 triangles in place of the suit's 1,601 and 3,176.
+weight and shape fixes below skip a remodelled mesh. For the soldier it
+writes 2,280 vertices and 4,512 triangles in place of the suit's 1,601 and
+3,176, and 80 bones in place of 109.
 
 `--hole-closer M` edits the model: a mesh held wholly by one hand that has
 two holes through it (the soldier's rifle: a rear and a front hand-hole) gets
@@ -84,7 +106,7 @@ shortened; the near hole and what lies behind it, and the far hole and what
 lies beyond it, keep their shape. The soldier's rifle is 6 cm shorter, so his
 right hand reaches its front hole with the rifle at the authored aim height.
 
-`--flatten-deltoids` edits an original suit (not one rebuilt by `--rebuild-suit`). The soldier's sleeves bulge on top,
+`--flatten-deltoids` edits an original suit (not one remodelled by `--remodel`). The soldier's sleeves bulge on top,
 8 to 11 cm out from each shoulder joint, about 2 cm above a straight taper.
 With his arms held forward and down, that bulge stood out of the arm's top
 line as a step behind the shoulder. In every direction around each upper arm,
@@ -123,8 +145,8 @@ directory:
 | `NAME_pose.vmesh` | The mesh deformed at one clip frame (`--pose-frame N`, default 0), with no skin. It is for static scenes and the editor's mesh import. |
 
 For the soldier, it reads 9 meshes, 11 materials, a 278-bone Rigify rig and six
-identical copies of one walk. It writes 17,880 vertices, 10,809 triangles, 109
-bones (98 from the rig, a root and 10 joint helpers) and two 24-frame clips at
+identical copies of one walk. It writes 17,944 vertices, 10,937 triangles, 80
+bones (69 designed, a root and 10 joint helpers) and two 24-frame clips at
 24 fps, one-second loops:
 
 - `walk`, re-keyed at 0.95 m/s (see [re-keying a walk](#re-keying-a-walk));
@@ -137,9 +159,10 @@ What the conversion does:
 - **Space.** +Y is up, the character faces +Z, one unit is one metre, and the
   feet stand at Y = 0. `--height` sets the height in metres (default 1.8); the
   soldier was 5.6 Blender units tall.
-- **Bones.** Only bones with skin weights are kept, plus a `root` bone. The
-  soldier has 98: 92 `DEF-` bones and 6 of Rigify's face controls, which his
-  weights also use.
+- **Bones.** Without `--remodel`, only bones with skin weights are kept, plus
+  a `root` bone: the soldier's rig has 98, 92 `DEF-` bones and 6 of Rigify's
+  face controls, which his weights also use. With it, the skeleton is
+  designed (see above): the soldier has 69 plus `root`.
   - Each bone's parent is its nearest deforming ancestor.
   - Rigify hangs many `DEF-` bones (the shoulders, the breasts, the face) from
     mechanism bones. An `ORG-` ancestor therefore stands for the `DEF-` bone
@@ -401,8 +424,9 @@ lights = [
   which builds the armature and skin binding from the mesh and its rig.
   `pose(clip, seconds, pose)` sets each animated bone, blending neighbouring
   frames: linear translation and scale, and shortest-path rotation.
-- **`examples/tools/body.py`** rebuilds a body suit as a ring sweep along
-  the bones (`--rebuild-suit`).
+- **`examples/tools/body.py`** models a body suit and its skeleton from
+  scratch (`--remodel`): the designed skeleton, the retargeting of clips onto
+  it, and the ring sweep.
 - **`examples/character/stage.{hpp,cpp}`** is the floor a character walks
   on when shown alone, bound to a single bone so the same skinned renderer
   draws it.

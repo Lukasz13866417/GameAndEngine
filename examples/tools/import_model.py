@@ -270,9 +270,12 @@ def decompose(m):
     return m[:3, 3].copy(), quaternion(m[:3, :3] / scale), float(scale)
 
 class Character:
-    """The FBX scene in engine space: deforming bones only, similarity poses."""
+    """The FBX scene in engine space: deforming bones only, similarity poses.
+    With a `skeleton` (body.Skeleton, designed from this character), its bones
+    stand in for the FBX's: the skeleton's names, hierarchy and rest worlds,
+    and clips retargeted onto it."""
 
-    def __init__(self, scene, height):
+    def __init__(self, scene, height, skeleton=None):
         self.scene = scene
         bind = scene.bind_globals()
         deforming = {b for m in scene.meshes for b in m["links"]}
@@ -288,11 +291,21 @@ class Character:
         self.scale = height / (up[:, 1].max() - up[:, 1].min())
         self.linear = turn @ convert
         self.offset = np.array([0.0, -up[:, 1].min() * self.scale, 0.0])
+        self.skeleton = None
+        self.halves = []
+        if skeleton is not None:
+            self.original = skeleton.original
+            self.skeleton = skeleton
+            self.deforming = list(skeleton.deforming)
+            self.names = list(skeleton.names)
+            self.parents = list(skeleton.parents)
+            self.bone_index = {b: k + 1 for k, b in enumerate(self.deforming)}
+            self.rest = self.with_halves([m.copy() for m in skeleton.rest])
+            return
         self.names = ["root"] + [display_name(scene.models[b]) for b in self.deforming]
         index = {b: k + 1 for k, b in enumerate(self.deforming)}
         self.parents = [-1] + [index.get(parent[b], 0) for b in self.deforming]
         self.bone_index = index
-        self.halves = []
         self.rest = self.bone_worlds(bind)
 
     def deforming_parent(self, model, deforming):
@@ -334,6 +347,9 @@ class Character:
         return similarity(out)
 
     def bone_worlds(self, globals_):
+        if self.skeleton is not None:
+            import body
+            return self.with_halves(body.retarget(self.skeleton, self.original, globals_, self.world))
         worlds = [np.eye(4)]
         for b in self.deforming: worlds.append(self.world(globals_[b]))
         return self.with_halves(worlds)
@@ -1103,8 +1119,8 @@ def main():
                         help="flatten the bulge on top of each upper arm near the shoulder to a straight taper")
     parser.add_argument("--shape-arms", action="store_true",
                         help="give each upper arm a tricep and slim each forearm next to the elbow")
-    parser.add_argument("--rebuild-suit", metavar="MESH",
-                        help="remodel this mesh (the body suit) as a ring sweep along the bones, weighted ring by ring (body.py)")
+    parser.add_argument("--remodel", metavar="MESH",
+                        help="model this mesh (the body suit) and the skeleton from scratch, keeping the look (body.py)")
     args = parser.parse_args()
     source = pathlib.Path(args.source); out = pathlib.Path(args.output); out.mkdir(parents=True, exist_ok=True)
     name = args.name or source.stem.lower()
@@ -1113,12 +1129,19 @@ def main():
     doubled = drop_doubled_faces(scene)
     unfaced = keep_face_weights_on_head(scene)
     character = Character(scene, args.height)
-    rebuilt = None
-    if args.rebuild_suit:
+    rebuilt, remapped = None, 0
+    if args.remodel:
         import body
-        suit = next((m for m in scene.meshes if m["name"] == args.rebuild_suit), None)
-        if suit is None: sys.exit(f"--rebuild-suit: no mesh named {args.rebuild_suit}")
-        rebuilt = body.rebuild_suit(scene, character, suit)
+        suit = next((m for m in scene.meshes if m["name"] == args.remodel), None)
+        hands = next((m for m in scene.meshes if m["name"].lower().startswith("hand")), None)
+        if suit is None: sys.exit(f"--remodel: no mesh named {args.remodel}")
+        if hands is None: sys.exit("--remodel: no hands mesh for the cuffs to meet")
+        bind = scene.bind_globals()
+        suit_points = character.point(Character.bind_points(suit, bind))
+        skeleton = body.design_skeleton(scene, character, body.Caster(suit_points[suit["corners"].reshape(-1, 3)]))
+        original, character = character, Character(scene, args.height, skeleton)
+        rebuilt = body.build_suit(scene, character, suit, hands)
+        remapped = body.remap_influences(scene, original, skeleton)
     character.add_half_joints()
     evened = even_elbows(scene, character)
     smoothed = smooth_shoulders(scene, character)
@@ -1177,7 +1200,8 @@ def main():
         print("no colour in the FBX for: " + ", ".join(sorted(missing)) + " (grey; pass --colors or textures)")
     if filled: print(f"  {filled} vertices had no skin weights; they take their nearest weighted neighbour's")
     if doubled: print(f"  {doubled} triangles were there twice, facing opposite ways; the inward copies are dropped")
-    if rebuilt: print(f"  {rebuilt}")
+    if rebuilt: print(f"  {rebuilt}; the skeleton is designed anew, {len(character.names)} bones with the helpers")
+    if remapped: print(f"  {remapped} vertices of kept meshes moved off dropped bones (face, breast, pelvis) to the bones standing for them")
     if unfaced: print(f"  {unfaced} vertices off the head followed face bones; they follow their strongest other bone instead")
     if evened: print(f"  {evened} sleeve vertices hand over evenly at the elbow")
     if smoothed: print(f"  {smoothed} vertices around the shoulders have smoothed weights")
@@ -1186,7 +1210,7 @@ def main():
     if shaped[0]: print(f"  {shaped[0]} sleeve vertices shaped into triceps and slimmer forearms, by at most {shaped[1] * 100:.1f} cm")
     for note in notes: print("  " + note)
     authored = next((c for c in clips if c["name"] != "walk" or not args.rekey_walk), None)
-    report_fidelity(scene, character, authored["worlds"] if authored else [])
+    if character.skeleton is None: report_fidelity(scene, character, authored["worlds"] if authored else [])
 
 if __name__ == "__main__":
     main()
